@@ -185,8 +185,12 @@ Break the objective into smaller goals and report which are completed, which are
 ### Blocked
 - [anything blocking progress, and why; otherwise "(none)"]
 
+## Dead Ends
+- [approaches already tried that failed or were abandoned, each with why, so they are not repeated; otherwise "(none)"]
+
 ## Next Move
 1. [ordered list of next actions, or "(none)"]
+- Done when: [the check or condition that shows the objective is complete, or "(not stated)"]
 
 ## Relevant Files
 List the files and directories, other than the current working directory, that another agent would need to open to continue this work. Include at most 15, most important first. Do not list every file that was read or changed. Include paths outside the current working directory when relevant. If none, write "(none)".
@@ -197,6 +201,8 @@ List the files and directories, other than the current working directory, that a
 </template>`
 
 const SUMMARY_RULES = `Rules:
+- Write a brief for the work still to be done, not a narrative of what happened. Select what the next agent needs; weight facts by their relevance to the remaining work, not by how often they appeared.
+- Separate verified observations from assumptions and unverified ideas. For completed work, say which checks were run and whether the change was verified.
 - Keep each section concise. Use terse, single-line bullets, not prose paragraphs or nested lists.
 - Prefer short references over detailed restatement. It is fine to leave out information the next agent can recover from the code or the files listed above.
 - Preserve exact file paths, symbols, commands, error strings, URLs, and identifiers.
@@ -231,7 +237,7 @@ export const buildPrompt = (update: boolean, legacy = false) => {
         ]
       : []),
     "Newer history always takes precedence over the existing checkpoint. Preserve previous information unless newer history clearly contradicts, supersedes, resolves, or makes it stale. If something is no longer relevant to continuing the work, you may remove it.",
-    "Incorporate newer requirements, decisions, progress, and context. Reconcile Work State and Next Move: move completed work out of Active, remove resolved blockers and answered questions, and preserve unresolved or pending work.",
+    "Incorporate newer requirements, decisions, progress, and context. Reconcile Work State and Next Move: move completed work out of Active, remove resolved blockers and answered questions, and preserve unresolved or pending work. Keep Dead Ends unless newer history shows the approach now works.",
     "Return only the updated Markdown sections. Do not reproduce the `<conversation-checkpoint>`, `<summary>`, or `<recent-context>` wrapper tags from the previous checkpoint.",
     ...shared,
   ].join("\n\n")

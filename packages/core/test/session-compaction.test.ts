@@ -366,6 +366,7 @@ test("compaction prompt requires the checkpoint headings in order", () => {
     "### Completed",
     "### Active",
     "### Blocked",
+    "## Dead Ends",
     "## Next Move",
     "## Relevant Files",
     "## Important Context",
@@ -377,6 +378,18 @@ test("compaction update prompt rewrites legacy checkpoints only when asked", () 
   expect(SessionCompaction.buildPrompt(true, true)).toContain(rewrite)
   expect(SessionCompaction.buildPrompt(true)).not.toContain(rewrite)
   expect(SessionCompaction.buildPrompt(false, true)).not.toContain(rewrite)
+})
+
+test("compaction prompts ask for a forward-looking brief with dead ends and a completion condition", () => {
+  for (const update of [false, true]) {
+    const prompt = SessionCompaction.buildPrompt(update)
+    expect(prompt).toContain("Write a brief for the work still to be done, not a narrative of what happened")
+    expect(prompt).toContain("Separate verified observations from assumptions and unverified ideas")
+    expect(prompt).toContain("Done when:")
+  }
+  expect(SessionCompaction.buildPrompt(true)).toContain(
+    "Keep Dead Ends unless newer history shows the approach now works",
+  )
 })
 
 test("compaction prompts prohibit task execution", () => {
