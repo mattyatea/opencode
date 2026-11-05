@@ -1,6 +1,19 @@
 import { DESKTOP_NATIVE_ENGLISH } from "./desktop-native"
 
 export const dict = {
+  "settings.general.row.interfaceMode.projects": "Projects",
+  "settings.general.row.interfaceMode.projects.description": "Group projects and sessions into collapsible sections.",
+  "sidebar.sections.navigation": "Projects and sessions",
+  "sidebar.sections.unassigned": "Projects",
+  "sidebar.sections.create": "New section",
+  "sidebar.sections.rename": "Rename section",
+  "sidebar.sections.name": "Section name",
+  "sidebar.sections.options": "Options for section {{name}}",
+  "sidebar.sections.remove": "Remove section (keep projects)",
+  "sidebar.sections.move": "Move to {{name}}",
+  "sidebar.sections.empty": "Move projects here using their menu.",
+  "sidebar.sections.more": "Show more",
+  "sidebar.sections.retry": "Could not load sessions. Retry",
   "experiment.voiceCalls": "Voice calls",
   "voice.call": "Call",
   "voice.mute": "Mute",

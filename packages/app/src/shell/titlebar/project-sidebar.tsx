@@ -1,0 +1,502 @@
+import { createMemo, For, Show, startTransition } from "solid-js"
+import { createStore } from "solid-js/store"
+import { useQueries } from "@tanstack/solid-query"
+import { Button } from "@opencode/ui/button"
+import { Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitleGroup } from "@opencode/ui/dialog"
+import { useDialog } from "@opencode/ui/context/dialog"
+import { Icon } from "@opencode/ui/icon"
+import { IconButton } from "@opencode/ui/icon-button"
+import { Loader } from "@opencode/ui/loader"
+import { Menu } from "@opencode/ui/menu"
+import { displayName } from "@opencode/ui/project-avatar"
+import { TextInput } from "@opencode/ui/text-input"
+import { uuid } from "@opencode/util/uuid"
+import { homeSessionsQuery } from "@/home/sessions/queries"
+import { mergeHomeSessionIndex } from "@/home/sessions/index"
+import { useLanguage } from "@/runtime/i18n/language"
+import { Persist, persisted } from "@/runtime/persistence/storage"
+import { ServerConnection, useServers } from "@/runtime/server/registry"
+import { useGlobal } from "@/runtime/server/runtime"
+import { useLayout } from "@/shell/state/layout"
+import { type DraftTab, tabKey, useTabs } from "@/shell/tabs/tabs"
+import { useSessionTabAvatarState } from "@/shell/layout/project-avatar-state"
+import { ActivityRing } from "@opencode/ui/activity-ring"
+import { sessionTitle } from "@/session/title"
+import { ProjectSectionsState, projectSection, sidebarProjectKey } from "./project-sections"
+
+export function ProjectSidebar() {
+  const language = useLanguage()
+  const dialog = useDialog()
+  const global = useGlobal()
+  const servers = useServers()
+  const tabs = useTabs()
+  const layout = useLayout()
+
+  const [state, setState, , ready] = persisted(Persist.global("sidebar.project-sections"), ProjectSectionsState, {
+    sections: [],
+    order: [],
+    assignments: {},
+    collapsed: {},
+  })
+
+  const [visible, setVisible] = createStore<Record<string, number>>({})
+  const [projectLimits, setProjectLimits] = createStore<Record<string, number>>({})
+  const [drag, setDrag] = createStore({
+    project: "",
+    section: undefined as string | undefined,
+    target: undefined as string | undefined,
+  })
+  const connections = createMemo(() =>
+    servers.visible.map((conn) => ({
+      conn,
+      ctx: global.ensureServerCtx(conn),
+    })),
+  )
+
+  const queries = useQueries(() => ({
+    queries: connections().map(({ conn, ctx }) => ({
+      ...homeSessionsQuery(conn, ctx),
+      enabled: ctx.sdk.connection.status() === "connected",
+    })),
+  }))
+
+  const projects = createMemo(() =>
+    connections()
+      .flatMap((connection, index) => {
+        const server = ServerConnection.key(connection.conn)
+
+        const sessions = connection.ctx.data.session
+          .apply(mergeHomeSessionIndex(queries[index]?.data?.() ?? [], connection.ctx.data.session.list()))
+          .filter((session) => !session.parentID && !session.time.archived)
+
+        return connection.ctx.projects.unique().map((project) => ({
+          ...connection,
+          server,
+          project,
+          key: sidebarProjectKey(server, project.worktree),
+          sessions: sessions
+            .filter(
+              (session) =>
+                sidebarProjectKey(
+                  server,
+                  connection.ctx.projects.forSession(session)?.worktree ?? session.location.directory,
+                ) === sidebarProjectKey(server, project.worktree),
+            )
+            .toSorted((a, b) => b.time.updated - a.time.updated),
+        }))
+      })
+      .toSorted((a, b) => {
+        // Project activity also advances on viewing; rank by conversation updates instead.
+        const updated = (b.sessions[0]?.time.updated ?? 0) - (a.sessions[0]?.time.updated ?? 0)
+        return updated || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+      }),
+  )
+
+  const byKey = createMemo(() => new Map(projects().map((project) => [project.key, project])))
+  const drafts = createMemo(() =>
+    tabs.store
+      .filter((tab) => tab.type === "draft")
+      .map((tab) => {
+        const connection = connections().find((item) => ServerConnection.key(item.conn) === tab.server)
+        const directory = connection?.ctx.projects.forDirectory(tab.directory)?.worktree ?? tab.directory
+        return { tab, key: sidebarProjectKey(tab.server, directory) }
+      }),
+  )
+  const sections = createMemo(() => {
+    const items = [{ id: "", name: language.t("sidebar.sections.unassigned") }, ...state.sections]
+    const order = new Map(state.order.map((id, index) => [id, index]))
+    return items.toSorted((a, b) => (order.get(a.id) ?? order.size) - (order.get(b.id) ?? order.size))
+  })
+  const toggle = (key: string) => setState("collapsed", key, !state.collapsed[key])
+
+  function DraftRow(props: { tab: DraftTab; nested?: boolean }) {
+    const selected = () => {
+      const route = layout.route()
+      return route.type === "draft" && route.draftID === props.tab.draftID
+    }
+
+    return (
+      <div class="flex items-center" classList={{ "ps-6": props.nested }}>
+        <button
+          type="button"
+          aria-current={selected() ? "page" : undefined}
+          class="h-7 min-w-0 flex-1 truncate rounded-[6px] px-2 text-start text-[13px] hover:bg-v2-overlay-simple-overlay-hover"
+          classList={{ "bg-v2-overlay-simple-overlay-hover": selected() }}
+          onClick={() => tabs.select(props.tab)}
+        >
+          {language.t("session.tab.session")}
+        </button>
+        <IconButton
+          variant="ghost-muted"
+          size="small"
+          icon={<Icon name="trash" />}
+          aria-label={language.t("common.delete")}
+          onClick={() => tabs.closeTab(tabs.store.findIndex((item) => tabKey(item) === tabKey(props.tab)))}
+        />
+      </div>
+    )
+  }
+
+  function editSection(section?: { id: string; name: string }) {
+    dialog.show(() => {
+      const [form, setForm] = createStore({ name: section?.name ?? "" })
+
+      const save = () => {
+        const name = form.name.trim()
+
+        if (!name) return
+        setState("sections", (items) =>
+          section
+            ? items.map((item) => (item.id === section.id ? { ...item, name } : item))
+            : [...items, { id: uuid(), name }],
+        )
+        dialog.close()
+      }
+
+      return (
+        <Dialog fit>
+          <form
+            class="contents"
+            onSubmit={(event) => {
+              event.preventDefault()
+              save()
+            }}
+          >
+            <DialogHeader>
+              <DialogTitleGroup title={language.t(section ? "sidebar.sections.rename" : "sidebar.sections.create")} />
+            </DialogHeader>
+            <DialogBody class="px-4">
+              <TextInput
+                class="!w-full self-stretch"
+                autofocus
+                value={form.name}
+                aria-label={language.t("sidebar.sections.name")}
+                onInput={(event) => setForm("name", event.currentTarget.value)}
+              />
+            </DialogBody>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => dialog.close()}>
+                {language.t("common.cancel")}
+              </Button>
+              <Button type="submit" disabled={!form.name.trim()}>
+                {language.t("common.save")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Dialog>
+      )
+    })
+  }
+
+  return (
+    <nav
+      aria-label={language.t("sidebar.sections.navigation")}
+      data-scrollable
+      class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden [app-region:no-drag]"
+    >
+      <Show when={ready()} fallback={<Loader />}>
+        <For each={drafts().filter((draft) => !byKey().has(draft.key))}>{(draft) => <DraftRow tab={draft.tab} />}</For>
+        <For each={sections()}>
+          {(section) => {
+            const id = section.id
+            const items = createMemo(() => projects().filter((project) => projectSection(state, project.key) === id))
+            const projectLimit = () => projectLimits[id] ?? 5
+            const collapsed = () => !!state.collapsed[`section:${id}`]
+
+            return (
+              <section
+                class="mb-5 rounded-[6px]"
+                classList={{
+                  "bg-v2-overlay-simple-overlay-hover": drag.target === id,
+                }}
+                aria-label={section.name}
+                onDragOver={(event) => {
+                  if (!drag.project && !(drag.section !== undefined && drag.section !== id)) return
+                  event.preventDefault()
+                  if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
+                  setDrag("target", id)
+                }}
+                onDragLeave={(event) => {
+                  if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+                  setDrag("target", undefined)
+                }}
+                onDrop={(event) => {
+                  if (drag.section !== undefined && drag.section !== id) {
+                    event.preventDefault()
+                    const order = sections().map((item) => item.id)
+                    const source = order.indexOf(drag.section)
+                    const target = order.indexOf(id)
+                    setState("order", order.toSpliced(source, 1).toSpliced(target, 0, drag.section))
+                    setDrag({ section: undefined, target: undefined })
+                    return
+                  }
+                  if (!drag.project) return
+                  event.preventDefault()
+                  setState("assignments", drag.project, id)
+                  setState("collapsed", `section:${id}`, false)
+                  setDrag({ project: "", target: undefined })
+                }}
+              >
+                <div class="flex h-7 items-center">
+                  <button
+                    type="button"
+                    draggable="true"
+                    onDragStart={(event) => {
+                      if (!event.dataTransfer) return
+                      event.dataTransfer.effectAllowed = "move"
+                      event.dataTransfer.setData("text/plain", id)
+                      setDrag("section", id)
+                    }}
+                    onDragEnd={() => setDrag({ section: undefined, target: undefined })}
+                    aria-expanded={!collapsed()}
+                    onClick={() => toggle(`section:${id}`)}
+                    class="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-[6px] px-2 text-start text-[13px] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover"
+                  >
+                    <bdi class="truncate">{section.name}</bdi>
+                    <Icon
+                      name={collapsed() ? "chevron-right" : "chevron-down"}
+                      size="small"
+                      classList={{ "rtl:rotate-180": collapsed() }}
+                    />
+                  </button>
+                  <Menu placement="bottom-end">
+                    <Menu.Trigger
+                      as={IconButton}
+                      variant="ghost-muted"
+                      size="small"
+                      icon={<Icon name="outline-dots" />}
+                      aria-label={language.t("sidebar.sections.options", {
+                        name: section.name,
+                      })}
+                    />
+                    <Menu.Portal>
+                      <Menu.Content>
+                        <Menu.Item onSelect={() => editSection()}>{language.t("sidebar.sections.create")}</Menu.Item>
+                        <Show when={id}>
+                          <Menu.Item onSelect={() => editSection(section)}>
+                            {language.t("sidebar.sections.rename")}
+                          </Menu.Item>
+                          <Menu.Item
+                            onSelect={() => setState("sections", (items) => items.filter((item) => item.id !== id))}
+                          >
+                            {language.t("sidebar.sections.remove")}
+                          </Menu.Item>
+                        </Show>
+                      </Menu.Content>
+                    </Menu.Portal>
+                  </Menu>
+                </div>
+                <Show when={!collapsed()}>
+                  <For
+                    each={items()
+                      .slice(0, projectLimit())
+                      .map((project) => project.key)}
+                  >
+                    {(key) => {
+                      const item = () => byKey().get(key)!
+                      const expanded = () => !state.collapsed[`project:${key}`]
+                      const limit = () => visible[key] ?? 5
+                      const newDraft = () => {
+                        setState("collapsed", `project:${key}`, false)
+                        void tabs.newDraft({
+                          server: item().server,
+                          directory: item().project.worktree,
+                        })
+                      }
+
+                      const sessions = () => {
+                        const list = item().sessions
+                        const route = layout.route()
+
+                        const selected =
+                          route.type === "session" && route.server === item().server
+                            ? list.find((session) => session.id === route.sessionId)
+                            : undefined
+
+                        return selected && !list.slice(0, limit()).includes(selected)
+                          ? [...list.slice(0, limit()), selected]
+                          : list.slice(0, limit())
+                      }
+
+                      return (
+                        <div role="group" aria-label={displayName(item().project)}>
+                          <div class="flex h-7 items-center">
+                            <button
+                              type="button"
+                              draggable="true"
+                              onDragStart={(event) => {
+                                if (!event.dataTransfer) return
+                                event.dataTransfer.effectAllowed = "move"
+                                event.dataTransfer.setData("text/plain", key)
+                                setDrag("project", key)
+                              }}
+                              onDragEnd={() => setDrag({ project: "", target: undefined })}
+                              aria-expanded={expanded()}
+                              title={item().project.worktree}
+                              class="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-[6px] px-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
+                              onClick={() => toggle(`project:${key}`)}
+                            >
+                              <Icon name="folder" size="small" class="shrink-0" />
+                              <bdi class="truncate">{displayName(item().project)}</bdi>
+                              <Show when={!item().ctx.isLocal}>
+                                <bdi class="min-w-0 truncate text-v2-text-text-subtle">{servers.label(item().conn)}</bdi>
+                              </Show>
+                              <Icon
+                                name={expanded() ? "chevron-down" : "chevron-right"}
+                                size="small"
+                                class="shrink-0"
+                                classList={{ "rtl:rotate-180": !expanded() }}
+                              />
+                            </button>
+                            <Menu placement="bottom-end">
+                              <Menu.Trigger
+                                as={IconButton}
+                                variant="ghost-muted"
+                                size="small"
+                                icon={<Icon name="outline-dots" />}
+                                aria-label={language.t("common.moreOptions")}
+                              />
+                              <Menu.Portal>
+                                <Menu.Content>
+                                  <Menu.Item onSelect={newDraft}>{language.t("command.session.new")}</Menu.Item>
+                                  <Menu.Separator />
+                                  <For each={sections()}>
+                                    {(target) => (
+                                      <Menu.Item
+                                        disabled={target.id === projectSection(state, key)}
+                                        onSelect={() => setState("assignments", key, target.id)}
+                                      >
+                                        {language.t("sidebar.sections.move", {
+                                          name: target.name,
+                                        })}
+                                      </Menu.Item>
+                                    )}
+                                  </For>
+                                </Menu.Content>
+                              </Menu.Portal>
+                            </Menu>
+                            <IconButton
+                              variant="ghost-muted"
+                              size="small"
+                              class="shrink-0"
+                              icon={<Icon name="edit" />}
+                              aria-label={language.t("command.session.new")}
+                              onClick={newDraft}
+                            />
+                          </div>
+                          <Show when={expanded()}>
+                            <For each={drafts().filter((draft) => draft.key === key)}>
+                              {(draft) => <DraftRow tab={draft.tab} nested />}
+                            </For>
+                            <For each={sessions().map((session) => session.id)}>
+                              {(sessionID) => {
+                                const session = () => item().sessions.find((session) => session.id === sessionID)
+
+                                const status = useSessionTabAvatarState(
+                                  () => item().server,
+                                  () => sessionID,
+                                  () => true,
+                                )
+
+                                const selected = () => {
+                                  const route = layout.route()
+
+                                  return (
+                                    route.type === "session" &&
+                                    route.server === item().server &&
+                                    route.sessionId === sessionID
+                                  )
+                                }
+
+                                return (
+                                  <button
+                                    type="button"
+                                    aria-current={selected() ? "page" : undefined}
+                                    title={session()?.title}
+                                    class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
+                                    classList={{
+                                      "bg-v2-overlay-simple-overlay-hover": selected(),
+                                    }}
+                                    onClick={() => {
+                                      const value = session()
+
+                                      if (!value) return
+                                      item().ctx.data.session.remember(value)
+                                      void startTransition(() =>
+                                        tabs.select(
+                                          tabs.addSessionTab({
+                                            server: item().server,
+                                            sessionId: sessionID,
+                                          }),
+                                        ),
+                                      )
+                                    }}
+                                  >
+                                    <bdi class="min-w-0 flex-1 truncate">
+                                      {sessionTitle(session()?.title) ?? language.t("command.session.new")}
+                                    </bdi>
+                                    <Show
+                                      when={status.loading()}
+                                      fallback={
+                                        <Show when={status.unread()}>
+                                          <span class="size-1.5 shrink-0 rounded-full bg-current" />
+                                        </Show>
+                                      }
+                                    >
+                                      <ActivityRing class="size-3.5 shrink-0" />
+                                    </Show>
+                                  </button>
+                                )
+                              }}
+                            </For>
+                            <Show when={item().sessions.length > limit()}>
+                              <button
+                                type="button"
+                                class="h-7 w-full ps-8 text-start text-[13px] text-v2-text-text-muted hover:text-v2-text-text-base"
+                                onClick={() => setVisible(key, limit() + 10)}
+                              >
+                                {language.t("sidebar.sections.more")}
+                              </button>
+                            </Show>
+                          </Show>
+                        </div>
+                      )
+                    }}
+                  </For>
+                  <Show when={items().length > projectLimit()}>
+                    <button
+                      type="button"
+                      class="h-7 w-full px-2 text-start text-[13px] text-v2-text-text-muted hover:text-v2-text-text-base"
+                      onClick={() => setProjectLimits(id, projectLimit() + 10)}
+                    >
+                      {language.t("sidebar.sections.more")}
+                    </button>
+                  </Show>
+                  <Show when={!items().length}>
+                    <p class="px-2 py-1 text-[13px] text-v2-text-text-muted">{language.t("sidebar.sections.empty")}</p>
+                  </Show>
+                </Show>
+              </section>
+            )
+          }}
+        </For>
+        <Show when={queries.some((query) => query.isLoading)}>
+          <Loader />
+        </Show>
+        <Show when={queries.some((query) => query.isError)}>
+          <Button
+            variant="ghost"
+            size="small"
+            onClick={() =>
+              queries.forEach((query) => {
+                if (query.isError) void query.refetch()
+              })
+            }
+          >
+            {language.t("sidebar.sections.retry")}
+          </Button>
+        </Show>
+      </Show>
+    </nav>
+  )
+}

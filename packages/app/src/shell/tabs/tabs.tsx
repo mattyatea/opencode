@@ -268,12 +268,13 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         const draftID = uuid()
         const tab = { type: "draft" as const, draftID, ...draft }
         memory.ensure(tabKey(tab), "prompt", () => createDraftComposerState(draftID, { prompt, model }))
+        // Keep the draft available to persistence while its route is still loading.
+        setStore(
+          produce((tabs) => {
+            tabs.push(tab)
+          }),
+        )
         await startTransition(() => {
-          setStore(
-            produce((tabs) => {
-              tabs.push(tab)
-            }),
-          )
           navigate(draftHref(draftID))
         })
 

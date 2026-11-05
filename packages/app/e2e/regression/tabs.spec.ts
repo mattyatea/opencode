@@ -28,6 +28,273 @@ const c = { id: "ses_tab_c", title: "Tab C session" }
 
 test.use({ serviceWorkers: "block" })
 
+test("project sections retain grouping and both collapse states after reload", async ({ page }, testInfo) => {
+  await mockWorkspace(page, {
+    name: "Finance",
+    sessions: Array.from({ length: 17 }, (_, index) => ({
+      id: `ses_finance_${index}`,
+      title: `Finance task ${index}`,
+      time: { created: T0, updated: T0 + (17 - index) * 1000 },
+    })),
+    seed: { settings: { appearance: { tabLayout: "projects" } } },
+  })
+  await page.goto(sessionHref("ses_finance_0"))
+  const sidebar = page.getByRole("navigation", {
+    name: "Projects and sessions",
+  })
+  const projects = sidebar.getByRole("region", {
+    name: "Projects",
+    exact: true,
+  })
+  const projectGroup = sidebar.getByRole("group", {
+    name: "Finance",
+    exact: true,
+  })
+  const projectToggle = projectGroup.getByRole("button", {
+    name: "Finance",
+    exact: true,
+  })
+  await expect(projectToggle).toHaveAttribute("aria-expanded", "true")
+  await expect(sidebar.getByRole("button", { name: "Finance task 5", exact: true })).toHaveCount(0)
+  await projectGroup.getByRole("button", { name: "Show more", exact: true }).click()
+  await sidebar.getByRole("button", { name: "Finance task 5", exact: true }).click()
+  await expectPath(page, sessionHref("ses_finance_5"))
+
+  await expect(sidebar.getByRole("button", { name: "New section", exact: true })).toHaveCount(0)
+  await projects.getByRole("button", { name: "Options for section Projects", exact: true }).click()
+  await page.getByRole("menuitem", { name: "New section", exact: true }).click()
+  const dialog = page.getByRole("dialog")
+  await dialog.getByRole("textbox", { name: "Section name" }).fill("Personal")
+  const input = await dialog.getByRole("textbox", { name: "Section name" }).boundingBox()
+  const bounds = await dialog.boundingBox()
+  expect(input!.width).toBeGreaterThan(bounds!.width * 0.8)
+  await dialog.screenshot({ path: testInfo.outputPath("section-dialog.png") })
+  await dialog.getByRole("button", { name: "Save", exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await projectGroup.getByRole("button", { name: "More options", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Move to Personal", exact: true }).click()
+  const section = sidebar.getByRole("region", {
+    name: "Personal",
+    exact: true,
+  })
+  await expect(section.getByRole("group", { name: "Finance", exact: true })).toBeVisible()
+  await expect(projects.getByRole("group", { name: "Finance", exact: true })).toHaveCount(0)
+  await section.getByRole("button", { name: "Personal", exact: true }).click()
+  await section.getByRole("button", { name: "Options for section Personal", exact: true }).click()
+  await page.getByRole("menuitem", { name: "New section", exact: true }).click()
+  await dialog.getByRole("textbox", { name: "Section name" }).fill("Work")
+  await dialog.getByRole("button", { name: "Save", exact: true }).click()
+  await expect(dialog).toBeHidden()
+  const work = sidebar.getByRole("region", { name: "Work", exact: true })
+  await work
+    .getByRole("button", { name: "Work", exact: true })
+    .dragTo(section.getByRole("button", { name: "Personal", exact: true }))
+  await expect
+    .poll(() =>
+      sidebar.getByRole("region").evaluateAll((items) => items.map((item) => item.getAttribute("aria-label"))),
+    )
+    .toEqual(["Projects", "Work", "Personal"])
+  await projects
+    .getByRole("button", { name: "Projects", exact: true })
+    .dragTo(section.getByRole("button", { name: "Personal", exact: true }))
+  await expect
+    .poll(() =>
+      sidebar.getByRole("region").evaluateAll((items) => items.map((item) => item.getAttribute("aria-label"))),
+    )
+    .toEqual(["Work", "Personal", "Projects"])
+  await work.getByRole("button", { name: "Work", exact: true }).click()
+  await section.getByRole("button", { name: "Personal", exact: true }).click()
+  await projectToggle.click()
+  await projectToggle.dragTo(work.getByRole("button", { name: "Work", exact: true }))
+  await expect(work.getByRole("group", { name: "Finance", exact: true })).toBeVisible()
+  await projectToggle.dragTo(section.getByRole("button", { name: "Personal", exact: true }))
+  await expect(section.getByRole("group", { name: "Finance", exact: true })).toBeVisible()
+  await expect(projectToggle).toHaveAttribute("aria-expanded", "false")
+  const sectionToggle = section.getByRole("button", {
+    name: "Personal",
+    exact: true,
+  })
+  await sectionToggle.click()
+  await expect(sectionToggle).toHaveAttribute("aria-expanded", "false")
+  await page.reload()
+  await expect
+    .poll(() =>
+      sidebar.getByRole("region").evaluateAll((items) => items.map((item) => item.getAttribute("aria-label"))),
+    )
+    .toEqual(["Work", "Personal", "Projects"])
+  await expect(sectionToggle).toHaveAttribute("aria-expanded", "false")
+  await expect(section.getByRole("group", { name: "Finance", exact: true })).toHaveCount(0)
+  await expect(projects.getByRole("group", { name: "Finance", exact: true })).toHaveCount(0)
+  await sectionToggle.click()
+  await expect(projectToggle).toHaveAttribute("aria-expanded", "false")
+  await expect(sidebar.getByRole("button", { name: "Finance task 5", exact: true })).toHaveCount(0)
+  await projectToggle.click()
+  await expect(section.getByRole("button", { name: "Finance task 5", exact: true })).toHaveAttribute(
+    "aria-current",
+    "page",
+  )
+  await expect(projectGroup.getByRole("button", { name: /^Finance task \d+$/ })).toHaveCount(6)
+  await expect(section.getByRole("button", { name: "Finance task 6", exact: true })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath("project-sections.png") })
+  await projectGroup.getByRole("button", { name: "Show more", exact: true }).click()
+  await expect(projectGroup.getByRole("button", { name: /^Finance task \d+$/ })).toHaveCount(15)
+  await expect(section.getByRole("button", { name: "Finance task 14", exact: true })).toBeVisible()
+  await expect(section.getByRole("button", { name: "Finance task 15", exact: true })).toHaveCount(0)
+  await projectGroup.getByRole("button", { name: "Show more", exact: true }).click()
+  await expect(projectGroup.getByRole("button", { name: /^Finance task \d+$/ })).toHaveCount(17)
+  await expect(projectGroup.getByRole("button", { name: "Show more", exact: true })).toHaveCount(0)
+
+  await section.getByRole("button", { name: "Options for section Personal", exact: true }).click()
+  await page
+    .getByRole("menuitem", {
+      name: "Remove section (keep projects)",
+      exact: true,
+    })
+    .click()
+  await expect(section).toHaveCount(0)
+  await expect(work).toBeVisible()
+  await work.getByRole("button", { name: "Work", exact: true }).click()
+  await work.getByRole("button", { name: "Options for section Work", exact: true }).click()
+  await page
+    .getByRole("menuitem", {
+      name: "Remove section (keep projects)",
+      exact: true,
+    })
+    .click()
+  await expect(work).toHaveCount(0)
+  await page.reload()
+  await expect(sidebar.getByRole("region")).toHaveCount(1)
+  await expect(
+    sidebar.getByRole("region", { name: "Projects", exact: true }).getByRole("group", { name: "Finance", exact: true }),
+  ).toBeVisible()
+  await projectToggle.click()
+  await projectGroup.getByRole("button", { name: "New session", exact: true }).click()
+  await expect(page).toHaveURL(/\/new-session\?draftId=.+/)
+  await expect(projectToggle).toHaveAttribute("aria-expanded", "true")
+  await expect(projectGroup.getByRole("button", { name: "Session", exact: true })).toHaveAttribute(
+    "aria-current",
+    "page",
+  )
+  await expect(sidebar.getByRole("button", { name: "Session", exact: true })).toHaveCount(1)
+  await page.reload()
+  await expect(projectGroup.getByRole("button", { name: "Session", exact: true })).toHaveAttribute(
+    "aria-current",
+    "page",
+  )
+  await projectGroup.getByRole("button", { name: "Delete", exact: true }).click()
+  await expect(sidebar.getByRole("button", { name: "Session", exact: true })).toHaveCount(0)
+})
+
+test("project sections show five projects and reveal ten more at a time", async ({ page }) => {
+  const projects = Array.from({ length: 17 }, (_, index) =>
+    project({
+      id: `proj_more_${index}`,
+      directory: `C:/OpenCode/More${index}`,
+      name: `Project ${index}`,
+    }),
+  )
+  await mockWorkspace(page, {
+    name: "More0",
+    project: { id: "proj_more_0", name: "Project 0" },
+    projects,
+    seed: {
+      usedProjects: { local: [projects[0]!.id] },
+      settings: { appearance: { tabLayout: "projects" } },
+    },
+  })
+  await page.goto(sessionHref("ses_more0"))
+  const sidebar = page.getByRole("navigation", {
+    name: "Projects and sessions",
+  })
+  const section = sidebar.getByRole("region", {
+    name: "Projects",
+    exact: true,
+  })
+  await expect(section.getByRole("group")).toHaveCount(5)
+  await section.getByRole("button", { name: "Show more", exact: true }).click()
+  await expect(section.getByRole("group")).toHaveCount(15)
+  await section.getByRole("button", { name: "Show more", exact: true }).click()
+  await expect(section.getByRole("group")).toHaveCount(17)
+  await expect(section.getByRole("button", { name: "Show more", exact: true })).toHaveCount(0)
+})
+
+test("project sections rank conversation activity without promoting viewed projects", async ({ page }) => {
+  const older = project({ id: "proj_older", directory: "C:/OpenCode/Older", name: "Older" })
+  const newer = project({ id: "proj_newer", directory: "C:/OpenCode/Newer", name: "Newer" })
+  const workspace = await mockWorkspace(page, {
+    name: "Newer",
+    project: { id: newer.id },
+    projects: [newer, older],
+    sessions: [
+      { id: a.id, title: a.title, time: { created: T0, updated: T0 + 20 } },
+      {
+        id: b.id,
+        title: b.title,
+        directory: older.worktree,
+        projectID: older.id,
+        time: { created: T0, updated: T0 + 10 },
+      },
+    ],
+    seed: { settings: { appearance: { tabLayout: "projects" } } },
+  })
+  await page.goto(sessionHref(a.id))
+  const sidebar = page.getByRole("navigation", { name: "Projects and sessions" })
+  const groups = sidebar.getByRole("group")
+  await expect(groups).toHaveCount(2)
+  await sidebar.getByRole("button", { name: b.title, exact: true }).click()
+  await expect(sidebar.getByRole("button", { name: b.title, exact: true })).toHaveAttribute("aria-current", "page")
+  await workspace.push([
+    {
+      type: "project.updated",
+      id: "evt_project_viewed",
+      created: T0 + 30,
+      data: { ...older, time: { ...older.time, active: T0 + 30 } },
+    },
+  ])
+  await workspace.push([
+    {
+      type: "session.renamed",
+      id: "evt_activity_marker",
+      created: T0 + 21,
+      durable: { aggregateID: a.id, seq: 1, version: 1 },
+      data: { sessionID: a.id, title: "Activity marker" },
+    },
+  ])
+  await expect(sidebar.getByRole("button", { name: "Activity marker", exact: true })).toBeVisible()
+  await expect
+    .poll(() => groups.evaluateAll((items) => items.map((item) => item.getAttribute("aria-label"))))
+    .toEqual(["Newer", "Older"])
+  await workspace.push([
+    {
+      type: "session.inbox.enqueued",
+      id: "evt_older_prompt",
+      created: T0 + 40,
+      durable: { aggregateID: b.id, seq: 1, version: 1 },
+      data: {
+        sessionID: b.id,
+        inboxID: "inb_older_prompt",
+        item: { type: "user", payload: { text: "Continue" }, delivery: "queue" },
+      },
+    },
+  ])
+  await expect
+    .poll(() => groups.evaluateAll((items) => items.map((item) => item.getAttribute("aria-label"))))
+    .toEqual(["Older", "Newer"])
+  await workspace.push([
+    {
+      type: "session.renamed",
+      id: "evt_background_update",
+      created: T0 + 50,
+      durable: { aggregateID: a.id, seq: 2, version: 1 },
+      data: { sessionID: a.id, title: "Updated in background" },
+    },
+  ])
+  await expect(sidebar.getByRole("button", { name: "Updated in background", exact: true })).toBeVisible()
+  await expect
+    .poll(() => groups.evaluateAll((items) => items.map((item) => item.getAttribute("aria-label"))))
+    .toEqual(["Newer", "Older"])
+})
+
 test("recently closed shows ten sessions and searches older closures in close order", async ({ page }) => {
   const sessions = Array.from({ length: 100 }, (_, index) => ({
     id: `ses_closed_${index}`,

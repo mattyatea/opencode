@@ -18,6 +18,7 @@ import { applyPath, backPath, forwardPath, type HistoryLocation } from "./histor
 import { TitlebarTabStrip } from "@/shell/titlebar/tab-strip"
 import { macVerticalTrafficLights, SidebarToggle } from "@/shell/sidebar-toggle"
 import { SidebarInbox } from "@/shell/titlebar/inbox"
+import { ProjectSidebar } from "@/shell/titlebar/project-sidebar"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { readSessionTabsRemovedDetail, SESSION_TABS_REMOVED_EVENT } from "@/shell/titlebar/session-events"
@@ -883,21 +884,28 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                               <Show
                                 when={settings.appearance.tabLayout() === "inbox"}
                                 fallback={
-                                  <TitlebarTabStrip
-                                    orientation="vertical"
-                                    tabs={tabsStore}
-                                    currentTab={currentTab()}
-                                    onNavigate={(tab, el) => {
-                                      tabs.select(tab)
-                                      el?.scrollIntoView({ behavior: "instant", block: "nearest" })
-                                    }}
-                                    onClose={(tab) => {
-                                      const index = tabsStore.findIndex((item) => tabKey(item) === tabKey(tab))
+                                  <Show
+                                    when={settings.appearance.tabLayout() === "projects"}
+                                    fallback={
+                                      <TitlebarTabStrip
+                                        orientation="vertical"
+                                        tabs={tabsStore}
+                                        currentTab={currentTab()}
+                                        onNavigate={(tab, el) => {
+                                          tabs.select(tab)
+                                          el?.scrollIntoView({ behavior: "instant", block: "nearest" })
+                                        }}
+                                        onClose={(tab) => {
+                                          const index = tabsStore.findIndex((item) => tabKey(item) === tabKey(tab))
 
-                                      if (index !== -1) tabsStoreActions.closeTab(index)
-                                    }}
-                                    onReorder={(keys) => tabsStoreActions.reorder(keys)}
-                                  />
+                                          if (index !== -1) tabsStoreActions.closeTab(index)
+                                        }}
+                                        onReorder={(keys) => tabsStoreActions.reorder(keys)}
+                                      />
+                                    }
+                                  >
+                                    <ProjectSidebar />
+                                  </Show>
                                 }
                               >
                                 <SidebarInbox />

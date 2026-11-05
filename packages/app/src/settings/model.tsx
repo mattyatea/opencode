@@ -145,7 +145,7 @@ const appearanceSchema = Persistence.struct({
   sans: Schema.String,
   terminal: Schema.String,
   // "inbox" is experimental: the vertical layout with a server-wide session inbox in place of tabs.
-  tabLayout: Schema.Literals(["horizontal", "vertical", "inbox"]),
+  tabLayout: Schema.Literals(["horizontal", "vertical", "inbox", "projects"]),
   sidebarOpen: Persistence.optional(Schema.Boolean),
   reduceMotion: Schema.Literals(["system", "on", "off"]),
 })

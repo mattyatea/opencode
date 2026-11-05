@@ -6,6 +6,7 @@ import "./interface-mode.css"
 const modes = [
   { id: "top", layout: "horizontal" },
   { id: "side", layout: "vertical" },
+  { id: "projects", layout: "projects" },
   { id: "inbox", layout: "inbox" },
 ] as const satisfies { id: string; layout: TabLayout }[]
 
@@ -42,6 +43,29 @@ export function InterfaceModeSetting() {
                 </Match>
                 <Match when={mode.id === "inbox"}>
                   <InboxPreview />
+                </Match>
+                <Match when={mode.id === "projects"}>
+                  <div data-slot="preview-body">
+                    <div data-slot="preview-rail">
+                      <span data-slot="preview-rail-heading" />
+                      <span data-slot="preview-tab">
+                        <i />
+                        <span style={{ width: "65%" }} />
+                      </span>
+                      <span data-slot="preview-tab" data-active="" style={{ "margin-inline-start": "8px" }}>
+                        <span style={{ width: "70%" }} />
+                      </span>
+                      <span data-slot="preview-tab" style={{ "margin-inline-start": "8px" }}>
+                        <span style={{ width: "50%" }} />
+                      </span>
+                      <span data-slot="preview-rail-heading" />
+                      <span data-slot="preview-tab">
+                        <i />
+                        <span style={{ width: "55%" }} />
+                      </span>
+                    </div>
+                    <PreviewWorkspace />
+                  </div>
                 </Match>
               </Switch>
             </div>
