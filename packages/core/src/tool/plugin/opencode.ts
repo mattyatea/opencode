@@ -5,12 +5,14 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { Model } from "@opencode/schema/model"
 import { AbsolutePath } from "@opencode/schema/schema"
-import { Session } from "@opencode/schema/session"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { Effect, Schema } from "effect"
 import { toolFailure } from "../runtime.js"
 import { FileAccess } from "../../file-access.js"
 import { Git } from "../../git.js"
 import { Permission } from "../../permission.js"
+import { Project } from "../../project.js"
+import { Session } from "../../session.js"
 import { Worktree } from "../../worktree.js"
 
 export const RenameInput = Schema.Struct({
@@ -43,6 +45,64 @@ export const WorktreeRemoveInput = Schema.Struct({
 })
 
 const WorktreeRemoveOutput = Schema.Struct({ directory: AbsolutePath, removed: Schema.Boolean })
+
+const ProjectSummary = Schema.Struct({
+  id: Project.ID,
+  name: Schema.optionalKey(Schema.String),
+  canonical: AbsolutePath,
+})
+
+export const ProjectListInput = Schema.Struct({
+  query: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "Case-insensitive words that must all appear in the Project ID, name, or canonical directory.",
+    }),
+  ),
+  archived: Schema.optionalKey(Schema.Boolean.annotate({ description: "Include archived Projects. Defaults to false." })),
+})
+
+const ProjectListOutput = Schema.Struct({
+  projects: Schema.Array(ProjectSummary).annotate({ description: "Known Projects with real IDs and canonical directories." }),
+})
+
+export const SessionCreateInput = Schema.Struct({
+  projectID: Schema.optionalKey(
+    Project.ID.annotate({
+      description: "Exact Project ID from project_list. Use this when a name matches more than one Project.",
+    }),
+  ),
+  project: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Project ID or name to search for. Must resolve to exactly one Project; otherwise no session is created and candidates are returned.",
+    }),
+  ),
+  title: Schema.String.check(Schema.isMinLength(1)).annotate({
+    description: "Short title for the new independent session.",
+  }),
+  prompt: Schema.String.check(Schema.isMinLength(1)).annotate({
+    description: "Initial instruction to durably admit into the new session and start running.",
+  }),
+})
+
+const SessionCreated = Schema.Struct({
+  status: Schema.Literal("created"),
+  sessionID: Session.ID,
+  project: ProjectSummary,
+  title: Schema.String,
+  execution: Schema.Literals(["running", "idle"]).annotate({
+    description: "Whether this process owns an active execution for the session at return time.",
+  }),
+  admitted: SessionMessage.ID.annotate({ description: "Durable inbox item holding the admitted initial instruction." }),
+})
+
+const SelectProject = Schema.Struct({
+  status: Schema.Literal("select_project"),
+  candidates: Schema.Array(ProjectSummary),
+  message: Schema.String,
+})
+
+const SessionCreateOutput = Schema.Union([SessionCreated, SelectProject])
 
 export const ModelsInput = Schema.Struct({
   query: Schema.optionalKey(Schema.String).annotate({
@@ -97,6 +157,8 @@ export const Plugin = {
   effect: Effect.fn("OpenCodeTools.Plugin")(function* (ctx: Context) {
     const access = yield* FileAccess.Service
     const permission = yield* Permission.Service
+    const projects = yield* Project.Service
+    const sessions = yield* Session.Service
     const hook = (event: SessionHooks["context"]) =>
       Effect.sync(() => {
         event.system.push(
@@ -282,6 +344,86 @@ export const Plugin = {
               }
             }).pipe(Effect.mapError((error) => new ToolFailure({ message: "Unable to list models", error }))),
         })
+        draft.add({
+          name: "project_list",
+          description: [
+            "List the OpenCode Projects known to this installation with their exact ID and canonical directory.",
+            "Use this before session_create to resolve a Project name to one real ID.",
+            "The current working directory is not a Project selection; choose from this list.",
+          ].join("\n"),
+          input: ProjectListInput,
+          output: ProjectListOutput,
+          options: { namespace: "opencode", codemode: true, pinned: true },
+          execute: (input) =>
+            Effect.gen(function* () {
+              const list = yield* projects.list({ archived: input.archived ?? false })
+              const matching = input.query === undefined ? list : matchProjects(list, input.query)
+              return { output: { projects: matching.map(projectSummary) } }
+            }).pipe(Effect.mapError(toolFailure("Unable to list Projects"))),
+        })
+        draft.add({
+          name: "session_create",
+          description: [
+            "Create a new independent top-level main session in a chosen OpenCode Project and start it with an initial instruction.",
+            "Unlike a subagent, the new session has no parentID and runs in the selected Project's canonical directory.",
+            "Select the Project with an exact projectID from project_list, or a project name that matches exactly one Project.",
+            "An ambiguous or missing name returns candidates and creates nothing: no Project is chosen automatically.",
+            "Returns the created sessionID, the selected Project, and whether execution is actually running.",
+          ].join("\n"),
+          input: SessionCreateInput,
+          output: SessionCreateOutput,
+          options: { namespace: "opencode", codemode: true, pinned: true, permission: "opencode_session_create" },
+          execute: (input, context) =>
+            Effect.gen(function* () {
+              const title = input.title.trim()
+              const text = input.prompt.trim()
+              if (!title) return yield* new ToolFailure({ message: "Session title must not be empty" })
+              if (!text) return yield* new ToolFailure({ message: "Initial instruction must not be empty" })
+              const list = yield* projects.list()
+              const selection = selectProject(list, input)
+              if (selection.kind === "invalid") return yield* new ToolFailure({ message: selection.message })
+              if (selection.kind === "candidates")
+                return {
+                  output: {
+                    status: "select_project" as const,
+                    candidates: selection.candidates.map(projectSummary),
+                    message: selection.message,
+                  },
+                  content: selection.message,
+                }
+              const project = selection.project
+              // A stale canonical directory could resolve to a different Project; refuse instead of
+              // silently starting the session somewhere other than the Project the caller selected.
+              const resolved = yield* projects.resolve(project.canonical, { persist: false })
+              if (resolved.id !== project.id)
+                return yield* new ToolFailure({
+                  message: `The canonical directory ${project.canonical} no longer resolves to Project ${project.id}. Refresh the Project or choose another with project_list.`,
+                })
+              yield* permission.assert({
+                action: "opencode_session_create",
+                resources: [project.id],
+                save: [project.id],
+                ...Permission.invocation(context),
+              })
+              const session = yield* ctx.session.create({
+                title,
+                location: { directory: project.canonical },
+              })
+              const admitted = yield* ctx.session.prompt({ sessionID: session.id, text })
+              const running = (yield* sessions.active).has(session.id)
+              return {
+                output: {
+                  status: "created" as const,
+                  sessionID: session.id,
+                  project: projectSummary(project),
+                  title,
+                  execution: running ? ("running" as const) : ("idle" as const),
+                  admitted: admitted.id,
+                },
+                content: `Created independent session ${session.id} in Project ${project.name ?? project.id} at ${project.canonical}. Initial instruction admitted; execution ${running ? "running" : "idle"}.`,
+              }
+            }).pipe(Effect.mapError(toolFailure("Unable to create a session in the selected Project"))),
+        })
       })
       .pipe(Effect.orDie)
   }),
@@ -298,4 +440,59 @@ function removeFailure(directory: string, error: unknown) {
   if ((error instanceof Git.WorktreeError || error instanceof Worktree.OperationError) && error.forceRequired)
     return `Unable to remove worktree ${directory}: it has modified or untracked files.`
   return `Unable to remove worktree ${directory}.`
+}
+
+function projectSummary(project: Project.Info) {
+  return {
+    id: project.id,
+    ...(project.name === undefined ? {} : { name: project.name }),
+    canonical: project.canonical,
+  }
+}
+
+function matchProjects(list: ReadonlyArray<Project.Info>, query: string) {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+  return list.filter((project) => {
+    const text = `${project.id} ${project.name ?? ""} ${project.canonical}`.toLowerCase()
+    return terms.every((term) => text.includes(term))
+  })
+}
+
+type ProjectSelection =
+  | { readonly kind: "selected"; readonly project: Project.Info }
+  | { readonly kind: "candidates"; readonly candidates: ReadonlyArray<Project.Info>; readonly message: string }
+  | { readonly kind: "invalid"; readonly message: string }
+
+function selectProject(
+  list: ReadonlyArray<Project.Info>,
+  input: Schema.Schema.Type<typeof SessionCreateInput>,
+): ProjectSelection {
+  if (input.projectID !== undefined) {
+    const found = list.find((project) => project.id === input.projectID)
+    return found
+      ? { kind: "selected", project: found }
+      : {
+          kind: "invalid",
+          message: `No Project has ID ${input.projectID}. Use project_list to see the available Projects and pass an exact projectID.`,
+        }
+  }
+  if (input.project === undefined)
+    return {
+      kind: "candidates",
+      candidates: list,
+      message:
+        "No Project was specified. Choose an exact projectID from the candidates, or pass a project name that matches exactly one Project.",
+    }
+  const exact = list.find((project) => project.id === input.project)
+  if (exact) return { kind: "selected", project: exact }
+  const matching = matchProjects(list, input.project)
+  if (matching.length === 1) return { kind: "selected", project: matching[0] }
+  return {
+    kind: "candidates",
+    candidates: matching,
+    message:
+      matching.length === 0
+        ? `No Project matches "${input.project}". Use project_list to see the available Projects, then pass an exact projectID.`
+        : `Project name "${input.project}" matches ${matching.length} Projects. Pass an exact projectID from the candidates; no session was created.`,
+  }
 }

@@ -1,0 +1,216 @@
+import { expect } from "bun:test"
+import { Database } from "@opencode/core/database/database"
+import { Location } from "@opencode/core/location"
+import { Permission } from "@opencode/core/permission"
+import { Plugin } from "@opencode/core/plugin"
+import { PluginHost } from "@opencode/core/plugin/host"
+import { Project } from "@opencode/core/project"
+import { AbsolutePath } from "@opencode/core/schema"
+import { Session } from "@opencode/core/session"
+import { SessionExecution } from "@opencode/core/session/execution"
+import { SessionInbox } from "@opencode/core/session/inbox"
+import { SessionTable } from "@opencode/core/session/sql"
+import { Tool } from "@opencode/core/tool"
+import { OpenCodeTools } from "@opencode/core/tool/plugin/opencode"
+import { Effect, Layer } from "effect"
+import { tmpdirScoped } from "./fixture/tmpdir"
+import { testEffect } from "./lib/effect"
+import { permissionLayer } from "./lib/permission"
+import { executeTool, toolIdentity } from "./lib/tool"
+import { makePluginTestLayer } from "./plugin/fixture"
+
+// The model drain cannot run in a unit test, so this boundary records that `Session.prompt`
+// really asked the process-global execution service to start the newly created session.
+const wakes: Session.ID[] = []
+const active = new Set<Session.ID>()
+const execution = Layer.succeed(
+  SessionExecution.Service,
+  SessionExecution.Service.of({
+    active: Effect.sync(() => new Set(active)),
+    isActive: (sessionID) => Effect.sync(() => active.has(sessionID)),
+    resume: () => Effect.void,
+    wake: (sessionID) =>
+      Effect.sync(() => {
+        wakes.push(sessionID)
+        active.add(sessionID)
+      }),
+    interrupt: () => Effect.succeed(false),
+    awaitIdle: () => Effect.void,
+  }),
+)
+
+const approvals: Permission.AssertInput[] = []
+let reject = false
+const permission = permissionLayer({
+  assert: (input) =>
+    Effect.sync(() => approvals.push(input)).pipe(
+      Effect.andThen(
+        reject && input.action === "opencode_session_create"
+          ? Effect.fail(new Permission.CorrectedError({ feedback: "Session creation declined" }))
+          : Effect.void,
+      ),
+    ),
+})
+
+const it = testEffect(makePluginTestLayer(permission, undefined, [SessionExecution.node.replace(execution)]))
+
+const prepareProject = (directory: string, name: string) =>
+  Effect.gen(function* () {
+    const projects = yield* Project.Service
+    const resolved = yield* projects.resolve(AbsolutePath.make(directory))
+    yield* projects.update({ projectID: resolved.id, name })
+    return resolved.id
+  })
+
+const setup = () =>
+  Effect.gen(function* () {
+    const alpha = yield* tmpdirScoped()
+    const beta = yield* tmpdirScoped()
+    const alphaID = yield* prepareProject(alpha.path, "Alpha One")
+    const betaID = yield* prepareProject(beta.path, "Alpha Two")
+    const plugins = yield* Plugin.Service
+    const sessions = yield* Session.Service
+    const location = yield* Location.Service
+    const database = yield* Database.Service
+    yield* OpenCodeTools.Plugin.effect(yield* PluginHost.make(plugins, "test"))
+    const caller = yield* sessions.create({ location: Location.Ref.make({ directory: location.directory }) })
+    const registry = yield* Tool.Service
+    const call = (name: string, input: Record<string, unknown>) =>
+      executeTool(registry, {
+        sessionID: caller.id,
+        ...toolIdentity,
+        call: {
+          type: "tool-call",
+          id: `call-${name}-${JSON.stringify(input)}`,
+          name: "execute",
+          input: { code: `return await tools.opencode.${name}(${JSON.stringify(input)})` },
+        },
+      })
+    const run = (name: string, input: Record<string, unknown>) =>
+      call(name, input).pipe(
+        Effect.map((result) => JSON.parse(result.content?.[0]?.type === "text" ? result.content[0].text : "")),
+      )
+    const sessionCount = () =>
+      database.db.select().from(SessionTable).all().pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length),
+      )
+    return { alpha, beta, alphaID, betaID, sessions, location, database, call, run, sessionCount }
+  })
+
+it.effect("lists real Projects by ID, name, and canonical directory", () =>
+  Effect.gen(function* () {
+    const { alpha, beta, alphaID, betaID, run } = yield* setup()
+    const listed = yield* run("project_list", {})
+    expect(listed.projects).toEqual(
+      expect.arrayContaining([
+        { id: alphaID, name: "Alpha One", canonical: alpha.path },
+        { id: betaID, name: "Alpha Two", canonical: beta.path },
+      ]),
+    )
+    expect(yield* run("project_list", { query: "one" })).toEqual({
+      projects: [{ id: alphaID, name: "Alpha One", canonical: alpha.path }],
+    })
+    expect(yield* run("project_list", { query: "nomatch" })).toEqual({ projects: [] })
+  }),
+)
+
+it.effect("creates a parentless session in the selected Project, admits the instruction, and starts execution", () =>
+  Effect.gen(function* () {
+    wakes.length = 0
+    active.clear()
+    approvals.length = 0
+    reject = false
+    const { alpha, alphaID, sessions, location, database, run, sessionCount } = yield* setup()
+    const created = yield* run("session_create", {
+      projectID: alphaID,
+      title: "Task A",
+      prompt: "Do the thing",
+    })
+    expect(created).toMatchObject({
+      status: "created",
+      project: { id: alphaID, name: "Alpha One", canonical: alpha.path },
+      title: "Task A",
+      execution: "running",
+    })
+    expect(created.sessionID).toMatch(/^ses_/)
+    expect(typeof created.admitted).toBe("string")
+    expect(wakes).toContain(created.sessionID)
+    expect(approvals).toContainEqual(
+      expect.objectContaining({
+        action: "opencode_session_create",
+        resources: [alphaID],
+        save: [alphaID],
+      }),
+    )
+
+    const session = yield* sessions.get(created.sessionID)
+    expect(session.parentID).toBeUndefined()
+    expect(session.title).toBe("Task A")
+    expect(session.projectID).toBe(alphaID)
+    expect(session.location.directory).toBe(AbsolutePath.make(alpha.path))
+    expect(session.location.directory).not.toBe(location.directory)
+
+    const inbox = yield* SessionInbox.find(database.db, created.admitted)
+    expect(inbox).toMatchObject({
+      type: "user",
+      sessionID: created.sessionID,
+      payload: { text: expect.stringContaining("Do the thing") },
+    })
+    expect(yield* sessionCount()).toBe(2) // the caller plus the new independent session
+  }),
+)
+
+it.effect("resolves a unique Project name and refuses ambiguous, missing, or unknown selections", () =>
+  Effect.gen(function* () {
+    wakes.length = 0
+    active.clear()
+    approvals.length = 0
+    reject = false
+    const { beta, alphaID, betaID, sessions, run, call, sessionCount } = yield* setup()
+    const before = yield* sessionCount()
+
+    const named = yield* run("session_create", { project: "Alpha Two", title: "Named", prompt: "Second task" })
+    expect(named.status).toBe("created")
+    expect(named.project).toEqual({ id: betaID, name: "Alpha Two", canonical: beta.path })
+    expect((yield* sessions.get(named.sessionID)).location.directory).toBe(AbsolutePath.make(beta.path))
+
+    const ambiguous = yield* run("session_create", { project: "Alpha", title: "Ambiguous", prompt: "Ambiguous" })
+    expect(ambiguous.status).toBe("select_project")
+    expect(ambiguous.candidates).toHaveLength(2)
+    expect(ambiguous.candidates.map((candidate: { id: string }) => candidate.id)).toEqual(
+      expect.arrayContaining([alphaID, betaID]),
+    )
+    expect(ambiguous.message).toMatch(/projectID/)
+
+    const missing = yield* run("session_create", { project: "nomatch", title: "Nope", prompt: "Nope" })
+    expect(missing.status).toBe("select_project")
+    expect(missing.candidates).toEqual([])
+
+    const unspecified = yield* run("session_create", { title: "Nope", prompt: "Nope" })
+    expect(unspecified.status).toBe("select_project")
+    expect(unspecified.candidates.length).toBeGreaterThanOrEqual(2)
+
+    const unknown = yield* call("session_create", { projectID: "prj_missing", title: "Nope", prompt: "Nope" })
+    expect(unknown).toMatchObject({ metadata: { error: true } })
+
+    expect(yield* sessionCount()).toBe(before + 1)
+  }),
+)
+
+it.effect("applies normal permission approval before creating anything", () =>
+  Effect.gen(function* () {
+    wakes.length = 0
+    active.clear()
+    approvals.length = 0
+    const { alphaID, call, sessionCount } = yield* setup()
+    const before = yield* sessionCount()
+    reject = true
+    const denied = yield* call("session_create", { projectID: alphaID, title: "Denied", prompt: "Denied" })
+    expect(denied).toMatchObject({ metadata: { error: true } })
+    expect(denied).toMatchObject({ content: [{ type: "text", text: expect.stringContaining("declined") }] })
+    expect(yield* sessionCount()).toBe(before)
+    expect(wakes).toHaveLength(0)
+    reject = false
+  }),
+)
