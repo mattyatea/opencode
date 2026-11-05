@@ -42,6 +42,7 @@
     "./button": "./src/actions/button/button.tsx",
     "./button.css": "./src/actions/button/button.css",
     "./checkbox": "./src/forms/checkbox/checkbox.tsx",
+    "./clipboard": "./src/clipboard.ts",
     "./dialog": "./src/overlays/dialog/dialog.tsx",
     "./diff-changes": "./src/data-display/diff-changes/diff-changes.tsx",
     "./divider": "./src/layout/divider/divider.tsx",
