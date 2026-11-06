@@ -20,6 +20,14 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
     description:
       "Store new session media once in a deduplicated blob table instead of inline in every message row. Defaults to false.",
   }),
+  short_context_compaction: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Use at most a 48000-token window for compaction budgeting on every model, before applying compaction.buffer. Does not change the provider's model limits. Defaults to false.",
+  }),
+  handoff_compaction: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Write compaction summaries as forward-looking handoff briefs with dead ends, verification status, and completion conditions. Does not affect provider-native compaction. Defaults to false.",
+  }),
   image_generate: Schema.Union([
     Schema.Boolean,
     Schema.Struct({

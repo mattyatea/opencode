@@ -504,6 +504,24 @@ function normalizeExperimental(
         )
         if (value !== undefined) result.image_generate = value
       }
+      if (own(experimental, "short_context_compaction")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.short_context_compaction,
+          experimental.short_context_compaction,
+          ["experimental", "short_context_compaction"],
+          diagnostics,
+        )
+        if (value !== undefined) result.short_context_compaction = value
+      }
+      if (own(experimental, "handoff_compaction")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.handoff_compaction,
+          experimental.handoff_compaction,
+          ["experimental", "handoff_compaction"],
+          diagnostics,
+        )
+        if (value !== undefined) result.handoff_compaction = value
+      }
       if (own(experimental, "schedules")) {
         const value = decodeEncoded(
           ConfigExperimental.Info.fields.schedules,

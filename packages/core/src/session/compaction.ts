@@ -43,6 +43,13 @@ export type Settings = {
   auto: boolean
   /** Room kept free below the model's limits before compacting: a share such as "20%", or tokens. Unset keeps 15%, and at least 16k, free. */
   buffer?: number | string
+  /**
+   * The most context, in tokens, a conversation may reach on any model before compaction. The window the buffer is
+   * taken from becomes the smaller of this and the model's own. Unset or at least the model's window, it changes nothing.
+   */
+  limit?: number
+  /** Use the experimental forward-looking handoff summary prompt. */
+  handoff: boolean
   /** Tokens of recent conversation kept verbatim beside the summary. */
   keep: number
   /** Summarize in the background as the context nears the threshold, so automatic compaction can swap it in. */
@@ -163,7 +170,9 @@ const PRECOMPUTED_TAIL_SHARE = 0.25
 /** Failed background summaries after which no new one starts until the next compaction. */
 const PRECOMPUTE_MAX_FAILURES = 2
 
-const SUMMARY_TEMPLATE = `You MUST use this format for your response (you may omit sections that aren't applicable). Do not include the <template> tags in your response.
+const summaryTemplate = (
+  handoff: boolean,
+) => `You MUST use this format for your response (you may omit sections that aren't applicable). Do not include the <template> tags in your response.
 <template>
 ## Objective
 - [one or two brief sentences describing what the user is trying to accomplish]
@@ -185,12 +194,17 @@ Break the objective into smaller goals and report which are completed, which are
 ### Blocked
 - [anything blocking progress, and why; otherwise "(none)"]
 
-## Dead Ends
+${
+  handoff
+    ? `## Dead Ends
 - [approaches already tried that failed or were abandoned, each with why, so they are not repeated; otherwise "(none)"]
 
+`
+    : ""
+}\
 ## Next Move
 1. [ordered list of next actions, or "(none)"]
-- Done when: [the check or condition that shows the objective is complete, or "(not stated)"]
+${handoff ? '- Done when: [the check or condition that shows the objective is complete, or "(not stated)"]\n' : ""}\
 
 ## Relevant Files
 List the files and directories, other than the current working directory, that another agent would need to open to continue this work. Include at most 15, most important first. Do not list every file that was read or changed. Include paths outside the current working directory when relevant. If none, write "(none)".
@@ -201,8 +215,6 @@ List the files and directories, other than the current working directory, that a
 </template>`
 
 const SUMMARY_RULES = `Rules:
-- Write a brief for the work still to be done, not a narrative of what happened. Select what the next agent needs; weight facts by their relevance to the remaining work, not by how often they appeared.
-- Separate verified observations from assumptions and unverified ideas. For completed work, say which checks were run and whether the change was verified.
 - Keep each section concise. Use terse, single-line bullets, not prose paragraphs or nested lists.
 - Prefer short references over detailed restatement. It is fine to leave out information the next agent can recover from the code or the files listed above.
 - Preserve exact file paths, symbols, commands, error strings, URLs, and identifiers.
@@ -210,10 +222,16 @@ const SUMMARY_RULES = `Rules:
 - Preserve consequential workflow state, including whether changes are uncommitted, committed, pushed, under review, or merged.
 - Do not mention the summary process or that context was compacted.`
 
-export const buildPrompt = (update: boolean, legacy = false) => {
+export const buildPrompt = (update: boolean, legacy = false, handoff = false) => {
   const shared = [
     "Summarize only what the user and the assistant said and did. Leave out instructions and setup the assistant was given rather than told by the user: repository conventions, instruction files such as AGENTS.md, and environment details like the session ID. The next agent receives current versions of all of these separately.",
-    SUMMARY_TEMPLATE,
+    summaryTemplate(handoff),
+    ...(handoff
+      ? [
+          "Write a brief for the work still to be done, not a narrative of what happened. Select what the next agent needs; weight facts by their relevance to the remaining work, not by how often they appeared.",
+          "Separate verified observations from assumptions and unverified ideas. For completed work, say which checks were run and whether the change was verified.",
+        ]
+      : []),
     SUMMARY_RULES,
     "Do not continue the task or call tools.",
     "Return only the structured summary in the requested format. Do not include a preamble, explanation, or other commentary.",
@@ -237,7 +255,8 @@ export const buildPrompt = (update: boolean, legacy = false) => {
         ]
       : []),
     "Newer history always takes precedence over the existing checkpoint. Preserve previous information unless newer history clearly contradicts, supersedes, resolves, or makes it stale. If something is no longer relevant to continuing the work, you may remove it.",
-    "Incorporate newer requirements, decisions, progress, and context. Reconcile Work State and Next Move: move completed work out of Active, remove resolved blockers and answered questions, and preserve unresolved or pending work. Keep Dead Ends unless newer history shows the approach now works.",
+    "Incorporate newer requirements, decisions, progress, and context. Reconcile Work State and Next Move: move completed work out of Active, remove resolved blockers and answered questions, and preserve unresolved or pending work.",
+    ...(handoff ? ["Keep Dead Ends unless newer history shows the approach now works."] : []),
     "Return only the updated Markdown sections. Do not reproduce the `<conversation-checkpoint>`, `<summary>`, or `<recent-context>` wrapper tags from the previous checkpoint.",
     ...shared,
   ].join("\n\n")
@@ -265,7 +284,7 @@ export const layer = Layer.effect(
 
     const state = State.create<Settings, Editor>({
       name: "session-compaction",
-      initial: () => ({ auto: true, keep: 15_000, precompute: false }),
+      initial: () => ({ auto: true, keep: 15_000, precompute: false, handoff: false }),
       editor: (settings) => ({
         configure: (update) => {
           Object.assign(settings, update)
@@ -276,7 +295,7 @@ export const layer = Layer.effect(
     /** The model that writes the summary, and the request size it aims for. */
     const selectModel = Effect.fnUntraced(function* (
       context: SessionContext.Loaded,
-      buffer: Settings["buffer"],
+      settings: Pick<Settings, "buffer" | "limit">,
       native: boolean,
     ) {
       const agent = native ? undefined : yield* agents.get(Agent.ID.make("compaction"))
@@ -286,11 +305,11 @@ export const layer = Layer.effect(
             .resolve({ ...context.session, model: agent.model }, catalog.available)
             .pipe(Effect.orElseSucceed(() => undefined)))) ??
         context.model
-      const ceiling = calculateCeiling(model.limit, buffer)
-      // An unknown window never triggers auto compaction, but the compaction request still needs a size to aim for.
+      const ceiling = calculateCeiling(model.limit, settings.buffer, settings.limit)
+      // With neither a known window nor a configured cap, the summary still needs a size to aim for.
       const cap = Number.isFinite(ceiling)
         ? ceiling
-        : calculateCeiling({ ...model.limit, context: UNKNOWN_WINDOW }, buffer)
+        : calculateCeiling({ ...model.limit, context: UNKNOWN_WINDOW }, settings.buffer, settings.limit)
       return { context: model === context.model ? context : { ...context, model }, cap }
     })
 
@@ -302,13 +321,13 @@ export const layer = Layer.effect(
       if (trigger.reason !== "manual" && !settings.auto) return { status: "skipped" }
       if (
         trigger.reason === "auto" &&
-        !due(context, calculateCeiling(context.model.limit, settings.buffer), trigger.estimate)
+        !due(context, calculateCeiling(context.model.limit, settings.buffer, settings.limit), trigger.estimate)
       )
         return { status: "skipped" }
       const held = precomputed.get(context.session.id)
       precomputed.delete(context.session.id)
       const native = context.model.compaction?.type === "native"
-      const model = yield* selectModel(context, settings.buffer, native)
+      const model = yield* selectModel(context, settings, native)
       // The provider just rejected this context, so the estimate ran low; the first attempt already aims below it.
       const budget =
         trigger.reason === "overflow"
@@ -349,7 +368,7 @@ export const layer = Layer.effect(
       if (!settings.precompute || !settings.auto) return
       const context = yield* load
       if (context.model.compaction?.type === "native") return
-      const ceiling = calculateCeiling(context.model.limit, settings.buffer)
+      const ceiling = calculateCeiling(context.model.limit, settings.buffer, settings.limit)
       if (!Number.isFinite(ceiling)) return
       const estimate = given ?? estimatePrompt(context)
       if (due(context, ceiling, estimate)) return
@@ -358,7 +377,10 @@ export const layer = Layer.effect(
       const anchorIndex = context.messages.findLastIndex((message) => hasMeasuredPrompt(message, context.model.ref))
       const anchor = context.messages[anchorIndex]
       if (anchorIndex <= 0 || anchor?.type !== "assistant" || !anchor.tokens) return
-      if (anchor.tokens.input + anchor.tokens.cache.read + anchor.tokens.cache.write < PRECOMPUTE_MIN_TOKENS) return
+      // Under a configured limit the ceiling itself can sit below the usual floor, so half of it is enough there.
+      const floor =
+        settings.limit === undefined ? PRECOMPUTE_MIN_TOKENS : Math.min(PRECOMPUTE_MIN_TOKENS, Math.floor(ceiling / 2))
+      if (anchor.tokens.input + anchor.tokens.cache.read + anchor.tokens.cache.write < floor) return
 
       const sessionID = context.session.id
       const existing = precomputed.get(sessionID)
@@ -376,7 +398,7 @@ export const layer = Layer.effect(
       // After a model switch nothing is cached for the new model yet; wait until its first response has written it.
       if (anchor.model.id !== context.model.ref.id || anchor.model.variant !== context.model.ref.variant) return
 
-      const model = yield* selectModel(context, settings.buffer, false)
+      const model = yield* selectModel(context, settings, false)
       const usage: SessionUsage.Recorded[] = []
       const fiber = yield* summarize({ reason: "auto", context: model.context }, model.cap, settings.keep, {
         messages: context.messages.slice(0, anchorIndex),
@@ -470,8 +492,11 @@ export const layer = Layer.effect(
       const keepID = background ? undefined : split.keepID
 
       const previous = previousCompaction(messages)
-      const prompt = buildPrompt(previous !== undefined, previous?.summary.includes(LEGACY_HEADING) ?? false)
-      const headings = SUMMARY_TEMPLATE.split("\n").filter((line) => line.startsWith("##"))
+      const handoff = state.get().handoff
+      const prompt = buildPrompt(previous !== undefined, previous?.summary.includes(LEGACY_HEADING) ?? false, handoff)
+      const headings = summaryTemplate(handoff)
+        .split("\n")
+        .filter((line) => line.startsWith("##"))
       const filled = (text: string) => text.split("\n").some((line) => headings.includes(line.trim()))
       const prepared = yield* prepare(context, messages, budget)
       // Size the unchanged request with the number that decided to compact: the last response's count plus an
@@ -1138,9 +1163,15 @@ export const estimatePrompt = (context: SessionContext.Loaded): Estimate => {
  * `RESERVE_MIN` when that is more. A summary request that must be shrunk is aimed at the same size. A window too small
  * to give up `RESERVE_MIN` keeps `RESERVE_SHARE`.
  */
-const calculateCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer: Settings["buffer"]) => {
-  // With no window at all, only a provider rejection can limit the request.
-  const window = inputWindow(limit)
+const calculateCeiling = (
+  limit: SessionContext.Loaded["model"]["limit"],
+  buffer: Settings["buffer"],
+  cap: Settings["limit"] = undefined,
+) => {
+  // A configured cap also budgets models whose window is unknown.
+  const model = inputWindow(limit)
+  // A configured limit narrows every model to the same window, so short-context compaction needs one setting.
+  const window = cap !== undefined && cap > 0 ? Math.min(cap, model > 0 ? model : cap) : model
   if (window <= 0) return Number.POSITIVE_INFINITY
   const tokens = typeof buffer === "string" ? Math.round((window * Number.parseFloat(buffer)) / 100) : buffer
   // A buffer that leaves no room, such as one set for a larger model, is ignored.

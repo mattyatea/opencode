@@ -17,6 +17,7 @@ import { Location } from "@opencode/core/location"
 import { Project } from "@opencode/core/project"
 import { AbsolutePath } from "@opencode/core/schema"
 import { ConfigCompaction } from "@opencode/schema/config/compaction"
+import { ConfigExperimental } from "@opencode/schema/config/experimental"
 import { Document, Event, Info } from "@opencode/schema/config"
 import { Money } from "@opencode/schema/money"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -36,13 +37,17 @@ const resolved = SessionRunnerModel.resolved(model, {
   limit,
 })
 const config = Config.testLayer()
+const prompts: string[] = []
 const it = testEffect(
   Layer.merge(
     config,
     AppNodeBuilder.build(LayerNode.group([SessionCompaction.node, SessionModelRequest.node, Config.node, Bus.node]), [
       llmClient.replace(
         Layer.mock(LLMClient.Service)({
-          stream: () => Stream.make(LLMEvent.textDelta({ id: "summary", text: "## Objective\n- summary" })),
+          stream: (request) => {
+            prompts.push(JSON.stringify(request.messages))
+            return Stream.make(LLMEvent.textDelta({ id: "summary", text: "## Objective\n- summary" }))
+          },
         }),
       ),
       Config.node.replace(config),
@@ -104,6 +109,7 @@ describe("ConfigCompactionPlugin.Plugin", () => {
         }),
       ).toEqual({ status: "completed" })
       expect(Option.getOrThrow(yield* Fiber.join(ended)).metadata?.keepID).toBe(messages[1].id)
+      expect(prompts.at(-1)).not.toContain("## Dead Ends")
 
       yield* config.setEntries([
         new Document({
@@ -132,11 +138,62 @@ describe("ConfigCompactionPlugin.Plugin", () => {
         }),
       ])
       yield* bus.publish(Event.Updated, {})
-      for (let attempt = 0; attempt < 200; attempt++) {
-        if (yield* due(bufferedInput)) return
-        yield* Effect.sleep("10 millis")
+      yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 200; attempt++) {
+          if (yield* due(bufferedInput)) return
+          yield* Effect.sleep("10 millis")
+        }
+        yield* Effect.die(new Error("Timed out waiting for compaction config reload"))
+      })
+
+      // A configured limit caps the window below the model's own, so a short context is already due.
+      expect(yield* due(cappedInput)).toBe(false)
+      yield* config.setEntries([
+        new Document({
+          type: "document",
+          info: new Info({
+            compaction: new ConfigCompaction.Info({ auto: true }),
+            experimental: new ConfigExperimental.Info({ short_context_compaction: true, handoff_compaction: true }),
+          }),
+        }),
+      ])
+      yield* bus.publish(Event.Updated, {})
+      yield* Effect.gen(function* () {
+        const deadline = Date.now() + 10_000
+        while (Date.now() < deadline) {
+          if (yield* due(cappedInput)) return
+          yield* Effect.sleep("10 millis")
+        }
+        yield* Effect.die(new Error("Timed out waiting for short-context compaction reload"))
+      })
+      yield* compaction.compact({
+        reason: "manual",
+        context: { ...nearInput.context, messages },
+        inputID: SessionMessage.ID.create(),
+      })
+      expect(prompts.at(-1)).toContain("## Dead Ends")
+      for (const experimental of [
+        new ConfigExperimental.Info({ short_context_compaction: false, handoff_compaction: false }),
+        new ConfigExperimental.Info({ short_context_compaction: true, handoff_compaction: true }),
+        undefined,
+      ]) {
+        yield* config.setEntries([new Document({ type: "document", info: new Info({ experimental }) })])
+        yield* bus.publish(Event.Updated, {})
+        yield* Effect.gen(function* () {
+          const deadline = Date.now() + 10_000
+          while (Date.now() < deadline) {
+            if ((yield* due(cappedInput)) === (experimental?.short_context_compaction === true)) return
+            yield* Effect.sleep("10 millis")
+          }
+          yield* Effect.die(new Error("Timed out waiting for short-context compaction to update"))
+        })
+        yield* compaction.compact({
+          reason: "manual",
+          context: { ...nearInput.context, messages },
+          inputID: SessionMessage.ID.create(),
+        })
+        expect(prompts.at(-1)?.includes("## Dead Ends")).toBe(experimental?.handoff_compaction === true)
       }
-      yield* Effect.die(new Error("Timed out waiting for compaction config reload"))
     }),
   )
 })
@@ -177,3 +234,5 @@ const input = (tokens: number) => {
 }
 const bufferedInput = input(85_000)
 const nearInput = input(95_000)
+// Under a 48k limit with the default reserve, compaction is due at 32k.
+const cappedInput = input(32_000)

@@ -579,6 +579,15 @@ describe("ConfigNormalize", () => {
     })
   })
 
+  test("normalizes opt-in compaction flags without treating strings as booleans", () => {
+    for (const key of ["short_context_compaction", "handoff_compaction"]) {
+      for (const value of [true, false]) {
+        expect(normalized({ experimental: { [key]: value } }).encoded.experimental).toMatchObject({ [key]: value })
+      }
+      expect(normalized({ experimental: { [key]: "true" } }).encoded.experimental).not.toHaveProperty(key)
+    }
+  })
+
   test("normalizes the image_generate setting", () => {
     for (const [value, expected] of [
       [true, true],

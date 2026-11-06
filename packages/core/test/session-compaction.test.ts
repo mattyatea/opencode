@@ -366,7 +366,6 @@ test("compaction prompt requires the checkpoint headings in order", () => {
     "### Completed",
     "### Active",
     "### Blocked",
-    "## Dead Ends",
     "## Next Move",
     "## Relevant Files",
     "## Important Context",
@@ -382,14 +381,22 @@ test("compaction update prompt rewrites legacy checkpoints only when asked", () 
 
 test("compaction prompts ask for a forward-looking brief with dead ends and a completion condition", () => {
   for (const update of [false, true]) {
-    const prompt = SessionCompaction.buildPrompt(update)
+    const prompt = SessionCompaction.buildPrompt(update, false, true)
     expect(prompt).toContain("Write a brief for the work still to be done, not a narrative of what happened")
     expect(prompt).toContain("Separate verified observations from assumptions and unverified ideas")
     expect(prompt).toContain("Done when:")
   }
-  expect(SessionCompaction.buildPrompt(true)).toContain(
+  expect(SessionCompaction.buildPrompt(true, false, true)).toContain(
     "Keep Dead Ends unless newer history shows the approach now works",
   )
+})
+
+test("handoff compaction is opt-in for new and updated checkpoints", () => {
+  for (const update of [false, true]) {
+    expect(SessionCompaction.buildPrompt(update)).not.toContain("## Dead Ends")
+    expect(SessionCompaction.buildPrompt(update, false, false)).not.toContain("Done when:")
+    expect(SessionCompaction.buildPrompt(update, false, true)).toContain("## Dead Ends")
+  }
 })
 
 test("compaction prompts prohibit task execution", () => {
@@ -480,6 +487,39 @@ it.effect("auto compaction estimates current content against the buffered prompt
         yield* compaction.transform((editor) => editor.configure({ buffer: "25%" }))
         expect(yield* due(input(74_999, contextLimited))).toBe(false)
         expect(yield* due(input(75_000, contextLimited))).toBe(true)
+      }),
+    )
+
+    // A configured limit caps every model at the same window; the buffer is then taken from that window.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* compaction.transform((editor) => editor.configure({ limit: 48_000 }))
+        // 48k minus the 16k reserve floor on a 100k model.
+        expect(yield* due(input(31_999, contextLimited))).toBe(false)
+        expect(yield* due(input(32_000, contextLimited))).toBe(true)
+        // The same point on a 400k/272k model.
+        expect(yield* due(input(31_999, inputLimited))).toBe(false)
+        expect(yield* due(input(32_000, inputLimited))).toBe(true)
+        const unknown = { context: 0, output: 0 }
+        expect(yield* due(input(31_999, unknown))).toBe(false)
+        expect(yield* due(input(32_000, unknown))).toBe(true)
+        expect(yield* due(native(32_000, unknown))).toBe(true)
+        const smaller = { context: 32_000, output: 1_000 }
+        expect(yield* due(input(15_999, smaller))).toBe(false)
+        expect(yield* due(input(16_000, smaller))).toBe(true)
+        // A percentage buffer is a share of the capped window.
+        yield* compaction.transform((editor) => editor.configure({ buffer: "25%" }))
+        expect(yield* due(input(35_999, contextLimited))).toBe(false)
+        expect(yield* due(input(36_000, contextLimited))).toBe(true)
+      }),
+    )
+
+    // A limit at least as large as the model's window changes nothing.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* compaction.transform((editor) => editor.configure({ limit: 100_000 }))
+        expect(yield* due(input(83_999, contextLimited))).toBe(false)
+        expect(yield* due(input(84_000, contextLimited))).toBe(true)
       }),
     )
 
@@ -1285,6 +1325,25 @@ it.effect("automatic compaction swaps in the background summary without another 
         Bus.versionedType(SessionEvent.Compaction.Ended.type, 1),
       ].toSorted(),
     )
+  }),
+)
+
+it.effect("short-context compaction precomputes below 64k and uses the handoff prompt", () =>
+  Effect.gen(function* () {
+    requests = []
+    const compaction = yield* enablePrecompute
+    yield* compaction.transform((editor) => editor.configure({ limit: 48_000, handoff: true }))
+    const session = yield* insertSession(Session.ID.make("ses_precompute_short"))
+    const near = [textUser("First question"), measured("First answer", 28_000)]
+    const due = [...near, textUser("Second question"), measured("Second answer", 33_000)]
+
+    yield* compaction.precompute(Effect.succeed(loaded(session, near)))
+    expect(yield* compaction.compact({ reason: "auto", context: loaded(session, due) })).toEqual({
+      status: "completed",
+    })
+    expect(requests).toHaveLength(1)
+    expect(JSON.stringify(requests[0].messages)).toContain("## Dead Ends")
+    expect(JSON.stringify(requests[0].messages)).not.toContain("Second answer")
   }),
 )
 

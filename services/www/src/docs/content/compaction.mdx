@@ -102,6 +102,51 @@ Add `compaction` to any [OpenCode configuration file](/config):
 - A token count such as `20000` also works. The same count is a large share of a small window and a small share of a large one.
 - A token count at least as large as the model's window is ignored and the default applies.
 
+### Experimental short context
+
+Enable `experimental.short_context_compaction` to budget compaction against at most
+48,000 tokens on every model, before applying `buffer`:
+
+```jsonc title="opencode.jsonc"
+{
+  "experimental": {
+    "short_context_compaction": true,
+  },
+  "compaction": {
+    "buffer": "25%",
+    "keep": { "tokens": 10000 },
+  },
+}
+```
+
+| Model window | The example above compacts at |
+| ---: | ---: |
+| 32k | 24k, from the model's own window |
+| 200k or 1M | 36k, from the 48k limit |
+
+- The default buffer reserves at least 16k, so automatic compaction starts at 32k. The example's explicit 25% buffer starts at 36k.
+- Smaller model input windows still take precedence. Models with unknown windows use the 48k budget too. The provider's model limits are unchanged.
+- This is a compaction budget, not a strict limit on each outgoing request. Fixed instructions, tool definitions, and new tool results can exceed it.
+- More frequent summaries can lose detail and change cache usage, latency, and cost. These effects depend on the workload and provider.
+- The flag defaults to `false`. Set it to `false` or remove it to restore model-sized budgeting. Background compaction remains a separate opt-in.
+
+### Experimental handoff summaries
+
+Enable `experimental.handoff_compaction` to focus summaries on remaining work,
+failed approaches, verification status, and completion conditions:
+
+```jsonc title="opencode.jsonc"
+{
+  "experimental": {
+    "handoff_compaction": true,
+  },
+}
+```
+
+This flag defaults to `false` and works independently of short-context budgeting.
+Set it to `false` or remove it to restore the standard summary prompt.
+It does not change provider-native compaction.
+
 ## Model
 
 By default OpenCode writes the summary itself, using the session's model. Set
@@ -146,7 +191,7 @@ threshold              the held summary is swapped in; everything since it is ke
 | --- | --- |
 | Cost | The summary request reuses the prompt cache. A summary that is never used still costs tokens. |
 | Falls back | Compaction summarizes as usual if too much conversation arrived since the held summary, or if the model, instructions, or start of the conversation changed. |
-| Skipped | Not used for native compaction, in sessions under about 64k tokens, right after a model switch, or when a provider rejects a request as too long. |
+| Skipped | Not used for native compaction, right after a model switch, or when a provider rejects a request as too long. The measured-input minimum is normally 64k; short-context mode lowers it to half the compaction threshold when smaller. |
 | Storage | Held summaries live in memory and are lost on restart. |
 
 ## Providers
@@ -190,7 +235,9 @@ after    [ encrypted checkpoint + recent user messages ]
 
 ## Summaries
 
-The summary is structured so another agent could pick the work up from it:
+The summary is structured so another agent could pick the work up from it.
+With `experimental.handoff_compaction` enabled, it also includes failed approaches
+and a completion condition:
 
 ```md
 ## Objective
@@ -205,10 +252,10 @@ Finish the authentication migration.
 - Done when: the login e2e test passes.
 ```
 
-It covers the objective and requirements, decisions, completed and active work,
-blockers, dead ends, next moves with a completion condition, and relevant files.
-The summary is written as a brief for the remaining work rather than a history
-of the conversation, and it separates verified observations from assumptions.
+The standard summary covers the objective and requirements, decisions, completed
+and active work, blockers, next moves, and relevant files.
+The experimental handoff prompt additionally emphasizes remaining work and separates
+verified observations from assumptions.
 In the recent conversation kept beside it, long tool output is shortened and
 attachment data is replaced by a short description.
 
