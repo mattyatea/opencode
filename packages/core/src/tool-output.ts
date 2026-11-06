@@ -67,7 +67,6 @@ const layer = Layer.effect(
     })
 
     const truncate = Effect.fnUntraced(function* (result: Result) {
-      if (result.metadata?.truncated !== undefined) return result
       const content = result.content
       const text = content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n")
       const limits = state.get()
@@ -75,7 +74,9 @@ const layer = Layer.effect(
       if (text.endsWith("\n")) lines.pop()
       const totalBytes = Buffer.byteLength(text, "utf-8")
       if (lines.length <= limits.maxLines && totalBytes <= limits.maxBytes)
-        return { ...result, metadata: { ...result.metadata, truncated: false } }
+        return result.metadata?.truncated !== undefined
+          ? result
+          : { ...result, metadata: { ...result.metadata, truncated: false } }
 
       const kept: string[] = []
       let bytes = 0
@@ -85,9 +86,13 @@ const layer = Layer.effect(
         kept.push(line)
         bytes += size
       }
-      const file = path.join(directory, fileName())
-      yield* fs.ensureDir(directory).pipe(Effect.orDie)
-      yield* fs.writeFileString(file, text).pipe(Effect.orDie)
+      const previous = result.metadata?.outputPath
+      const retained = typeof previous === "string" && (yield* fs.exists(previous).pipe(Effect.orDie))
+      const file = retained ? previous : path.join(directory, fileName())
+      if (!retained) {
+        yield* fs.ensureDir(directory).pipe(Effect.orDie)
+        yield* fs.writeFileString(file, text).pipe(Effect.orDie)
+      }
       const shown = kept.length > 0 ? `lines 1-${kept.length}` : "0 lines"
       const marker = `[showing ${shown} of ${lines.length}; full output saved to ${file}]`
       const bounded: Tool.Content[] = []

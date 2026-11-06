@@ -16,6 +16,11 @@ type Experiment = {
 // unconditional) or dies (delete the entry and the branch it gated).
 export const experiments: Experiment[] = [
   {
+    id: "paste-files",
+    title: "Large paste files",
+    description: "Upload large text pastes as paste.txt references instead of sending their contents inline",
+  },
+  {
     id: "new-designs",
     title: "New designs",
     description: "Preview the new TUI designs",

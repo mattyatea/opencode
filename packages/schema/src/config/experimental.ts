@@ -6,6 +6,10 @@ import { ConfigModel } from "./model.js"
 import { ConfigPolicy } from "./policy.js"
 
 export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
+  paste_files: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Upload large text pastes as readable paste.txt references instead of sending their contents inline. Defaults to false.",
+  }),
   portable_shell_scanner: Schema.Boolean.pipe(optional).annotate({
     description: "Deprecated: the built-in shell permission scanner is now always enabled.",
   }),

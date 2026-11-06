@@ -1,4 +1,5 @@
 import { Predicate } from "effect"
+import { largePaste } from "@opencode/util/paste"
 import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useFilteredList } from "@opencode/ui/hooks"
@@ -143,11 +144,16 @@ export function createComposerEditor(input: {
   const attachments = input.attachments
     ? createComposerAttachments({
         ...input.attachments,
-        capture: () => ({
-          current: () => draft.state.prompt,
-          cursor: () => draft.state.cursor,
-          set: (prompt, cursor) => draft.setPrompt(prompt, cursor),
-        }),
+        capture: () => {
+          const store = Predicate.isFunction(input.store) ? input.store() : input.store
+          const target = createComposerEditorActions([draft.state, store[1]])
+
+          return {
+            current: () => target.state.prompt,
+            cursor: () => target.state.cursor,
+            set: (prompt, cursor) => target.setPrompt(prompt, cursor),
+          }
+        },
         editor: () => editor,
         focusEditor: () => editor?.focus(),
         addPart,
@@ -708,7 +714,14 @@ export function createComposerEditor(input: {
       const clipboard = event.clipboardData
       const text = clipboard?.getData("text/plain")
 
-      if (attachments && shouldHandlePasteAsAttachment(clipboard, !!input.attachments?.readClipboardImage)) {
+      if (
+        attachments &&
+        shouldHandlePasteAsAttachment(
+          clipboard,
+          !!input.attachments?.readClipboardImage,
+          input.attachments?.pasteFiles?.(),
+        )
+      ) {
         resetCycle()
         void attachments.handlePaste(event)
 
@@ -785,8 +798,14 @@ export function createComposerEditor(input: {
 
 export type ComposerEditorModel = ReturnType<typeof createComposerEditor>
 
-export function shouldHandlePasteAsAttachment(clipboard: DataTransfer | null, readClipboardImage: boolean) {
+export function shouldHandlePasteAsAttachment(
+  clipboard: DataTransfer | null,
+  readClipboardImage: boolean,
+  pasteFiles = false,
+) {
   if (Array.from(clipboard?.items ?? []).some((item) => item.kind === "file")) return true
+
+  if (pasteFiles && largePaste((clipboard?.getData("text/plain") ?? "").replace(/\r\n?/g, "\n"))) return true
 
   if (Array.from(clipboard?.types ?? []).some((type) => type.startsWith("text/"))) return false
 

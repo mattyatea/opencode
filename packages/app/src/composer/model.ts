@@ -499,6 +499,11 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
       return () => command.trigger(selected.id, "slash")
     },
     attachments: {
+      pasteFiles: () =>
+        data.location.config
+          .list({ directory: sdk().directory })
+          ?.flatMap((entry) => (entry.type === "document" && entry.info.experimental ? [entry.info.experimental] : []))
+          .at(-1)?.paste_files === true,
       picker: platform.openAttachmentPickerDialog,
       directory: () => sdk().directory,
       destination: useAttachmentDestination(adapter.controls),

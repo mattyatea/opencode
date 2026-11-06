@@ -67,6 +67,176 @@ const call = (name: "glob" | "grep", input: unknown) => ({
 })
 
 describe("search tools", () => {
+  it.live("merges native grep context and counts only matching lines", () =>
+    withTempDir((tmp) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          Bun.write(path.join(tmp.path, "file.txt"), "before\nneedle\nshared\nneedle\nafter\nfar\n"),
+        )
+        yield* withTools(tmp.path, (registry) =>
+          Effect.gen(function* () {
+            const result = yield* executeTool(registry, call("grep", { pattern: "needle", context: 1 }))
+            expect(result).toMatchObject({
+              status: "completed",
+              metadata: { matches: 2, truncated: false },
+              output: [
+                { line: 1, text: "before\n", context: true },
+                { line: 2, text: "needle\n", context: false },
+                { line: 3, text: "shared\n", context: true },
+                { line: 4, text: "needle\n", context: false },
+                { line: 5, text: "after\n", context: true },
+              ],
+            })
+            const text = result.content?.[0]?.type === "text" ? result.content[0].text : ""
+            expect(text).toContain("Found 2 matches")
+            expect(text).toContain("Context 3: shared")
+            expect(text).toContain("Line 4: needle")
+            const limited = yield* executeTool(registry, call("grep", { pattern: "needle", context: 1, limit: 1 }))
+            expect(limited).toMatchObject({
+              metadata: { matches: 1, truncated: true },
+              output: [
+                { line: 1, context: true },
+                { line: 2, context: false },
+                { line: 3, context: true },
+              ],
+            })
+            const exact = yield* executeTool(registry, call("grep", { pattern: "needle", context: 1, limit: 2 }))
+            expect(exact.metadata).toEqual({ matches: 2, truncated: false })
+          }),
+        )
+      }),
+    ),
+  )
+
+  it.live("returns distinct matching file paths without line content", () =>
+    withTempDir((tmp) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          Promise.all([
+            Bun.write(path.join(tmp.path, "one.ts"), "needle\nneedle\nneedle\n"),
+            Bun.write(path.join(tmp.path, "two.ts"), "needle\n"),
+            Bun.write(path.join(tmp.path, "skip.txt"), "needle\n"),
+          ]),
+        )
+        yield* withTools(tmp.path, (registry) =>
+          Effect.gen(function* () {
+            const result = yield* executeTool(
+              registry,
+              call("grep", { pattern: "needle", include: "*.ts", output: "files", context: 20 }),
+            )
+            expect(result.metadata).toEqual({ matches: 2, truncated: false })
+            expect(result.output).toEqual(
+              expect.arrayContaining([
+                { path: "one.ts", type: "file" },
+                { path: "two.ts", type: "file" },
+              ]),
+            )
+            expect(result.output).toHaveLength(2)
+            const text = result.content?.[0]?.type === "text" ? result.content[0].text : ""
+            expect(text.split("\n").sort()).toEqual([path.join(tmp.path, "one.ts"), path.join(tmp.path, "two.ts")])
+            const limited = yield* executeTool(
+              registry,
+              call("grep", { pattern: "needle", include: "*.ts", output: "files", limit: 1 }),
+            )
+            expect(limited.metadata).toEqual({ matches: 1, truncated: true })
+            expect(limited.output).toHaveLength(1)
+            const file = yield* executeTool(
+              registry,
+              call("grep", { pattern: "needle", path: "one.ts", output: "files", limit: 1 }),
+            )
+            expect(file).toMatchObject({
+              output: [{ path: "one.ts", type: "file" }],
+              metadata: { matches: 1, truncated: false },
+            })
+          }),
+        )
+      }),
+    ),
+  )
+
+  for (const options of [{ context: 2 }, { output: "files" }]) {
+    it.live(`preserves empty, invalid, literal and case-sensitive searches with ${JSON.stringify(options)}`, () =>
+      withTempDir((tmp) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => Bun.write(path.join(tmp.path, "file.txt"), "Alpha[Beta]\n"))
+          yield* withTools(tmp.path, (registry) =>
+            Effect.gen(function* () {
+              const empty = yield* executeTool(registry, call("grep", { pattern: "alpha", ...options }))
+              expect(empty).toMatchObject({
+                output: [],
+                content: [{ type: "text", text: "No matches found" }],
+                metadata: { matches: 0, truncated: false },
+              })
+              const literal = yield* executeTool(
+                registry,
+                call("grep", { pattern: "alpha[beta]", literal: true, caseSensitive: false, ...options }),
+              )
+              expect(literal.metadata).toEqual({ matches: 1, truncated: false })
+              const invalid = yield* executeTool(registry, call("grep", { pattern: "[", ...options }))
+              expect(invalid).toMatchObject({
+                status: "error",
+                error: { message: expect.stringContaining("Invalid regex pattern:") },
+              })
+              const missing = yield* executeTool(
+                registry,
+                call("grep", { pattern: "needle", path: "missing", ...options }),
+              )
+              expect(missing).toMatchObject({
+                status: "error",
+                error: { message: "Search path does not exist: missing" },
+              })
+            }),
+          )
+        }),
+      ),
+    )
+  }
+
+  it.live("bounds context output independently of the matching-line limit", () =>
+    withTempDir((tmp) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          Bun.write(
+            path.join(tmp.path, "file.txt"),
+            Array.from({ length: 1200 }, (_, i) => (i % 2 ? "needle\n" : "context\n")).join(""),
+          ),
+        )
+        yield* withTools(tmp.path, (registry) =>
+          Effect.gen(function* () {
+            const result = yield* executeTool(registry, call("grep", { pattern: "needle", context: 20, limit: 1000 }))
+            expect(result.metadata).toEqual({ matches: 500, truncated: true })
+            expect(result.output).toHaveLength(1000)
+            yield* Effect.promise(() =>
+              Bun.write(path.join(tmp.path, "large.txt"), `${"needle" + "x".repeat(70 * 1024)}\n`.repeat(200)),
+            )
+            const large = yield* executeTool(
+              registry,
+              call("grep", { pattern: "^needle.*", path: "large.txt", context: 20, limit: 1000 }),
+            )
+            expect(large.status).toBe("completed")
+            expect(large.metadata?.truncated).toBe(true)
+            expect(large.metadata?.matches).toBeGreaterThan(0)
+            expect(JSON.stringify(large.output).length).toBeLessThan(200_000)
+            expect(large.content?.[0]?.type === "text" ? large.content[0].text : "").not.toContain("No matches found")
+          }),
+        )
+      }),
+    ),
+  )
+
+  it.live("rejects out-of-range grep context", () =>
+    withTempDir((tmp) =>
+      withTools(tmp.path, (registry) =>
+        Effect.gen(function* () {
+          for (const context of [-1, 21, 1.5]) {
+            const result = yield* executeTool(registry, call("grep", { pattern: "needle", context }))
+            expect(result.status).toBe("error")
+          }
+        }),
+      ),
+    ),
+  )
+
   for (const hidden of [undefined, false, true]) {
     for (const limit of hidden ? [10] : [1, 10]) {
       it.live(`glob honors hidden=${hidden} before limit=${limit}`, () =>

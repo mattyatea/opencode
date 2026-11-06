@@ -12,7 +12,11 @@ The tools listed below${hasMoreTools ? ", and \`search\`," : ""} cannot be calle
 
 ${hasMoreTools ? `The catalog is partial. Before calling a tool that is not listed below, find it with the global \`search(...)\` function. Do not guess tool names. Each result's \`path\` is the complete call expression: write it out as code, for example \`await tools.ns.tool_name({ ... })\`. Do not use it as a key such as \`tools[path]\`.
 
+Scope discovery with a known tool-owner \`namespace\` (not a workspace, account, or customer ID), a specific query, and a small \`limit\`. Omit an unknown namespace; if it returns no matches, change the scope rather than repeating queries within it. For broad candidate selection, use \`detail: "summary"\` to retain full descriptions without signatures; then search the selected exact path with \`detail: "full"\` before invoking it. Reuse a full specification already present in context; for a known exact path, request full detail directly. Search is lexical, not translation: use terms present in tool names or descriptions.
+
 - ${searchSignature}` : "The catalog is complete. Do not guess tool names."}
+
+Reduce results before returning them: filter by the requested facts, select only necessary fields, and bound lists and text. Do not return entire catalogs, raw response objects, or full Promise.allSettled results when a small evidence table suffices. Keep source IDs/URLs, relevant timestamps, errors, and truncation/pagination signals. Batch independent calls in one execution when possible, but do not hide partial failures or guess missing facts. For code or values, retrieve content with a small context window; filenames alone are only sufficient when the task asks for paths. If output is saved to a file, search or read only the necessary range instead of reloading the entire file.
 
 ## Code Mode tools (call only inside \`execute\`)`
 

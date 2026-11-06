@@ -2561,6 +2561,7 @@ export type ConfigEntry =
           }
         }
         experimental?: {
+          paste_files?: boolean
           portable_shell_scanner?: boolean
           todo?: boolean
           background_compaction?: boolean

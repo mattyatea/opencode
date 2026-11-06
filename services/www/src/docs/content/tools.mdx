@@ -63,6 +63,28 @@ The default limit is 100 matching lines and the search timeout is 30 seconds.
 Permission: `grep` with the requested pattern, not the search path, as its
 resource.
 
+Use `context` to include up to 20 neighboring lines on each side of a match.
+Overlapping windows are merged, and context lines are distinguished from matches:
+
+```json
+{ "pattern": "^export function lookup", "path": "src", "context": 5, "limit": 10 }
+```
+
+`limit` counts matching lines, not context. Context output has an additional cap
+of 1,000 total lines and 200,000 preview characters; a truncated result says so.
+Definitions and references are different searches: an import match alone does
+not establish a declaration or its behavior.
+
+Use `output: "files"` when you only need distinct matching paths:
+
+```json
+{ "pattern": "request timed out", "literal": true, "path": "src", "output": "files" }
+```
+
+In files mode, `limit` counts files and `context` is ignored. Keep the default
+content mode when code or values are needed, so locating files does not add
+unnecessary reads. Existing regex, case, include, and permission behavior is unchanged.
+
 ### Edit
 
 `edit` replaces text in an existing file. Supply `path`, `oldString`, and a
@@ -238,6 +260,22 @@ Denying `execute` with resource `*` removes Code Mode and every tool reached onl
 through it, including MCP tools from servers that do not set `codemode: false`.
 Nested built-in and MCP tools still enforce their own permissions, and plugin
 tools enforce the permissions they assert.
+
+For broad tool discovery, request candidate descriptions without signatures,
+then retrieve the chosen tool's full specification before invoking it:
+
+```js
+return search({ namespace: "my_server", query: "lookup", detail: "summary", limit: 3 })
+```
+
+```js
+return search({ query: "tools.my_server.lookup", detail: "full" })
+```
+
+The default is full detail. Summary mode preserves complete descriptions and
+pagination; it does not provide the argument schema needed to call a tool.
+Search matches words in the catalog, including Unicode text, but does not
+translate queries. An empty query or `"*"` explicitly browses the catalog.
 
 ### Sessions
 

@@ -94,14 +94,20 @@ const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0))
 const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const SearchInput = Schema.Struct({
   query: Schema.optionalKey(Schema.String),
-  namespace: Schema.optionalKey(Schema.String),
+  namespace: Schema.optionalKey(Schema.String).annotate({
+    description: "Known tool-owner path prefix, not a business workspace, account, or customer ID. Omit if unknown.",
+  }),
   limit: Schema.optionalKey(PositiveInt),
   offset: Schema.optionalKey(NonNegativeInt),
+  detail: Schema.optionalKey(Schema.Literals(["full", "summary"])).annotate({
+    description:
+      "Use summary to select candidates without signatures; retrieve full detail for a chosen path before invoking it. Defaults to full.",
+  }),
 })
 const SearchItem = Schema.Struct({
   path: Schema.String,
   description: Schema.String,
-  signature: Schema.String,
+  signature: Schema.optionalKey(Schema.String),
 })
 const SearchOutput = Schema.Struct({
   items: Schema.Array(SearchItem),
@@ -202,9 +208,10 @@ export type SearchEntry = {
 
 const tokenize = (query: string): Array<string> =>
   query
+    .normalize("NFC")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .toLowerCase()
-    .split(/[^a-z0-9]+/)
+    .split(/[^\p{L}\p{N}\p{M}]+/u)
     .filter((term) => term.length > 0 && term !== "*")
 
 const termForms = (term: string): Array<string> => {
@@ -232,7 +239,7 @@ const rank = (entries: ReadonlyArray<SearchEntry>, query: string): Array<SearchE
       )
       return { entry, score }
     })
-    .filter(({ score }) => terms.length === 0 || score > 0)
+    .filter(({ score }) => query.trim() === "" || query.trim() === "*" || score > 0)
     .sort(
       (left, right) =>
         right.score - left.score || compareText(left.entry.description.path, right.entry.description.path),
@@ -269,8 +276,9 @@ const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Tool => ({
             )
       const ranked = exact !== undefined ? [exact] : rank(scoped, query)
       const items = ranked.slice(offset, offset + (request.limit ?? defaultSearchLimit)).map(({ description }) => ({
-        ...description,
         path: toolExpression(description.path),
+        description: description.description,
+        ...(request.detail === "summary" ? {} : { signature: description.signature }),
       }))
       const remaining = Math.max(0, ranked.length - offset - items.length)
       return {

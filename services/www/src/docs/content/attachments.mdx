@@ -20,6 +20,29 @@ apply lower client-side limits.
   request.
 </Callout>
 
+## Large text pastes
+
+Opt into uploading large text pastes as `paste.txt` in the desktop or web composer:
+
+```jsonc title="opencode.jsonc"
+{
+  "experimental": { "paste_files": true },
+}
+```
+
+For the full-screen TUI, enable **Large paste files** in **Experiments**, or set:
+
+```json title="cli.json"
+{
+  "experimental": { "paste-files": true }
+}
+```
+
+- Text with at least 8,000 characters or 120 newline characters is uploaded to the server.
+- The model receives a file path, not the whole pasted text, and can search or read the saved file as needed.
+- Failed uploads keep the pasted text in the draft. Short pastes and image/PDF attachments keep their existing behavior.
+- Each upload has its own directory, so repeated `paste.txt` uploads do not overwrite each other.
+
 ## Syntax
 
 V2 prompt and command inputs describe an attachment with a `uri` and optional

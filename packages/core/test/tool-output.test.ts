@@ -84,7 +84,7 @@ describe("ToolOutput", () => {
     ),
   )
 
-  it.live("skips results that report a truncation state", () =>
+  it.live("preserves producer truncation metadata when the result fits", () =>
     withStore((output) =>
       Effect.gen(function* () {
         const content: Tool.NormalizedResult["content"] = [{ type: "text", text: "one\ntwo" }]
@@ -93,6 +93,50 @@ describe("ToolOutput", () => {
         expect(yield* output.truncate(truncated)).toBe(truncated)
         expect(yield* output.truncate(retained)).toBe(retained)
       }),
+    ),
+  )
+
+  for (const truncated of [false, true]) {
+    it.live(`enforces the preview budget even when the producer reports truncated=${truncated}`, () =>
+      withStore(
+        (output, fs) =>
+          Effect.gen(function* () {
+            const text = "first\nsecond\nthird"
+            const result = yield* output.truncate({
+              content: [{ type: "text", text }],
+              metadata: { truncated, matches: 3 },
+            })
+            expect(result.metadata).toMatchObject({ truncated: true, matches: 3 })
+            expect(result.content[0]).toEqual({ type: "text", text: "first" })
+            const file = result.metadata?.outputPath
+            expect(typeof file).toBe("string")
+            if (typeof file !== "string") return
+            expect(yield* fs.readFileString(file)).toBe(text)
+          }),
+        { maxLines: 1, maxBytes: 100 },
+      ),
+    )
+  }
+
+  it.live("keeps the producer's existing full output when bounding its preview again", () =>
+    withStore(
+      (output, fs, root) =>
+        Effect.gen(function* () {
+          const file = path.join(root, "producer.txt")
+          yield* fs.writeFileString(file, "original complete output")
+          const result = yield* output.truncate({
+            content: [{ type: "text", text: "first\nsecond\nthird" }],
+            metadata: { truncated: true, outputPath: file },
+          })
+          expect(result.metadata).toMatchObject({ truncated: true, outputPath: file })
+          expect(result.content[0]).toEqual({ type: "text", text: "first" })
+          expect(yield* fs.readFileString(file)).toBe("original complete output")
+          expect(result.content.at(-1)).toEqual({
+            type: "text",
+            text: `[showing lines 1-1 of 3; full output saved to ${file}]`,
+          })
+        }),
+      { maxLines: 1, maxBytes: 100 },
     ),
   )
 

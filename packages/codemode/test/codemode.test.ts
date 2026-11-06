@@ -989,6 +989,90 @@ describe("CodeMode public contract", () => {
     }
   })
 
+  test("search preserves Unicode terms instead of treating them as an empty browse", async () => {
+    const tool = (description: string) =>
+      Tool.make({
+        description,
+        input: Schema.Struct({}),
+        output: Schema.String,
+        execute: () => Effect.succeed("ok"),
+      })
+    const runtime = CodeMode.make({
+      tools: {
+        notes: {
+          automation: tool("Create an automation"),
+          meeting: tool("会議の議事録を検索"),
+          cafe: tool("Find café notes"),
+        },
+      },
+    })
+    for (const query of ["議事録", "会議", "不存在", "!!!", "café", "cafe\u0301"]) {
+      const result = await Effect.runPromise(runtime.execute(`return search({ query: ${JSON.stringify(query)} })`))
+      expect(result.ok).toBe(true)
+      if (!result.ok) continue
+      const expected =
+        query === "議事録" || query === "会議"
+          ? ["tools.notes.meeting"]
+          : query.normalize("NFC") === "café"
+            ? ["tools.notes.cafe"]
+            : []
+      expect(result.value).toMatchObject({ items: expected.map((path) => ({ path })), remaining: 0, next: null })
+    }
+    const browse = await Effect.runPromise(runtime.execute(`return search({ query: "*" }).items.length`))
+    expect(browse).toMatchObject({ ok: true, value: 3 })
+    const mixed = await Effect.runPromise(
+      runtime.execute(`return search({ query: "議事録 nonexistentzzzz" }).items.map(x => x.path)`),
+    )
+    expect(mixed).toMatchObject({ ok: true, value: ["tools.notes.meeting"] })
+  })
+
+  test("summary discovery preserves complete descriptions and paging without signatures", async () => {
+    const description = "Read only. ".repeat(30) + "Never send without explicit approval."
+    const tool = Tool.make({
+      description,
+      input: Schema.Struct({ id: Schema.String }),
+      output: Schema.String,
+      execute: () => Effect.succeed("ok"),
+    })
+    const runtime = CodeMode.make({ tools: { notes: { first: tool, second: tool } } })
+    const summary = await Effect.runPromise(
+      runtime.execute(`return search({ namespace: "notes", detail: "summary", limit: 1 })`),
+    )
+    expect(summary).toMatchObject({
+      ok: true,
+      value: {
+        items: [{ path: "tools.notes.first", description }],
+        remaining: 1,
+        next: { offset: 1 },
+      },
+    })
+    if (summary.ok)
+      expect(summary.value).toStrictEqual({
+        items: [{ path: "tools.notes.first", description }],
+        remaining: 1,
+        next: { offset: 1 },
+      })
+    const full = await Effect.runPromise(
+      runtime.execute(`return search({ query: "tools.notes.first", detail: "full" })`),
+    )
+    expect(full).toMatchObject({
+      ok: true,
+      value: {
+        items: [
+          {
+            path: "tools.notes.first",
+            description,
+            signature: "tools.notes.first({\n  id: string,\n}): Promise<string>",
+          },
+        ],
+        remaining: 0,
+        next: null,
+      },
+    })
+    const invalid = await Effect.runPromise(runtime.execute(`return search({ detail: "short" })`))
+    expect(invalid.ok).toBe(false)
+  })
+
   test("scopes search to one namespace and browses it alphabetically", async () => {
     const simple = (description: string) =>
       Tool.make({

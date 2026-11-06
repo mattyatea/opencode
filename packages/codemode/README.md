@@ -130,7 +130,11 @@ const web = Extension.make({
     ),
   },
 })
-const result = yield* CodeMode.make({ extensions: [web] }).execute(code).pipe(Effect.provideService(Session, session))
+const result =
+  yield *
+  CodeMode.make({ extensions: [web] })
+    .execute(code)
+    .pipe(Effect.provideService(Session, session))
 ```
 
 Every value crossing in either direction is converted, never shared: arguments come in as copies, results go out as
@@ -225,6 +229,16 @@ The synchronous `search(...)` built-in is always available. It supports exact-pa
 empty-query browsing, and pagination, and returns callable paths with full signatures. Its result can be used directly,
 awaited, or chained with `then`, `catch`, and `finally`, so programs work whichever way they treat it. Search counts toward
 `maxToolCalls`. Search also matches descriptions from enclosing `Namespace` values.
+
+For broad discovery, `search({ namespace: "orders", query: "lookup", detail: "summary", limit: 3 })`
+returns complete descriptions and callable paths without rendering signatures. Retrieve the selected path with
+`detail: "full"` before invoking it. The default remains `"full"`, so an exact-path lookup needs no extra discovery call.
+Summary results keep pagination and all usage instructions; they are candidate descriptions, not invocation schemas.
+
+Queries retain Unicode letters and numbers, including Japanese. Search is lexical rather than translation or semantic
+matching: terms must occur in the tool's name, description, namespace description, or input properties. Multiple terms
+contribute independently to ranking. Empty queries and `"*"` explicitly browse a namespace; other queries without
+searchable characters return no matches rather than enumerating every tool.
 
 ## Execution Limits
 

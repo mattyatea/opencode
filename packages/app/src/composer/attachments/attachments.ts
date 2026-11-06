@@ -3,6 +3,8 @@ import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createBlobReference } from "@/runtime/persistence/drafts"
 import { uuid } from "@opencode/util/uuid"
+import { largePaste } from "@opencode/util/paste"
+import { promptLength } from "../prompt-parts"
 import type { ComposerPrompt } from "../types"
 import type { ImageAttachmentPart, PathAttachmentPart } from "../state"
 import type { AttachmentDestination } from "./destination"
@@ -20,6 +22,7 @@ export type ComposerAttachmentConfig = {
     onFile: (file: File) => Promise<boolean>,
   ) => Promise<void>
   directory: () => string
+  pasteFiles?: () => boolean
   destination: () => AttachmentDestination
   isDialogActive: () => boolean
   duplicate: () => void
@@ -139,7 +142,7 @@ export function createComposerAttachments(
       })
       .finally(() => setPending("ids", (ids) => ids.filter((item) => item !== id)))
 
-    if (path) addPath(target, { filename: file.name, mime, path })
+    return path ? addPath(target, { filename: file.name, mime, path }) : false
   }
 
   // Callers start this without awaiting it, so a failure (for example a blob write on a full disk)
@@ -190,6 +193,19 @@ export function createComposerAttachments(
 
     if (!plainText) return
     const text = plainText.includes("\r") ? plainText.replace(/\r\n?/g, "\n") : plainText
+
+    if (input.pasteFiles?.() && largePaste(text)) {
+      if (await stage(new File([text], "paste.txt", { type: "text/plain" }), "text/plain", target, input.destination()))
+        return
+
+      // Restore to the captured draft, never the session selected while uploading.
+      const start = promptLength(target.prompt.current())
+      target.prompt.set(
+        [...target.prompt.current(), { type: "text", content: text, start, end: start + text.length }],
+        start + text.length,
+      )
+      return
+    }
 
     const put = () => {
       if (input.addPart({ type: "text", content: text, start: 0, end: 0 })) return true
@@ -351,10 +367,4 @@ function cursorPosition(editor: HTMLElement) {
   before.setEnd(range.startContainer, range.startOffset)
 
   return before.toString().replace(/\u200B/g, "").length
-}
-
-function largePaste(text: string) {
-  if (text.length >= 8000) return true
-
-  return text.split("\n").length - 1 >= 120
 }
