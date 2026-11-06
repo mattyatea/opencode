@@ -39,6 +39,23 @@ test("Home keeps the session list in every interface mode", async ({ page }) => 
   }
 })
 
+test("mobile Home groups sessions under a collapsible project", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const item = { id: "ses_mobile_group", title: "Mobile project session" }
+  await mockWorkspace(page, { name: "MobileGroup", sessions: [item] })
+  await page.goto("/")
+
+  const group = page.locator("details").filter({ has: page.getByText("MobileGroup", { exact: true }) })
+  const target = row(page, item.title)
+  await expect(target).toBeVisible()
+  await group.locator("summary").click()
+  await expect(target).toBeHidden()
+  await group.locator("summary").click()
+  await expect(target).toBeVisible()
+  await target.click()
+  await expect(page).toHaveURL(sessionHref(item.id))
+})
+
 test("a working Home session keeps its project avatar and shows its activity ring at the end of the row", async ({
   page,
 }) => {
