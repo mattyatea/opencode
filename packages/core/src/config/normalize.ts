@@ -459,6 +459,15 @@ function normalizeExperimental(
       unsupportedExperimental.forEach((key) =>
         unsupportedIfPresent(experimental, key, ["experimental", key], diagnostics),
       )
+      if (own(experimental, "paste_files")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.paste_files,
+          experimental.paste_files,
+          ["experimental", "paste_files"],
+          diagnostics,
+        )
+        if (value !== undefined) result.paste_files = value
+      }
       if (own(experimental, "portable_shell_scanner")) {
         const value = decodeEncoded(
           ConfigExperimental.Info.fields.portable_shell_scanner,
