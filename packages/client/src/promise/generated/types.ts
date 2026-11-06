@@ -1212,6 +1212,16 @@ export type SessionRenamed = {
   data: { sessionID: SessionID; title: string }
 }
 
+export type SessionTaskDetached = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "session.task.detached"
+  durable: { aggregateID: string; seq: EventSeq; version: 1 }
+  location?: LocationRef
+  data: { sessionID: SessionID }
+}
+
 export type SessionMetadataUpdated = {
   id: EventID
   created: number
@@ -2802,6 +2812,7 @@ export type SessionEventDurable =
   | SessionModelSelected
   | SessionMoved
   | SessionRenamed
+  | SessionTaskDetached
   | SessionMetadataUpdated
   | SessionPermissions
   | SessionViewed
@@ -2859,6 +2870,7 @@ export type V2Event =
   | SessionModelSelected
   | SessionMoved
   | SessionRenamed
+  | SessionTaskDetached
   | SessionMetadataUpdated
   | SessionPermissions
   | SessionViewed
@@ -4375,6 +4387,7 @@ export type EventSubscribeInput = {
         | "session.model.selected"
         | "session.moved"
         | "session.renamed"
+        | "session.task.detached"
         | "session.metadata.updated"
         | "session.permissions"
         | "session.viewed"

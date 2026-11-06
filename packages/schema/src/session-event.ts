@@ -100,6 +100,13 @@ export const Renamed = Event.durable({
 })
 export type Renamed = typeof Renamed.Type
 
+export const TaskDetached = Event.durable({
+  type: "session.task.detached",
+  ...options,
+  schema: Base,
+})
+export type TaskDetached = typeof TaskDetached.Type
+
 export const MetadataUpdated = Event.durable({
   type: "session.metadata.updated",
   ...options,
@@ -658,6 +665,7 @@ export const Definitions = Event.inventory(
   ModelSelected,
   Moved,
   Renamed,
+  TaskDetached,
   MetadataUpdated,
   Permissions,
   Viewed,

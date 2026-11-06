@@ -1,4 +1,4 @@
-import { createMemo, For, Show, startTransition } from "solid-js"
+import { createMemo, createResource, For, onCleanup, Show, startTransition } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useQueries, useQueryClient } from "@tanstack/solid-query"
 import type { SessionInfo } from "@opencode/client/promise"
@@ -398,10 +398,14 @@ export function ProjectSidebar() {
                         const list = ordered()
                         const route = layout.route()
 
-                        const selected =
-                          route.type === "session" && route.server === item().server
-                            ? list.find((session) => session.id === route.sessionId)
-                            : undefined
+                        const current = route.type === "session" && route.server === item().server ? route.sessionId : undefined
+                        let root = current
+                        while (root) {
+                          const parent = item().ctx.data.session.get(root)?.experimental?.taskParentID
+                          if (!parent) break
+                          root = parent
+                        }
+                        const selected = list.find((session) => session.id === root)
 
                         return selected && !list.slice(0, limit()).includes(selected)
                           ? [...list.slice(0, limit()), selected]
@@ -484,6 +488,43 @@ export function ProjectSidebar() {
                             <For each={sessions().map((session) => session.id)}>
                               {(sessionID) => {
                                 const session = () => item().sessions.find((session) => session.id === sessionID)
+                                const [tree, controls] = createResource(
+                                  () => sessionID,
+                                  async (id) => ({
+                                    id,
+                                    tasks: await item().ctx.sdk.api.experimental.session.tasks.tree({ sessionID: id }),
+                                  }),
+                                )
+                                const tasks = () => {
+                                  if (tree.state !== "ready" && tree.state !== "refreshing") return []
+                                  if (tree.latest?.id !== sessionID) return []
+                                  return tree.latest.tasks.filter((task) => !task.time.archived)
+                                }
+                                const children = (id: string) =>
+                                  tasks().filter((task) => task.experimental?.taskParentID === id)
+                                const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
+                                onCleanup(
+                                  item().ctx.sdk.event.listen((event) => {
+                                    if (
+                                      event.type === "session.created" ||
+                                      event.type === "session.deleted" ||
+                                      event.type === "session.renamed" ||
+                                      event.type === "session.archived" ||
+                                      event.type === "session.unarchived"
+                                    )
+                                      void controls.refetch()
+                                  }),
+                                )
+                                const rows = createMemo(() => {
+                                  const walk = (
+                                    id: string,
+                                    depth: number,
+                                  ): Array<{ task: SessionInfo; depth: number }> =>
+                                    collapsed[id]
+                                      ? []
+                                      : children(id).flatMap((task) => [{ task, depth }, ...walk(task.id, depth + 1)])
+                                  return walk(sessionID, 1)
+                                })
 
                                 const status = useSessionTabAvatarState(
                                   () => item().server,
@@ -502,95 +543,215 @@ export function ProjectSidebar() {
                                 }
 
                                 return (
-                                  <Menu.Context>
-                                    <Menu.Context.Trigger
-                                      as="button"
-                                      type="button"
-                                      draggable="true"
-                                      onDragStart={(event) => {
-                                        if (!event.dataTransfer) return
-                                        event.stopPropagation()
-                                        event.dataTransfer.effectAllowed = "move"
-                                        event.dataTransfer.setData("text/plain", sessionID)
-                                        setDrag({ session: sessionID, sessionProject: key })
-                                      }}
-                                      onDragEnd={() => setDrag({ session: "", sessionProject: "" })}
-                                      onDragOver={(event) => {
-                                        if (drag.sessionProject !== key || drag.session === sessionID) return
-                                        event.preventDefault()
-                                        event.stopPropagation()
-                                        if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
-                                      }}
-                                      onDrop={(event) => {
-                                        if (drag.sessionProject !== key || drag.session === sessionID) return
-                                        event.preventDefault()
-                                        event.stopPropagation()
-                                        const list = ordered().map((value) => ({
-                                          id: value.id,
-                                          updated: value.time.updated,
-                                        }))
-                                        const source = list.findIndex((value) => value.id === drag.session)
-                                        const target = list.findIndex((value) => value.id === sessionID)
-                                        if (source < 0 || target < 0) return
-                                        setState(
-                                          "sessions",
-                                          key,
-                                          list.toSpliced(source, 1).toSpliced(target, 0, list[source]!),
-                                        )
-                                        setDrag({ session: "", sessionProject: "" })
-                                      }}
-                                      aria-current={selected() ? "page" : undefined}
-                                      title={session()?.title}
-                                      class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
-                                      classList={{
-                                        "bg-v2-overlay-simple-overlay-hover": selected(),
-                                      }}
-                                      onClick={() => {
-                                        const value = session()
-
-                                        if (!value) return
-                                        item().ctx.data.session.remember(value)
-                                        void startTransition(() =>
-                                          tabs.select(
-                                            tabs.addSessionTab({
-                                              server: item().server,
-                                              sessionId: sessionID,
-                                            }),
-                                          ),
-                                        )
-                                      }}
-                                    >
-                                      <bdi class="min-w-0 flex-1 truncate">
-                                        {sessionTitle(session()?.title) ?? language.t("command.session.new")}
-                                      </bdi>
-                                      <Show
-                                        when={status.loading()}
-                                        fallback={
-                                          <Show when={status.unread()}>
-                                            <span class="size-1.5 shrink-0 rounded-full bg-current" />
-                                          </Show>
-                                        }
-                                      >
-                                        <ActivityRing class="size-3.5 shrink-0" />
+                                  <>
+                                    <div class="relative">
+                                      <Show when={children(sessionID).length > 0}>
+                                        <button
+                                          type="button"
+                                          class="absolute start-3 top-0 z-10 flex h-7 w-5 items-center justify-center"
+                                          aria-expanded={!collapsed[sessionID]}
+                                          aria-label={language.t(
+                                            collapsed[sessionID] ? "tasks.expand" : "tasks.collapse",
+                                            {
+                                              title: session()?.title ?? language.t("tasks.untitled"),
+                                            },
+                                          )}
+                                          onClick={() => setCollapsed(sessionID, !collapsed[sessionID])}
+                                        >
+                                          <Icon
+                                            name={collapsed[sessionID] ? "chevron-right" : "chevron-down"}
+                                            size="small"
+                                            classList={{ "rtl:rotate-180": collapsed[sessionID] }}
+                                          />
+                                        </button>
                                       </Show>
-                                    </Menu.Context.Trigger>
-                                    <Menu.Context.Portal>
-                                      <Menu.Context.Content>
-                                        <Menu.Item onSelect={() => void copySessionID(sessionID)}>
-                                          {language.t("command.session.copyID")}
-                                        </Menu.Item>
-                                        <Menu.Separator />
-                                        <Menu.Item
-                                          onSelect={() => {
+                                      <Menu.Context>
+                                        <Menu.Context.Trigger
+                                          as="button"
+                                          type="button"
+                                          draggable="true"
+                                          onDragStart={(event) => {
+                                            if (!event.dataTransfer) return
+                                            event.stopPropagation()
+                                            event.dataTransfer.effectAllowed = "move"
+                                            event.dataTransfer.setData("text/plain", sessionID)
+                                            setDrag({ session: sessionID, sessionProject: key })
+                                          }}
+                                          onDragEnd={() => setDrag({ session: "", sessionProject: "" })}
+                                          onDragOver={(event) => {
+                                            if (drag.sessionProject !== key || drag.session === sessionID) return
+                                            event.preventDefault()
+                                            event.stopPropagation()
+                                            if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
+                                          }}
+                                          onDrop={(event) => {
+                                            if (drag.sessionProject !== key || drag.session === sessionID) return
+                                            event.preventDefault()
+                                            event.stopPropagation()
+                                            const list = ordered().map((value) => ({
+                                              id: value.id,
+                                              updated: value.time.updated,
+                                            }))
+                                            const source = list.findIndex((value) => value.id === drag.session)
+                                            const target = list.findIndex((value) => value.id === sessionID)
+                                            if (source < 0 || target < 0) return
+                                            setState(
+                                              "sessions",
+                                              key,
+                                              list.toSpliced(source, 1).toSpliced(target, 0, list[source]!),
+                                            )
+                                            setDrag({ session: "", sessionProject: "" })
+                                          }}
+                                          aria-current={selected() ? "page" : undefined}
+                                          title={session()?.title}
+                                          class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
+                                          classList={{
+                                            "bg-v2-overlay-simple-overlay-hover": selected(),
+                                          }}
+                                          onClick={() => {
                                             const value = session()
-                                            if (value) deleteSession(key, value)
+
+                                            if (!value) return
+                                            item().ctx.data.session.remember(value)
+                                            void startTransition(() =>
+                                              tabs.select(
+                                                tabs.addSessionTab({
+                                                  server: item().server,
+                                                  sessionId: sessionID,
+                                                }),
+                                              ),
+                                            )
                                           }}
                                         >
-                                          {language.t("common.delete")}
-                                        </Menu.Item>
-                                      </Menu.Context.Content>
-                                    </Menu.Context.Portal>
-                                  </Menu.Context>
+                                          <bdi class="min-w-0 flex-1 truncate">
+                                            {sessionTitle(session()?.title) ?? language.t("command.session.new")}
+                                          </bdi>
+                                          <Show
+                                            when={status.loading()}
+                                            fallback={
+                                              <Show when={status.unread()}>
+                                                <span class="size-1.5 shrink-0 rounded-full bg-current" />
+                                              </Show>
+                                            }
+                                          >
+                                            <ActivityRing class="size-3.5 shrink-0" />
+                                          </Show>
+                                        </Menu.Context.Trigger>
+                                        <Menu.Context.Portal>
+                                          <Menu.Context.Content>
+                                            <Menu.Item onSelect={() => void copySessionID(sessionID)}>
+                                              {language.t("command.session.copyID")}
+                                            </Menu.Item>
+                                            <Menu.Separator />
+                                            <Menu.Item
+                                              onSelect={() => {
+                                                const value = session()
+                                                if (value) deleteSession(key, value)
+                                              }}
+                                            >
+                                              {language.t("common.delete")}
+                                            </Menu.Item>
+                                          </Menu.Context.Content>
+                                        </Menu.Context.Portal>
+                                      </Menu.Context>
+                                    </div>
+                                    <Show when={tree.error}>
+                                      <p class="ps-8 pe-2 text-12 text-text-weak">{language.t("tasks.error")}</p>
+                                      <button
+                                        type="button"
+                                        class="w-full ps-8 pe-2 text-start text-12 text-text-weak"
+                                        onClick={() => void controls.refetch()}
+                                      >
+                                        {language.t("tasks.refresh")}
+                                      </button>
+                                    </Show>
+                                    <For each={rows()}>
+                                      {(row) => {
+                                        const childStatus = useSessionTabAvatarState(
+                                          () => item().server,
+                                          () => row.task.id,
+                                          () => true,
+                                        )
+                                        const active = () => {
+                                          const route = layout.route()
+                                          return (
+                                            route.type === "session" &&
+                                            route.server === item().server &&
+                                            route.sessionId === row.task.id
+                                          )
+                                        }
+                                        return (
+                                          <div
+                                            class="relative"
+                                            style={{ "padding-inline-start": `${row.depth * 16}px` }}
+                                          >
+                                            <Show when={children(row.task.id).length > 0}>
+                                              <button
+                                                type="button"
+                                                class="absolute top-0 z-10 flex h-7 w-5 items-center justify-center"
+                                                style={{ "inset-inline-start": `${12 + row.depth * 16}px` }}
+                                                aria-expanded={!collapsed[row.task.id]}
+                                                aria-label={language.t(
+                                                  collapsed[row.task.id] ? "tasks.expand" : "tasks.collapse",
+                                                  {
+                                                    title: row.task.title ?? language.t("tasks.untitled"),
+                                                  },
+                                                )}
+                                                onClick={() => setCollapsed(row.task.id, !collapsed[row.task.id])}
+                                              >
+                                                <Icon
+                                                  name={collapsed[row.task.id] ? "chevron-right" : "chevron-down"}
+                                                  size="small"
+                                                  classList={{ "rtl:rotate-180": collapsed[row.task.id] }}
+                                                />
+                                              </button>
+                                            </Show>
+                                            <Menu.Context>
+                                              <Menu.Context.Trigger
+                                                as="button"
+                                                type="button"
+                                                aria-current={active() ? "page" : undefined}
+                                                class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
+                                                classList={{ "bg-v2-overlay-simple-overlay-hover": active() }}
+                                                onClick={() => {
+                                                  item().ctx.data.session.remember(row.task)
+                                                  void startTransition(() =>
+                                                    tabs.select(
+                                                      tabs.addSessionTab({
+                                                        server: item().server,
+                                                        sessionId: row.task.id,
+                                                      }),
+                                                    ),
+                                                  )
+                                                }}
+                                              >
+                                                <bdi class="min-w-0 flex-1 truncate">
+                                                  {sessionTitle(row.task.title) ?? language.t("command.session.new")}
+                                                </bdi>
+                                                <Show
+                                                  when={childStatus.loading()}
+                                                  fallback={
+                                                    <Show when={childStatus.unread()}>
+                                                      <span class="size-1.5 shrink-0 rounded-full bg-current" />
+                                                    </Show>
+                                                  }
+                                                >
+                                                  <ActivityRing class="size-3.5 shrink-0" />
+                                                </Show>
+                                              </Menu.Context.Trigger>
+                                              <Menu.Context.Portal>
+                                                <Menu.Context.Content>
+                                                  <Menu.Item onSelect={() => void copySessionID(row.task.id)}>
+                                                    {language.t("command.session.copyID")}
+                                                  </Menu.Item>
+                                                </Menu.Context.Content>
+                                              </Menu.Context.Portal>
+                                            </Menu.Context>
+                                          </div>
+                                        )
+                                      }}
+                                    </For>
+                                  </>
                                 )
                               }}
                             </For>

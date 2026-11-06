@@ -14,9 +14,11 @@ import { Session } from "@opencode/core/session"
 import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionInbox } from "@opencode/core/session/inbox"
 import { SessionTable } from "@opencode/core/session/sql"
+import { EventTable } from "@opencode/core/event/sql"
 import { Tool } from "@opencode/core/tool"
 import { OpenCodeTools } from "@opencode/core/tool/plugin/opencode"
 import { Effect, Layer } from "effect"
+import { eq } from "drizzle-orm"
 import { tmpdirScoped } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
 import { permissionLayer } from "./lib/permission"
@@ -56,7 +58,9 @@ const permission = permissionLayer({
     ),
 })
 
-const it = testEffect(makePluginTestLayer(permission, undefined, [SessionExecution.node.replace(execution)]))
+const it = testEffect(
+  makePluginTestLayer(permission, undefined, [SessionExecution.node.replace(execution), Bus.node.replace(Bus.configured({ persist: true }))]),
+)
 
 const prepareProject = (directory: string, name: string) =>
   Effect.gen(function* () {
@@ -79,9 +83,9 @@ const setup = () =>
     yield* OpenCodeTools.Plugin.effect(yield* PluginHost.make(plugins, "test"))
     const caller = yield* sessions.create({ location: Location.Ref.make({ directory: location.directory }) })
     const registry = yield* Tool.Service
-    const call = (name: string, input: Record<string, unknown>) =>
+    const call = (name: string, input: Record<string, unknown>, sessionID = caller.id) =>
       executeTool(registry, {
-        sessionID: caller.id,
+        sessionID,
         ...toolIdentity,
         call: {
           type: "tool-call",
@@ -90,8 +94,8 @@ const setup = () =>
           input: { code: `return await tools.opencode.${name}(${JSON.stringify(input)})` },
         },
       })
-    const run = (name: string, input: Record<string, unknown>) =>
-      call(name, input).pipe(
+    const run = (name: string, input: Record<string, unknown>, sessionID = caller.id) =>
+      call(name, input, sessionID).pipe(
         Effect.map((result) => {
           const text = result.content?.[0]?.type === "text" ? result.content[0].text : ""
           if (result.metadata?.error) throw new Error(`${name}: ${text}`)
@@ -307,16 +311,17 @@ it.live(
       const bus = yield* Bus.Service
       yield* bus.publish(SessionEvent.InboxDelivered, { sessionID: task.id, inboxID: sent.admitted })
       expect((yield* fixture.sessions.taskMessages(fixture.caller.id))[0]?.state).toBe("delivered")
-      const reply = yield* fixture.sessions.taskMessage({
-        sessionID: task.id,
-        targetID: fixture.caller.id,
-        text: "Finished implementation",
-      })
+      const reply = yield* fixture.run(
+        "task_send",
+        { targetID: fixture.caller.id, text: "Finished implementation" },
+        task.id,
+      )
       expect((yield* fixture.sessions.taskMessages(task.id)).map((message) => message.text)).toEqual([
         "Use option A",
         "Finished implementation",
       ])
-      expect(wakes).toContain(reply.sessionID)
+      expect(wakes).toContain(fixture.caller.id)
+      expect(reply.targetID).toBe(fixture.caller.id)
       expect(
         yield* fixture.sessions
           .taskMessage({ sessionID: grandchild.id, targetID: fixture.caller.id, text: "Skip parent" })
@@ -333,11 +338,24 @@ it.live(
       const id = Session.ID.create()
       const once = yield* fixture.sessions.taskCreate({ sessionID: task.id, title: "Retry", id })
       expect((yield* fixture.sessions.taskCreate({ sessionID: task.id, title: "Changed", id })).id).toBe(once.id)
+      const descendant = yield* fixture.sessions.taskCreate({ sessionID: grandchild.id, title: "Follow-up" })
       expect(
         yield* fixture.sessions.taskCreate({ sessionID: unrelated.id, title: "Reuse", id }).pipe(Effect.flip),
       ).toBeInstanceOf(Session.TaskRelationError)
       yield* fixture.sessions.remove(task.id)
       expect((yield* fixture.sessions.taskTree(fixture.caller.id)).map((item) => item.id)).toEqual([fixture.caller.id])
-      expect(yield* fixture.sessions.get(grandchild.id).pipe(Effect.flip)).toBeInstanceOf(Session.NotFoundError)
+      expect((yield* fixture.sessions.get(grandchild.id)).experimental?.taskParentID).toBeUndefined()
+      expect((yield* fixture.sessions.taskTree(grandchild.id)).map((item) => item.id).sort()).toEqual(
+        [grandchild.id, descendant.id].sort(),
+      )
+      expect((yield* fixture.sessions.get(descendant.id)).experimental?.taskParentID).toBe(grandchild.id)
+      expect((yield* fixture.sessions.get(once.id)).experimental?.taskParentID).toBeUndefined()
+      const events = yield* fixture.database.db
+        .select({ type: EventTable.type })
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, grandchild.id))
+        .all()
+        .pipe(Effect.orDie)
+      expect(events.map((event) => event.type)).toContain(Bus.versionedType(SessionEvent.TaskDetached.type, 1))
     }),
 )

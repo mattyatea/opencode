@@ -7,38 +7,6 @@ import { fileDiff, openSession } from "../utils/workspace"
 
 const cors = { "access-control-allow-origin": "*" }
 
-test("persistent task tree opens interactive children and retains parent-child correspondence", async ({ page }) => {
-  await openSession(page, {
-    name: "Persistent tasks",
-    sessions: [
-      { id: "ses_task_root", title: "Main task" },
-      { id: "ses_task_child", title: "Implementation", experimental: { taskParentID: "ses_task_root" } },
-      { id: "ses_task_grandchild", title: "Regression tests", experimental: { taskParentID: "ses_task_child" } },
-    ],
-  })
-  await page.getByRole("button", { name: "Show or hide task tree" }).click()
-  const tree = page.getByRole("tree", { name: "Task tree" })
-  await expect(tree.getByRole("treeitem")).toHaveCount(3)
-  await expect(tree.getByRole("treeitem", { name: /Regression tests/ })).toHaveAttribute("aria-level", "3")
-  await tree.getByRole("button", { name: "Collapse Implementation" }).click()
-  await expect(tree.getByRole("treeitem")).toHaveCount(2)
-  await tree.getByRole("button", { name: "Expand Implementation" }).click()
-  await tree.getByRole("button", { name: "Implementation Idle", exact: true }).click()
-  await expect(page).toHaveURL(sessionHref("ses_task_child"))
-  await expect(page.locator('[data-component="composer-editor"]')).toBeEditable()
-  const panel = page.getByRole("complementary", { name: "Task tree" })
-  await panel.getByRole("combobox", { name: "Parent or child", exact: true }).selectOption("ses_task_root")
-  await panel.getByLabel("Message", { exact: true }).fill("Please decide between option A and B")
-  await panel.getByRole("button", { name: "Send message", exact: true }).click()
-  const mail = page.getByRole("region", { name: "Task correspondence (latest 100)" })
-  await expect(mail).toContainText("To Main task")
-  await expect(mail).toContainText("Please decide between option A and B")
-  await page.reload()
-  await expect(page.locator('[data-component="composer-editor"]')).toBeEditable()
-  await expect(mail).toContainText("Please decide between option A and B")
-  await expect(tree.getByRole("treeitem")).toHaveCount(3)
-})
-
 for (const custom of [false, true]) {
   test(`summary toggle ${custom ? "custom" : "default"} shortcut follows the active session`, async ({ page }) => {
     await mockStressTimeline(page)

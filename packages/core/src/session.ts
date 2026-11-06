@@ -550,7 +550,10 @@ const layer = Layer.effect(
           .where(eq(SessionTable.task_parent_id, sessionID))
           .all()
           .pipe(Effect.orDie)
-        yield* Effect.forEach(tasks, (task) => result.remove(task.id), { concurrency: 1, discard: true })
+        yield* Effect.forEach(tasks, (task) => bus.publish(SessionEvent.TaskDetached, { sessionID: task.id }), {
+          concurrency: 1,
+          discard: true,
+        })
         yield* environments.clear(sessionID)
         yield* bus.publish(SessionEvent.Deleted, { sessionID })
         yield* bus.remove(sessionID)

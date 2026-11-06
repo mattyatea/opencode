@@ -28,6 +28,119 @@ const c = { id: "ses_tab_c", title: "Tab C session" }
 
 test.use({ serviceWorkers: "block" })
 
+for (const layout of ["horizontal", "vertical", "projects", "inbox"] as const) {
+  test(`task family can be followed from the session header in ${layout} layout`, async ({ page }) => {
+    await openSession(page, {
+      name: "Task family",
+      sessions: [
+        { id: "ses_family_parent", title: "Family parent" },
+        { id: "ses_family_child", title: "Family child", experimental: { taskParentID: "ses_family_parent" } },
+        { id: "ses_family_grandchild", title: "Family grandchild", experimental: { taskParentID: "ses_family_child" } },
+      ],
+      seed: { tabs: ["ses_family_parent"], settings: { appearance: { tabLayout: layout } } },
+    })
+    await page.getByRole("button", { name: "Task tree", exact: true }).click()
+    const tree = page.getByRole("menu", { name: "Task tree" })
+    await expect(tree.getByRole("menuitem")).toHaveText(["Family parent", "Family child", "Family grandchild"])
+    await tree.getByRole("menuitem", { name: "Family grandchild" }).click()
+    await expect(page).toHaveURL(sessionHref("ses_family_grandchild"))
+    await page.getByRole("button", { name: "Task tree", exact: true }).click()
+    await expect(tree.getByRole("menuitem", { name: "Family grandchild" })).toHaveAttribute("aria-current", "page")
+    await tree.getByRole("menuitem", { name: "Family parent" }).click()
+    await expect(page).toHaveURL(sessionHref("ses_family_parent"))
+  })
+
+  test(`session search opens a child task in ${layout} layout`, async ({ page }) => {
+    await openSession(page, {
+      name: "Task search",
+      sessions: [
+        { id: "ses_search_parent", title: "Parent task" },
+        { id: "ses_search_child", title: "Unique child task", experimental: { taskParentID: "ses_search_parent" } },
+      ],
+      seed: { tabs: ["ses_search_parent"], settings: { appearance: { tabLayout: layout } } },
+    })
+    await page.getByRole("button", { name: "Search sessions", exact: true }).click()
+    const dialog = page.getByRole("dialog")
+    await dialog.getByRole("combobox").fill("Unique child task")
+    await dialog.getByRole("option", { name: /Unique child task/ }).click()
+    await expect(page).toHaveURL(sessionHref("ses_search_child"))
+    await expect(page.locator('[data-component="composer-editor"]')).toBeEditable()
+  })
+}
+
+test("persistent tasks appear under their parent in the project sidebar", async ({ page }) => {
+  await openSession(page, {
+    name: "Persistent tasks",
+    sessions: [
+      { id: "ses_task_root", title: "Main task" },
+      { id: "ses_task_child", title: "Implementation", experimental: { taskParentID: "ses_task_root" } },
+      { id: "ses_task_grandchild", title: "Regression tests", experimental: { taskParentID: "ses_task_child" } },
+    ],
+    seed: { settings: { appearance: { tabLayout: "projects" } } },
+  })
+  const sidebar = page.getByRole("navigation", { name: "Projects and sessions" })
+  const project = sidebar.getByRole("group", { name: "Persistent tasks" })
+  await expect(project.getByRole("button", { name: "Main task", exact: true })).toBeVisible()
+  await expect(project.getByRole("button", { name: "Implementation", exact: true })).toHaveCount(1)
+  await expect(project.getByRole("button", { name: "Regression tests", exact: true })).toHaveCount(1)
+  const positions = await Promise.all(
+    ["Main task", "Implementation", "Regression tests"].map((name) =>
+      project.getByRole("button", { name, exact: true }).boundingBox(),
+    ),
+  )
+  expect(positions[1]!.x).toBeGreaterThan(positions[0]!.x)
+  expect(positions[2]!.x).toBeGreaterThan(positions[1]!.x)
+  await project.getByRole("button", { name: "Collapse Implementation" }).click()
+  await expect(project.getByRole("button", { name: "Regression tests", exact: true })).toHaveCount(0)
+  await project.getByRole("button", { name: "Expand Implementation" }).click()
+  await project.getByRole("button", { name: "Regression tests", exact: true }).click()
+  await expect(page).toHaveURL(sessionHref("ses_task_grandchild"))
+  await expect(page.locator('[data-component="composer-editor"]')).toBeEditable()
+  await expect(page.getByRole("complementary", { name: "Task tree" })).toHaveCount(0)
+})
+
+test("detached tasks remain in the project sidebar when their parent is deleted", async ({ page }) => {
+  const workspace = await openSession(page, {
+    name: "Detached tasks",
+    sessions: [
+      { id: "ses_detach_other", title: "Other session" },
+      { id: "ses_detach_parent", title: "Deleted parent" },
+      { id: "ses_detach_child", title: "Surviving child", experimental: { taskParentID: "ses_detach_parent" } },
+      { id: "ses_detach_grandchild", title: "Surviving grandchild", experimental: { taskParentID: "ses_detach_child" } },
+    ],
+    seed: { tabs: ["ses_detach_other"], settings: { appearance: { tabLayout: "projects" } } },
+  })
+  const project = page.getByRole("group", { name: "Detached tasks" })
+  await expect(project.getByRole("button", { name: "Surviving grandchild", exact: true })).toBeVisible()
+  const parent = workspace.sessions.findIndex((session) => session.id === "ses_detach_parent")
+  const child = workspace.sessions.find((session) => session.id === "ses_detach_child")!
+  workspace.sessions.splice(parent, 1)
+  Object.assign(child, { experimental: undefined })
+  await workspace.push([
+    {
+      id: "evt_task_detached",
+      created: Date.now(),
+      type: "session.task.detached",
+      location: { directory: workspace.directory },
+      durable: { aggregateID: child.id, seq: 1, version: 1 },
+      data: { sessionID: child.id },
+    },
+    {
+      id: "evt_parent_deleted",
+      created: Date.now(),
+      type: "session.deleted",
+      location: { directory: workspace.directory },
+      durable: { aggregateID: "ses_detach_parent", seq: 1, version: 2 },
+      data: { sessionID: "ses_detach_parent" },
+    },
+  ])
+  await expect(project.getByRole("button", { name: "Deleted parent", exact: true })).toHaveCount(0)
+  await expect(project.getByRole("button", { name: "Surviving child", exact: true })).toHaveCount(1)
+  await expect(project.getByRole("button", { name: "Surviving grandchild", exact: true })).toBeVisible()
+  await project.getByRole("button", { name: "Surviving child", exact: true }).click()
+  await expect(page).toHaveURL(sessionHref("ses_detach_child"))
+})
+
 test("project sections retain grouping and both collapse states after reload", async ({ page }, testInfo) => {
   await mockWorkspace(page, {
     name: "Finance",

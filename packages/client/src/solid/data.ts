@@ -821,6 +821,10 @@ export function createData(config: CreateDataInput) {
         if (store.session.info[event.data.sessionID])
           setStore("session", "info", event.data.sessionID, "permissions", event.data.permissions)
         return
+      case "session.task.detached":
+        result.session.invalidate(event.data.sessionID)
+        refresh(() => result.session.sync(event.data.sessionID))
+        return
       case "session.metadata.updated":
         // The event carries the whole record, so keys it drops must go too.
         if (store.session.info[event.data.sessionID])
