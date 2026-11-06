@@ -3,10 +3,12 @@ import { Database } from "@opencode/core/database/database"
 import { Bus } from "@opencode/core/bus"
 import { SessionEvent } from "@opencode/core/session/event"
 import { Location } from "@opencode/core/location"
+import { Model } from "@opencode/schema/model"
 import { Permission } from "@opencode/core/permission"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
 import { Project } from "@opencode/core/project"
+import { Provider } from "@opencode/core/provider"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
 import { SessionExecution } from "@opencode/core/session/execution"
@@ -131,7 +133,9 @@ it.effect("creates a parentless session in the selected Project, admits the inst
     active.clear()
     approvals.length = 0
     reject = false
-    const { alpha, alphaID, sessions, location, database, run, sessionCount } = yield* setup()
+    const { alpha, alphaID, caller, sessions, location, database, run, sessionCount } = yield* setup()
+    const model = Model.Ref.parse("openai/example#high")
+    yield* sessions.switchModel({ sessionID: caller.id, model })
     const created = yield* run("session_create", {
       projectID: alphaID,
       title: "Task A",
@@ -157,6 +161,7 @@ it.effect("creates a parentless session in the selected Project, admits the inst
     const session = yield* sessions.get(created.sessionID)
     expect(session.parentID).toBeUndefined()
     expect(session.title).toBe("Task A")
+    expect(session.model).toEqual(model)
     expect(session.projectID).toBe(alphaID)
     expect(session.location.directory).toBe(AbsolutePath.make(alpha.path))
     expect(session.location.directory).not.toBe(location.directory)
@@ -204,6 +209,31 @@ it.effect("resolves a unique Project name and refuses ambiguous, missing, or unk
     const unknown = yield* call("session_create", { projectID: "prj_missing", title: "Nope", prompt: "Nope" })
     expect(unknown).toMatchObject({ metadata: { error: true } })
 
+    expect(yield* sessionCount()).toBe(before + 1)
+  }),
+)
+
+it.effect("uses an explicitly selected chat model and rejects invalid references before creating a session", () =>
+  Effect.gen(function* () {
+    const { alphaID, sessions, run, call, sessionCount } = yield* setup()
+    const providers = yield* Provider.Service
+    yield* providers.transform((editor) => {
+      editor.models.update(Provider.ID.make("test"), Model.ID.make("override"), (model) => {
+        model.variants = [{ id: Model.VariantID.make("fast") }]
+      })
+    })
+    const before = yield* sessionCount()
+    const created = yield* run("session_create", {
+      projectID: alphaID,
+      title: "Override",
+      prompt: "Do the thing",
+      model: "test/override#fast",
+    })
+    expect((yield* sessions.get(created.sessionID)).model).toEqual(Model.Ref.parse("test/override#fast"))
+    for (const model of ["invalid", "test/missing", "test/override#slow"]) {
+      const result = yield* call("session_create", { projectID: alphaID, title: "Invalid", prompt: "Nope", model })
+      expect(result).toMatchObject({ metadata: { error: true } })
+    }
     expect(yield* sessionCount()).toBe(before + 1)
   }),
 )

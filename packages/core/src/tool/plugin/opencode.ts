@@ -87,6 +87,10 @@ export const SessionCreateInput = Schema.Struct({
   prompt: Schema.String.check(Schema.isMinLength(1)).annotate({
     description: "Initial instruction to durably admit into the new session and start running.",
   }),
+  model: Schema.optionalKey(Schema.String).annotate({
+    description:
+      'Optional chat model in the form "providerID/modelID" or "providerID/modelID#variant". Look up exact IDs with the models tool. Omit to inherit the current session model.',
+  }),
 })
 
 const SessionCreated = Schema.Struct({
@@ -499,6 +503,7 @@ export const Plugin = {
           description: [
             "Create a new independent top-level main session in a chosen OpenCode Project and start it with an initial instruction.",
             "Unlike a subagent, the new session has no parentID and runs in the selected Project's canonical directory.",
+            "The new session inherits the current session's model and variant unless a model is explicitly specified.",
             "Select the Project with an exact projectID from project_list, or a project name that matches exactly one Project.",
             "An ambiguous or missing name returns candidates and creates nothing: no Project is chosen automatically.",
             "Returns the created sessionID, the selected Project, and whether execution is actually running.",
@@ -538,9 +543,38 @@ export const Plugin = {
                 save: [project.id],
                 ...Permission.invocation(context),
               })
+              const requested = input.model
+              const model =
+                requested === undefined
+                  ? (yield* sessions.get(context.sessionID)).model
+                  : yield* Effect.gen(function* () {
+                      const ref = yield* Effect.try({
+                        try: () => Model.Ref.parse(requested),
+                        catch: () =>
+                          new ToolFailure({
+                            message: `Invalid model "${requested}". Use "providerID/modelID" or "providerID/modelID#variant".`,
+                          }),
+                      })
+                      const available = (yield* ctx.model.list({ types: ["chat"] })).data.find(
+                        (model) => model.providerID === ref.providerID && model.id === ref.id,
+                      )
+                      if (!available)
+                        return yield* new ToolFailure({
+                          message: `Chat model "${ref.providerID}/${ref.id}" is not available. Use the models tool to find one.`,
+                        })
+                      if (
+                        ref.variant !== undefined &&
+                        !available.variants.some((variant) => variant.id === ref.variant)
+                      )
+                        return yield* new ToolFailure({
+                          message: `Variant "${ref.variant}" is not available for "${ref.providerID}/${ref.id}".`,
+                        })
+                      return ref
+                    })
               const session = yield* ctx.session.create({
                 title,
                 location: { directory: project.canonical },
+                model,
               })
               const admitted = yield* ctx.session.prompt({ sessionID: session.id, text })
               const running = (yield* sessions.active).has(session.id)
