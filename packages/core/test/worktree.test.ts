@@ -424,6 +424,18 @@ describe("Worktree", () => {
     }),
   )
 
+  it.live("refreshes a plain folder project without a discovery warning", () =>
+    Effect.gen(function* () {
+      const input = yield* setup()
+      const worktree = yield* fixtureWorktree()
+      const plain = yield* Effect.promise(() => fs.mkdtemp(path.join(path.dirname(input.root.path), "plain-")))
+      const strategies = (yield* WorktreeStrategies.Service).get().strategies
+      const git = [...strategies.values()].find((strategy) => strategy.id === "git")!
+      expect(yield* git.list(abs(plain))).toEqual([])
+      yield* worktree.refresh()
+    }),
+  )
+
   it.live("creates from another managed worktree", () =>
     Effect.gen(function* () {
       const input = yield* setup()
