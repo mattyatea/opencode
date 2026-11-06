@@ -1,5 +1,7 @@
 import { expect } from "bun:test"
 import { Database } from "@opencode/core/database/database"
+import { Bus } from "@opencode/core/bus"
+import { SessionEvent } from "@opencode/core/session/event"
 import { Location } from "@opencode/core/location"
 import { Permission } from "@opencode/core/permission"
 import { Plugin } from "@opencode/core/plugin"
@@ -88,14 +90,22 @@ const setup = () =>
       })
     const run = (name: string, input: Record<string, unknown>) =>
       call(name, input).pipe(
-        Effect.map((result) => JSON.parse(result.content?.[0]?.type === "text" ? result.content[0].text : "")),
+        Effect.map((result) => {
+          const text = result.content?.[0]?.type === "text" ? result.content[0].text : ""
+          if (result.metadata?.error) throw new Error(`${name}: ${text}`)
+          return JSON.parse(text)
+        }),
       )
     const sessionCount = () =>
-      database.db.select().from(SessionTable).all().pipe(
-        Effect.orDie,
-        Effect.map((rows) => rows.length),
-      )
-    return { alpha, beta, alphaID, betaID, sessions, location, database, call, run, sessionCount }
+      database.db
+        .select()
+        .from(SessionTable)
+        .all()
+        .pipe(
+          Effect.orDie,
+          Effect.map((rows) => rows.length),
+        )
+    return { alpha, beta, alphaID, betaID, caller, registry, sessions, location, database, call, run, sessionCount }
   })
 
 it.effect("lists real Projects by ID, name, and canonical directory", () =>
@@ -213,4 +223,91 @@ it.effect("applies normal permission approval before creating anything", () =>
     expect(wakes).toHaveLength(0)
     reject = false
   }),
+)
+
+it.live(
+  "persistent tasks form a durable tree, stay interactive, and exchange attributed messages without duplicates",
+  () =>
+    Effect.gen(function* () {
+      reject = false
+      wakes.length = 0
+      active.clear()
+      const fixture = yield* setup()
+      const child = yield* fixture.run("task_create", {
+        title: "Implementation",
+        prompt: "Implement the requested feature",
+      })
+      const task = yield* fixture.sessions.get(child.sessionID)
+      expect(task.parentID).toBeUndefined()
+      expect(task.experimental?.taskParentID).toBe(fixture.caller.id)
+      expect(task.location).toEqual(fixture.caller.location)
+      expect(wakes).toContain(task.id)
+      const grandchild = yield* fixture.sessions.taskCreate({ sessionID: task.id, title: "Regression tests" })
+      const subagent = yield* fixture.sessions.create({ parentID: task.id, title: "Temporary search" })
+      const unrelated = yield* fixture.sessions.create({ location: task.location, title: "Other task" })
+      const expected = [fixture.caller.id, task.id, grandchild.id].sort()
+      expect((yield* fixture.sessions.taskTree(grandchild.id)).map((item) => item.id).sort()).toEqual(expected)
+      expect((yield* fixture.run("task_tree", {})).tasks.map((item: { id: string }) => item.id).sort()).toEqual(
+        expected,
+      )
+
+      const sent = yield* fixture.run("task_send", { targetID: task.id, text: "Use option A" })
+      const pending = yield* SessionInbox.find(fixture.database.db, sent.admitted)
+      expect(pending).toMatchObject({
+        type: "synthetic",
+        payload: {
+          metadata: { source: "task", fromSessionID: fixture.caller.id, toSessionID: task.id, text: "Use option A" },
+        },
+      })
+      yield* fixture.sessions.taskMessage({
+        sessionID: fixture.caller.id,
+        targetID: task.id,
+        id: sent.admitted,
+        text: "Ignored retry payload",
+      })
+      const outgoing = yield* fixture.sessions.taskMessages(fixture.caller.id)
+      expect(outgoing).toHaveLength(1)
+      expect(outgoing[0]).toMatchObject({
+        from: fixture.caller.id,
+        to: task.id,
+        text: "Use option A",
+        state: "pending",
+      })
+      expect(yield* fixture.sessions.taskMessages(task.id)).toEqual(outgoing)
+      const bus = yield* Bus.Service
+      yield* bus.publish(SessionEvent.InboxDelivered, { sessionID: task.id, inboxID: sent.admitted })
+      expect((yield* fixture.sessions.taskMessages(fixture.caller.id))[0]?.state).toBe("delivered")
+      const reply = yield* fixture.sessions.taskMessage({
+        sessionID: task.id,
+        targetID: fixture.caller.id,
+        text: "Finished implementation",
+      })
+      expect((yield* fixture.sessions.taskMessages(task.id)).map((message) => message.text)).toEqual([
+        "Use option A",
+        "Finished implementation",
+      ])
+      expect(wakes).toContain(reply.sessionID)
+      expect(
+        yield* fixture.sessions
+          .taskMessage({ sessionID: grandchild.id, targetID: fixture.caller.id, text: "Skip parent" })
+          .pipe(Effect.flip),
+      ).toBeInstanceOf(Session.TaskRelationError)
+      expect(
+        yield* fixture.sessions
+          .taskMessage({ sessionID: unrelated.id, targetID: task.id, text: "Unrelated" })
+          .pipe(Effect.flip),
+      ).toBeInstanceOf(Session.TaskRelationError)
+      expect(
+        yield* fixture.sessions.taskCreate({ sessionID: subagent.id, title: "Not allowed" }).pipe(Effect.flip),
+      ).toBeInstanceOf(Session.TaskRelationError)
+      const id = Session.ID.create()
+      const once = yield* fixture.sessions.taskCreate({ sessionID: task.id, title: "Retry", id })
+      expect((yield* fixture.sessions.taskCreate({ sessionID: task.id, title: "Changed", id })).id).toBe(once.id)
+      expect(
+        yield* fixture.sessions.taskCreate({ sessionID: unrelated.id, title: "Reuse", id }).pipe(Effect.flip),
+      ).toBeInstanceOf(Session.TaskRelationError)
+      yield* fixture.sessions.remove(task.id)
+      expect((yield* fixture.sessions.taskTree(fixture.caller.id)).map((item) => item.id)).toEqual([fixture.caller.id])
+      expect(yield* fixture.sessions.get(grandchild.id).pipe(Effect.flip)).toBeInstanceOf(Session.NotFoundError)
+    }),
 )

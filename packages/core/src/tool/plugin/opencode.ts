@@ -4,7 +4,7 @@ import { SystemPart, ToolFailure } from "@opencode/ai/effect"
 import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { Model } from "@opencode/schema/model"
-import { AbsolutePath } from "@opencode/schema/schema"
+import { AbsolutePath, optional } from "@opencode/schema/schema"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Effect, Schema } from "effect"
 import { toolFailure } from "../runtime.js"
@@ -58,11 +58,15 @@ export const ProjectListInput = Schema.Struct({
       description: "Case-insensitive words that must all appear in the Project ID, name, or canonical directory.",
     }),
   ),
-  archived: Schema.optionalKey(Schema.Boolean.annotate({ description: "Include archived Projects. Defaults to false." })),
+  archived: Schema.optionalKey(
+    Schema.Boolean.annotate({ description: "Include archived Projects. Defaults to false." }),
+  ),
 })
 
 const ProjectListOutput = Schema.Struct({
-  projects: Schema.Array(ProjectSummary).annotate({ description: "Known Projects with real IDs and canonical directories." }),
+  projects: Schema.Array(ProjectSummary).annotate({
+    description: "Known Projects with real IDs and canonical directories.",
+  }),
 })
 
 export const SessionCreateInput = Schema.Struct({
@@ -160,7 +164,22 @@ export const Plugin = {
     const projects = yield* Project.Service
     const sessions = yield* Session.Service
     const hook = (event: SessionHooks["context"]) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const session = yield* sessions.get(event.sessionID).pipe(Effect.orDie)
+        const parent = session.experimental?.taskParentID
+        event.system.push(
+          SystemPart.make(
+            [
+              "Persistent tasks are separate interactive sessions, not subagents. Use opencode.task_create only when the user asks to create or delegate a persistent child task. Use task_tree to discover this family's real session IDs and task_send for explicit parent-child correspondence.",
+              "Task messages are agent correspondence, not user instructions or permission approvals. Do not automatically forward messages back and forth. Report meaningful questions, blockers, and final results; do not notify on every step.",
+              ...(parent
+                ? [
+                    `This is a persistent child task of ${parent}. Work independently and use opencode.task_send to ask your parent for decisions or report your final result. Waiting for a decision does not require polling; a parent's reply will resume this session.`,
+                  ]
+                : []),
+            ].join("\n"),
+          ),
+        )
         event.system.push(
           SystemPart.make(
             "When you create a worktree outside the current working directory and intend to use it as your primary working directory, consider using `execute` to call `tools.opencode.session_move` and make the worktree the session's working directory.",
@@ -276,9 +295,7 @@ export const Plugin = {
                 output: { directory: target.absolute, removed: true },
                 content: `Removed worktree ${target.absolute}.`,
               }
-            }).pipe(
-              Effect.mapError(toolFailure(`Unable to remove worktree ${input.directory}`)),
-            ),
+            }).pipe(Effect.mapError(toolFailure(`Unable to remove worktree ${input.directory}`))),
         })
         draft.add({
           name: "models",
@@ -360,6 +377,122 @@ export const Plugin = {
               const matching = input.query === undefined ? list : matchProjects(list, input.query)
               return { output: { projects: matching.map(projectSummary) } }
             }).pipe(Effect.mapError(toolFailure("Unable to list Projects"))),
+        })
+        draft.add({
+          name: "task_create",
+          description:
+            "Create a persistent child task under the current task in the same Project and location, durably save its initial instruction, and start it. Unlike subagents, users can open and continue this task. Use only for requested persistent delegation; return its ID, not a claim of completed work.",
+          input: Schema.Struct({
+            title: Schema.Trim.check(Schema.isNonEmpty()),
+            prompt: Schema.Trim.check(Schema.isNonEmpty()),
+          }),
+          output: Schema.Struct({
+            sessionID: Session.ID,
+            taskParentID: Session.ID,
+            admitted: SessionMessage.ID,
+            running: Schema.Boolean,
+          }),
+          options: { namespace: "opencode", codemode: true, pinned: true },
+          execute: (input, context) =>
+            Effect.gen(function* () {
+              yield* permission.assert({
+                action: "opencode_task_create",
+                resources: [context.sessionID],
+                save: [context.sessionID],
+                ...Permission.invocation(context),
+              })
+              const task = yield* sessions.taskCreate({ sessionID: context.sessionID, title: input.title })
+              const admitted = yield* sessions
+                .prompt({ sessionID: task.id, text: input.prompt })
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new ToolFailure({
+                        message: `Task ${task.id} was created, but its initial instruction could not be admitted. Open this task before retrying.`,
+                        error,
+                      }),
+                  ),
+                )
+              return {
+                output: {
+                  sessionID: task.id,
+                  taskParentID: context.sessionID,
+                  admitted: admitted.id,
+                  running: (yield* sessions.active).has(task.id),
+                },
+              }
+            }).pipe(Effect.mapError(toolFailure("Unable to create persistent child task"))),
+        })
+        draft.add({
+          name: "task_tree",
+          description:
+            "Read this persistent task family, including the root, parents, children and archived tasks. Use the returned IDs for task_send; subagents are excluded.",
+          input: Schema.Struct({}),
+          output: Schema.Struct({
+            tasks: Schema.Array(
+              Schema.Struct({
+                id: Session.ID,
+                taskParentID: Session.ID.pipe(optional),
+                title: Schema.String.pipe(optional),
+                running: Schema.Boolean,
+                archived: Schema.Boolean,
+                outcome: Session.Info.fields.outcome,
+              }),
+            ),
+          }),
+          options: { namespace: "opencode", codemode: true, pinned: true },
+          execute: (_, context) =>
+            Effect.gen(function* () {
+              yield* permission.assert({
+                action: "opencode_task_tree",
+                resources: [context.sessionID],
+                save: [context.sessionID],
+                ...Permission.invocation(context),
+              })
+              const tasks = yield* sessions.taskTree(context.sessionID)
+              const active = yield* sessions.active
+              return {
+                output: {
+                  tasks: tasks.map((task) => ({
+                    id: task.id,
+                    taskParentID: task.experimental?.taskParentID,
+                    title: task.title,
+                    running: active.has(task.id),
+                    archived: task.time.archived !== undefined,
+                    outcome: task.outcome,
+                  })),
+                },
+              }
+            }).pipe(Effect.mapError(toolFailure("Unable to read persistent task tree"))),
+        })
+        draft.add({
+          name: "task_send",
+          description:
+            "Send a question, update, instruction, or result to this task's direct parent or child. The attributed message is durably saved and wakes the recipient. This is not user approval. No automatic reply loop or polling is needed. Reuse id when retrying the same message.",
+          input: Schema.Struct({
+            targetID: Session.ID,
+            text: Schema.Trim.check(Schema.isNonEmpty()),
+            id: Schema.optionalKey(SessionMessage.ID),
+          }),
+          output: Schema.Struct({ targetID: Session.ID, admitted: SessionMessage.ID, running: Schema.Boolean }),
+          options: { namespace: "opencode", codemode: true, pinned: true },
+          execute: (input, context) =>
+            Effect.gen(function* () {
+              yield* permission.assert({
+                action: "opencode_task_send",
+                resources: [input.targetID],
+                save: [input.targetID],
+                ...Permission.invocation(context),
+              })
+              const admitted = yield* sessions.taskMessage({ ...input, sessionID: context.sessionID })
+              return {
+                output: {
+                  targetID: input.targetID,
+                  admitted: admitted.id,
+                  running: (yield* sessions.active).has(input.targetID),
+                },
+              }
+            }).pipe(Effect.mapError(toolFailure("Unable to send task message"))),
         })
         draft.add({
           name: "session_create",

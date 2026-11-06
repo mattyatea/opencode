@@ -1,5 +1,6 @@
 import { SessionMessage } from "@opencode/schema/session-message"
 import { SessionInbox } from "@opencode/schema/session-inbox"
+import { SessionTask } from "@opencode/schema/session-task"
 import { PromptInput } from "@opencode/schema/prompt-input"
 import { Session } from "@opencode/schema/session"
 import { SessionStats } from "@opencode/schema/session-stats"
@@ -627,6 +628,68 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           identifier: "experimental.session.instructions.entry.remove",
           summary: "Remove instruction entry",
           description: "Remove one instruction entry; the removal is announced to the model at the next step boundary.",
+        }),
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get("session.tasks.tree", "/api/experimental/session/:sessionID/tasks", {
+        params: { sessionID: Session.ID },
+        success: Schema.Struct({ data: Schema.Array(PublicSessionInfo) }),
+        error: SessionNotFoundError,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "experimental.session.tasks.tree",
+          summary: "Read persistent task tree",
+          description:
+            "Experimental: may change without compatibility guarantees. Return the root and all persistent tasks in this family, including archived tasks. Subagents are excluded.",
+        }),
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post("session.tasks.create", "/api/experimental/session/:sessionID/tasks", {
+        params: { sessionID: Session.ID },
+        payload: Schema.Struct({ id: Schema.optional(Session.ID), title: Schema.String.check(Schema.isMinLength(1)) }),
+        success: Schema.Struct({ data: PublicSessionInfo }),
+        error: [SessionNotFoundError, InvalidRequestError],
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "experimental.session.tasks.create",
+          summary: "Create persistent child task",
+          description:
+            "Experimental: may change without compatibility guarantees. Create a normal interactive task at its parent's location, separate from subagents. Use session.prompt to admit initial work and start execution.",
+        }),
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get("session.tasks.messages", "/api/experimental/session/:sessionID/tasks/message", {
+        params: { sessionID: Session.ID },
+        success: Schema.Struct({ data: Schema.Array(SessionTask.Message) }),
+        error: SessionNotFoundError,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "experimental.session.tasks.messages",
+          summary: "Read task correspondence",
+          description:
+            "Experimental: may change without compatibility guarantees. Return the latest 100 sent or received task messages, oldest first, including admitted messages that have not yet been delivered.",
+        }),
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post("session.tasks.send", "/api/experimental/session/:sessionID/tasks/message", {
+        params: { sessionID: Session.ID },
+        payload: Schema.Struct({
+          targetID: Session.ID,
+          id: Schema.optional(SessionMessage.ID),
+          text: Schema.String.check(Schema.isMinLength(1)),
+        }),
+        success: Schema.Struct({ data: SessionInbox.Synthetic }),
+        error: [SessionNotFoundError, InvalidRequestError, ConflictError],
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "experimental.session.tasks.send",
+          summary: "Send parent-child task message",
+          description:
+            "Experimental: may change without compatibility guarantees. Durably admit attributed task correspondence to a direct parent or child in the same Project and wake its execution. Correspondence is not user approval. Reusing a message ID is idempotent.",
         }),
       ),
     )

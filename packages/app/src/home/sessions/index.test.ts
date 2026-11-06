@@ -97,6 +97,7 @@ describe("Home session index", () => {
       parseHomeSessionIndex([
         session("root"),
         session("child", { parentID: "root" }),
+        session("task", { experimental: { taskParentID: "root" } }),
         session("archived", { time: { created: 1, updated: 1, archived: 2 } }),
       ]).map((item) => item.id),
     ).toEqual(["root"])

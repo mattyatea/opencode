@@ -59,16 +59,18 @@ describe("SessionExecution lifecycle", () => {
       const parent = Session.ID.make("ses_recover_parent")
       const child = Session.ID.make("ses_recover_child")
       const idle = Session.ID.make("ses_recover_idle")
+      const task = Session.ID.make("ses_recover_task")
       yield* seedSessions(database, [parent], { time_suspended: Date.now() })
       yield* seedSessions(database, [idle])
       // Children recover through background Job records, never through the root claim sweep.
       yield* seedSessions(database, [child], { time_suspended: Date.now(), parent_id: parent })
+      yield* seedSessions(database, [task], { time_suspended: Date.now(), task_parent_id: parent })
 
-      expect(yield* store.listSuspended()).toEqual([parent])
+      expect((yield* store.listSuspended()).toSorted()).toEqual([parent, task].sort())
 
       // The sweep clears orphaned child claims outright; parents keep theirs.
       yield* store.releaseChildClaims([])
-      expect(yield* claims(database)).toEqual({ [parent]: true, [child]: false, [idle]: false })
+      expect(yield* claims(database)).toEqual({ [parent]: true, [child]: false, [idle]: false, [task]: true })
     }),
   )
 
@@ -1322,7 +1324,9 @@ function seedInbox(
 function seedSessions(
   database: Database.Service["Service"],
   sessionIDs: ReadonlyArray<Session.ID>,
-  values: Partial<Pick<typeof SessionTable.$inferInsert, "time_suspended" | "resume_attempts" | "parent_id">> = {},
+  values: Partial<
+    Pick<typeof SessionTable.$inferInsert, "time_suspended" | "resume_attempts" | "parent_id" | "task_parent_id">
+  > = {},
 ) {
   return Effect.gen(function* () {
     yield* database.db

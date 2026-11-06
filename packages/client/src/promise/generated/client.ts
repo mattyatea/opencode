@@ -101,6 +101,14 @@ import type {
   ExperimentalSessionInstructionsEntryPutOutput,
   ExperimentalSessionInstructionsEntryRemoveInput,
   ExperimentalSessionInstructionsEntryRemoveOutput,
+  ExperimentalSessionTasksTreeInput,
+  ExperimentalSessionTasksTreeOutput,
+  ExperimentalSessionTasksCreateInput,
+  ExperimentalSessionTasksCreateOutput,
+  ExperimentalSessionTasksMessagesInput,
+  ExperimentalSessionTasksMessagesOutput,
+  ExperimentalSessionTasksSendInput,
+  ExperimentalSessionTasksSendOutput,
   ExperimentalSessionLogInput,
   ExperimentalSessionLogOutput,
   MessageListInput,
@@ -1156,6 +1164,54 @@ export function make(options: ClientOptions) {
                 requestOptions,
               ),
           },
+        },
+        tasks: {
+          tree: (input: ExperimentalSessionTasksTreeInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalSessionTasksTreeOutput }>(
+              {
+                method: "GET",
+                path: `/api/experimental/session/${encodeURIComponent(input.sessionID)}/tasks`,
+                successStatus: 200,
+                declaredStatuses: [400, 401, 404],
+                empty: false,
+              },
+              requestOptions,
+            ).then((value) => value.data),
+          create: (input: ExperimentalSessionTasksCreateInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalSessionTasksCreateOutput }>(
+              {
+                method: "POST",
+                path: `/api/experimental/session/${encodeURIComponent(input.sessionID)}/tasks`,
+                body: { id: input["id"], title: input["title"] },
+                successStatus: 200,
+                declaredStatuses: [400, 401, 404],
+                empty: false,
+              },
+              requestOptions,
+            ).then((value) => value.data),
+          messages: (input: ExperimentalSessionTasksMessagesInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalSessionTasksMessagesOutput }>(
+              {
+                method: "GET",
+                path: `/api/experimental/session/${encodeURIComponent(input.sessionID)}/tasks/message`,
+                successStatus: 200,
+                declaredStatuses: [400, 401, 404],
+                empty: false,
+              },
+              requestOptions,
+            ).then((value) => value.data),
+          send: (input: ExperimentalSessionTasksSendInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalSessionTasksSendOutput }>(
+              {
+                method: "POST",
+                path: `/api/experimental/session/${encodeURIComponent(input.sessionID)}/tasks/message`,
+                body: { targetID: input["targetID"], id: input["id"], text: input["text"] },
+                successStatus: 200,
+                declaredStatuses: [400, 401, 404, 409],
+                empty: false,
+              },
+              requestOptions,
+            ).then((value) => value.data),
         },
         log: (
           input: ExperimentalSessionLogInput,
@@ -2714,6 +2770,17 @@ export function make(options: ClientOptions) {
           /** @deprecated Use `client.experimental.session.instructions.entry.remove`. Removed in the next minor. */
           remove: client.experimental.session.instructions.entry.remove,
         },
+      },
+      /** @deprecated Use `client.experimental.session.tasks`. Removed in the next minor. */
+      tasks: {
+        /** @deprecated Use `client.experimental.session.tasks.tree`. Removed in the next minor. */
+        tree: client.experimental.session.tasks.tree,
+        /** @deprecated Use `client.experimental.session.tasks.create`. Removed in the next minor. */
+        create: client.experimental.session.tasks.create,
+        /** @deprecated Use `client.experimental.session.tasks.messages`. Removed in the next minor. */
+        messages: client.experimental.session.tasks.messages,
+        /** @deprecated Use `client.experimental.session.tasks.send`. Removed in the next minor. */
+        send: client.experimental.session.tasks.send,
       },
       /** @deprecated Use `client.experimental.session.log`. Removed in the next minor. */
       log: client.experimental.session.log,

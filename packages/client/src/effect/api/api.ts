@@ -472,6 +472,21 @@ export interface SessionApi<E = never> {
     }
   }
 
+  /** @deprecated Use `client.experimental.session.tasks`. Removed in the next minor. */
+  readonly tasks: {
+    /** @deprecated Use `client.experimental.session.tasks.tree`. Removed in the next minor. */
+    readonly tree: ExperimentalSessionTasksTreeOperation<E>
+
+    /** @deprecated Use `client.experimental.session.tasks.create`. Removed in the next minor. */
+    readonly create: ExperimentalSessionTasksCreateOperation<E>
+
+    /** @deprecated Use `client.experimental.session.tasks.messages`. Removed in the next minor. */
+    readonly messages: ExperimentalSessionTasksMessagesOperation<E>
+
+    /** @deprecated Use `client.experimental.session.tasks.send`. Removed in the next minor. */
+    readonly send: ExperimentalSessionTasksSendOperation<E>
+  }
+
   /** @deprecated Use `client.experimental.session.log`. Removed in the next minor. */
   readonly log: ExperimentalSessionLogOperation<E>
 }
@@ -603,6 +618,46 @@ export type ExperimentalSessionInstructionsEntryRemoveOperation<E = never> = (
   input: ExperimentalSessionInstructionsEntryRemoveInput,
 ) => Effect.Effect<ExperimentalSessionInstructionsEntryRemoveOutput, E>
 
+export type ExperimentalSessionTasksTreeInput = { readonly sessionID: Session.ID }
+export type ExperimentalSessionTasksTreeOutput = ReadonlyArray<Session.Info>
+export type ExperimentalSessionTasksTreeOperation<E = never> = (
+  input: ExperimentalSessionTasksTreeInput,
+) => Effect.Effect<ExperimentalSessionTasksTreeOutput, E>
+
+export type ExperimentalSessionTasksCreateInput = {
+  readonly sessionID: Session.ID
+  readonly id?: Session.ID | undefined
+  readonly title: string
+}
+export type ExperimentalSessionTasksCreateOutput = Session.Info
+export type ExperimentalSessionTasksCreateOperation<E = never> = (
+  input: ExperimentalSessionTasksCreateInput,
+) => Effect.Effect<ExperimentalSessionTasksCreateOutput, E>
+
+export type ExperimentalSessionTasksMessagesInput = { readonly sessionID: Session.ID }
+export type ExperimentalSessionTasksMessagesOutput = ReadonlyArray<{
+  readonly id: SessionMessage.ID
+  readonly from: Session.ID
+  readonly to: Session.ID
+  readonly text: string
+  readonly time: DateTime.Utc
+  readonly state: "pending" | "delivered"
+}>
+export type ExperimentalSessionTasksMessagesOperation<E = never> = (
+  input: ExperimentalSessionTasksMessagesInput,
+) => Effect.Effect<ExperimentalSessionTasksMessagesOutput, E>
+
+export type ExperimentalSessionTasksSendInput = {
+  readonly sessionID: Session.ID
+  readonly targetID: Session.ID
+  readonly id?: SessionMessage.ID | undefined
+  readonly text: string
+}
+export type ExperimentalSessionTasksSendOutput = SessionInbox.Synthetic
+export type ExperimentalSessionTasksSendOperation<E = never> = (
+  input: ExperimentalSessionTasksSendInput,
+) => Effect.Effect<ExperimentalSessionTasksSendOutput, E>
+
 export type ExperimentalSessionLogInput = {
   readonly sessionID: Session.ID
   readonly after?: Event.Seq | undefined
@@ -625,6 +680,7 @@ export type ExperimentalSessionLogOutput =
             readonly location: { readonly directory: AbsolutePath; readonly workspaceID?: Workspace.ID | undefined }
             readonly subpath?: RelativePath | undefined
             readonly parentID?: Session.ID | undefined
+            readonly taskParentID?: Session.ID | undefined
             readonly slug: string
             readonly title?: string | undefined
             readonly agent?: Agent.ID | undefined
@@ -1432,6 +1488,12 @@ export interface ExperimentalSessionApi<E = never> {
       readonly put: ExperimentalSessionInstructionsEntryPutOperation<E>
       readonly remove: ExperimentalSessionInstructionsEntryRemoveOperation<E>
     }
+  }
+  readonly tasks: {
+    readonly tree: ExperimentalSessionTasksTreeOperation<E>
+    readonly create: ExperimentalSessionTasksCreateOperation<E>
+    readonly messages: ExperimentalSessionTasksMessagesOperation<E>
+    readonly send: ExperimentalSessionTasksSendOperation<E>
   }
   readonly log: ExperimentalSessionLogOperation<E>
 }
@@ -2866,6 +2928,42 @@ export type SessionInstructionsEntryRemoveOutput = ExperimentalSessionInstructio
 
 /** @deprecated Use `ExperimentalSessionInstructionsEntryRemoveOperation`. Removed in the next minor. */
 export type SessionInstructionsEntryRemoveOperation<E = never> = ExperimentalSessionInstructionsEntryRemoveOperation<E>
+
+/** @deprecated Use `ExperimentalSessionTasksTreeInput`. Removed in the next minor. */
+export type SessionTasksTreeInput = ExperimentalSessionTasksTreeInput
+
+/** @deprecated Use `ExperimentalSessionTasksTreeOutput`. Removed in the next minor. */
+export type SessionTasksTreeOutput = ExperimentalSessionTasksTreeOutput
+
+/** @deprecated Use `ExperimentalSessionTasksTreeOperation`. Removed in the next minor. */
+export type SessionTasksTreeOperation<E = never> = ExperimentalSessionTasksTreeOperation<E>
+
+/** @deprecated Use `ExperimentalSessionTasksCreateInput`. Removed in the next minor. */
+export type SessionTasksCreateInput = ExperimentalSessionTasksCreateInput
+
+/** @deprecated Use `ExperimentalSessionTasksCreateOutput`. Removed in the next minor. */
+export type SessionTasksCreateOutput = ExperimentalSessionTasksCreateOutput
+
+/** @deprecated Use `ExperimentalSessionTasksCreateOperation`. Removed in the next minor. */
+export type SessionTasksCreateOperation<E = never> = ExperimentalSessionTasksCreateOperation<E>
+
+/** @deprecated Use `ExperimentalSessionTasksMessagesInput`. Removed in the next minor. */
+export type SessionTasksMessagesInput = ExperimentalSessionTasksMessagesInput
+
+/** @deprecated Use `ExperimentalSessionTasksMessagesOutput`. Removed in the next minor. */
+export type SessionTasksMessagesOutput = ExperimentalSessionTasksMessagesOutput
+
+/** @deprecated Use `ExperimentalSessionTasksMessagesOperation`. Removed in the next minor. */
+export type SessionTasksMessagesOperation<E = never> = ExperimentalSessionTasksMessagesOperation<E>
+
+/** @deprecated Use `ExperimentalSessionTasksSendInput`. Removed in the next minor. */
+export type SessionTasksSendInput = ExperimentalSessionTasksSendInput
+
+/** @deprecated Use `ExperimentalSessionTasksSendOutput`. Removed in the next minor. */
+export type SessionTasksSendOutput = ExperimentalSessionTasksSendOutput
+
+/** @deprecated Use `ExperimentalSessionTasksSendOperation`. Removed in the next minor. */
+export type SessionTasksSendOperation<E = never> = ExperimentalSessionTasksSendOperation<E>
 
 /** @deprecated Use `ExperimentalSessionLogInput`. Removed in the next minor. */
 export type SessionLogInput = ExperimentalSessionLogInput

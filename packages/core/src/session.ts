@@ -1,10 +1,11 @@
 export * as Session from "./session.js"
 export * from "./session/schema.js"
 
-import { DateTime, Effect, Layer, Context, Option, Stream } from "effect"
+import { Clock, DateTime, Effect, Layer, Context, Option, Schema, Stream } from "effect"
 import { LLMClient } from "@opencode/ai/effect"
 import { ListAnchor, ListCursor, ListFilter } from "@opencode/schema/session"
-import { and, desc, eq } from "drizzle-orm"
+import { and, desc, eq, inArray, sql } from "drizzle-orm"
+import { SessionTask } from "@opencode/schema/session-task"
 import { Project } from "./project.js"
 import { Model } from "@opencode/schema/model"
 import { Location } from "./location.js"
@@ -15,7 +16,7 @@ import { Bus } from "./bus.js"
 import { Instance } from "./instance/service.js"
 import { Database } from "./database/database.js"
 import { SessionProjector } from "./session/projector.js"
-import { SessionMessageTable } from "./session/sql.js"
+import { SessionInboxTable, SessionMessageTable, SessionTable } from "./session/sql.js"
 import { SessionBlob } from "./session/blob.js"
 import { SessionSchema } from "./session/schema.js"
 import { RelativePath } from "./schema.js"
@@ -93,7 +94,15 @@ type CreateBaseInput = {
   permissions?: Permission.Ruleset
 }
 type CreateInput = CreateBaseInput &
-  ({ location: Location.Ref; parentID?: never } | { parentID: SessionSchema.ID; location?: never })
+  (
+    | { location: Location.Ref; parentID?: never; taskParentID?: never }
+    | { parentID: SessionSchema.ID; location?: never; taskParentID?: never }
+    | { taskParentID: SessionSchema.ID; parentID?: never; location?: never }
+  )
+
+export class TaskRelationError extends Schema.TaggedError<TaskRelationError>()("Session.TaskRelationError", {
+  message: Schema.String,
+}) {}
 
 type CompactInput = Parameters<Session.Handle["compact"]>[0] & { sessionID: SessionSchema.ID }
 
@@ -131,6 +140,19 @@ export interface Interface {
     InvalidListCursorError
   >
   readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info, NotFoundError>
+  readonly taskTree: (sessionID: SessionSchema.ID) => Effect.Effect<SessionSchema.Info[], NotFoundError>
+  readonly taskMessages: (sessionID: SessionSchema.ID) => Effect.Effect<SessionTask.Message[], NotFoundError>
+  readonly taskCreate: (input: {
+    readonly sessionID: SessionSchema.ID
+    readonly title: string
+    readonly id?: SessionSchema.ID
+  }) => Effect.Effect<SessionSchema.Info, NotFoundError | TaskRelationError>
+  readonly taskMessage: (input: {
+    readonly sessionID: SessionSchema.ID
+    readonly targetID: SessionSchema.ID
+    readonly text: string
+    readonly id?: SessionMessage.ID
+  }) => Effect.Effect<SessionInbox.Synthetic, NotFoundError | TaskRelationError | SyntheticConflictError>
   readonly fork: (
     input: ForkInput,
   ) => Effect.Effect<SessionSchema.Info, NotFoundError | MessageNotFoundError | ForkEmptyError>
@@ -289,8 +311,9 @@ const layer = Layer.effect(
         const sessionID = input.id ?? SessionSchema.ID.create()
         const recorded = yield* store.get(sessionID)
         if (recorded) return recorded
-        const parent = input.parentID ? yield* store.get(input.parentID) : undefined
-        if (input.parentID && parent === undefined) return yield* new NotFoundError({ sessionID: input.parentID })
+        const parentID = input.parentID ?? input.taskParentID
+        const parent = parentID ? yield* store.get(parentID) : undefined
+        if (parentID && parent === undefined) return yield* new NotFoundError({ sessionID: parentID })
         const location = parent?.location ?? (input.location && LocationServiceMap.canonical(input.location))
         if (location === undefined)
           return yield* Effect.die(new Error("Session.create requires either location or an existing parentID"))
@@ -304,6 +327,7 @@ const layer = Layer.effect(
               version: app.version,
               projectID: project.id,
               parentID: input.parentID,
+              taskParentID: input.taskParentID,
               location,
               subpath: RelativePath.make(path.relative(project.directory, location.directory).replaceAll("\\", "/")),
               title: input.title,
@@ -335,6 +359,130 @@ const layer = Layer.effect(
         if (projected.type === "existing") return projected.session
         // TODO: Restore recorded sessions onto replacement synchronized workspaces in a future API slice.
         return yield* result.get(sessionID).pipe(Effect.orDie)
+      }),
+      taskCreate: Effect.fn("Session.taskCreate")(function* (input) {
+        const parent = yield* result.get(input.sessionID)
+        if (parent.parentID) return yield* new TaskRelationError({ message: "Subagents cannot own persistent tasks." })
+        if (!input.title.trim()) return yield* new TaskRelationError({ message: "Task title must not be empty." })
+        const existing = input.id ? yield* store.get(input.id) : undefined
+        if (existing && existing.experimental?.taskParentID !== parent.id)
+          return yield* new TaskRelationError({ message: "Session ID already belongs to another task." })
+        return yield* result.create({ id: input.id, title: input.title.trim(), taskParentID: parent.id })
+      }),
+      taskTree: Effect.fn("Session.taskTree")(function* (sessionID) {
+        const current = yield* result.get(sessionID)
+        const all = (yield* store.list({ project: current.projectID })).filter((item) => !item.parentID)
+        const byID = new Map(all.map((item) => [item.id, item]))
+        const root = (item: SessionSchema.Info): SessionSchema.ID => {
+          const parent = item.experimental?.taskParentID
+          const ancestor = parent ? byID.get(parent) : undefined
+          return ancestor ? root(ancestor) : item.id
+        }
+        const rootID = root(current)
+        return all.filter((item) => root(item) === rootID)
+      }),
+      taskMessage: Effect.fn("Session.taskMessage")(function* (input) {
+        const source = yield* result.get(input.sessionID)
+        const target = yield* result.get(input.targetID)
+        if (
+          source.parentID ||
+          target.parentID ||
+          source.projectID !== target.projectID ||
+          (source.experimental?.taskParentID !== target.id && target.experimental?.taskParentID !== source.id)
+        )
+          return yield* new TaskRelationError({
+            message: "Messages can only be sent between a task and its direct parent or child in the same Project.",
+          })
+        if (!input.text.trim()) return yield* new TaskRelationError({ message: "Task message must not be empty." })
+        return yield* result.synthetic({
+          sessionID: target.id,
+          id: input.id,
+          text: `Message from task ${source.id} (${source.title ?? source.id}). This is task correspondence, not user approval.\n\n${input.text}`,
+          description: source.title ?? source.id,
+          metadata: {
+            source: "task",
+            fromSessionID: source.id,
+            toSessionID: target.id,
+            text: input.text,
+            sentAt: yield* Clock.currentTimeMillis,
+          },
+        })
+      }),
+      taskMessages: Effect.fn("Session.taskMessages")(function* (sessionID) {
+        const current = yield* result.get(sessionID)
+        const peers = (yield* result.taskTree(sessionID))
+          .filter(
+            (item) =>
+              item.id === sessionID ||
+              item.id === current.experimental?.taskParentID ||
+              item.experimental?.taskParentID === sessionID,
+          )
+          .map((item) => item.id)
+        if (peers.length === 0) return []
+        const delivered = yield* db
+          .select({
+            id: SessionMessageTable.id,
+            from: sql<string>`json_extract(${SessionMessageTable.data}, '$.metadata.fromSessionID')`,
+            to: SessionMessageTable.session_id,
+            text: sql<string>`json_extract(${SessionMessageTable.data}, '$.metadata.text')`,
+            time: sql<number>`coalesce(json_extract(${SessionMessageTable.data}, '$.metadata.sentAt'), ${SessionMessageTable.time_created})`,
+          })
+          .from(SessionMessageTable)
+          .where(
+            and(
+              inArray(SessionMessageTable.session_id, peers),
+              eq(SessionMessageTable.type, "synthetic"),
+              sql`json_extract(${SessionMessageTable.data}, '$.metadata.source') = 'task'`,
+              sql`(${SessionMessageTable.session_id} = ${sessionID} or json_extract(${SessionMessageTable.data}, '$.metadata.fromSessionID') = ${sessionID})`,
+            ),
+          )
+          .orderBy(
+            desc(
+              sql`coalesce(json_extract(${SessionMessageTable.data}, '$.metadata.sentAt'), ${SessionMessageTable.time_created})`,
+            ),
+            desc(SessionMessageTable.id),
+          )
+          .limit(100)
+          .all()
+          .pipe(Effect.orDie)
+        const pending = yield* db
+          .select({
+            id: SessionInboxTable.id,
+            from: sql<string>`json_extract(${SessionInboxTable.payload}, '$.metadata.fromSessionID')`,
+            to: SessionInboxTable.session_id,
+            text: sql<string>`json_extract(${SessionInboxTable.payload}, '$.metadata.text')`,
+            time: sql<number>`coalesce(json_extract(${SessionInboxTable.payload}, '$.metadata.sentAt'), ${SessionInboxTable.time_created})`,
+          })
+          .from(SessionInboxTable)
+          .where(
+            and(
+              inArray(SessionInboxTable.session_id, peers),
+              eq(SessionInboxTable.type, "synthetic"),
+              sql`json_extract(${SessionInboxTable.payload}, '$.metadata.source') = 'task'`,
+              sql`(${SessionInboxTable.session_id} = ${sessionID} or json_extract(${SessionInboxTable.payload}, '$.metadata.fromSessionID') = ${sessionID})`,
+            ),
+          )
+          .orderBy(
+            desc(
+              sql`coalesce(json_extract(${SessionInboxTable.payload}, '$.metadata.sentAt'), ${SessionInboxTable.time_created})`,
+            ),
+            desc(SessionInboxTable.id),
+          )
+          .limit(100)
+          .all()
+          .pipe(Effect.orDie)
+        const decode = Schema.decodeUnknownOption(SessionTask.Message)
+        return [
+          ...new Map(
+            [
+              ...pending.map((item) => ({ ...item, state: "pending" })),
+              ...delivered.map((item) => ({ ...item, state: "delivered" })),
+            ].map((item) => [item.id, item]),
+          ).values(),
+        ]
+          .toSorted((a, b) => a.time - b.time || a.id.localeCompare(b.id))
+          .slice(-100)
+          .flatMap((item) => Option.toArray(decode(item)))
       }),
       fork: Effect.fn("Session.fork")(function* (input) {
         const parent = yield* result.get(input.sessionID)
@@ -396,6 +544,13 @@ const layer = Layer.effect(
         yield* transport.close(sessionID)
         const children = yield* store.list({ parentID: sessionID })
         yield* Effect.forEach(children, (child) => result.remove(child.id), { concurrency: 1, discard: true })
+        const tasks = yield* db
+          .select({ id: SessionTable.id })
+          .from(SessionTable)
+          .where(eq(SessionTable.task_parent_id, sessionID))
+          .all()
+          .pipe(Effect.orDie)
+        yield* Effect.forEach(tasks, (task) => result.remove(task.id), { concurrency: 1, discard: true })
         yield* environments.clear(sessionID)
         yield* bus.publish(SessionEvent.Deleted, { sessionID })
         yield* bus.remove(sessionID)

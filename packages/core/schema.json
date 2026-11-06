@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "4f6e16c6-f070-4545-b9d0-19fcb6e5210c",
-  "prevIds": ["0ac88673-a402-45a0-b931-e694d59ccefa"],
+  "id": "11526928-242a-4742-9fbe-5b7ad37dc4c5",
+  "prevIds": ["4f6e16c6-f070-4545-b9d0-19fcb6e5210c"],
   "ddl": [
     {
       "name": "account_state",
@@ -1592,6 +1592,16 @@
       "autoincrement": false,
       "default": null,
       "generated": null,
+      "name": "task_parent_id",
+      "entityType": "columns",
+      "table": "session_v2"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
       "name": "fork_session_id",
       "entityType": "columns",
       "table": "session_v2"
@@ -2673,6 +2683,20 @@
       "where": null,
       "origin": "manual",
       "name": "session_v2_parent_idx",
+      "entityType": "indexes",
+      "table": "session_v2"
+    },
+    {
+      "columns": [
+        {
+          "value": "task_parent_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "session_v2_task_parent_idx",
       "entityType": "indexes",
       "table": "session_v2"
     },

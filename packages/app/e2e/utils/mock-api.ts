@@ -331,6 +331,32 @@ const Group = HttpApiGroup.make("mock")
     }),
   )
   .add(HttpApiEndpoint.post("sessionCreate", "/api/session", { payload: JsonPayload, success: Json }))
+  .add(
+    HttpApiEndpoint.get("taskTree", "/api/experimental/session/:sessionID/tasks", {
+      params: SessionParams,
+      success: Json,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("taskCreate", "/api/experimental/session/:sessionID/tasks", {
+      params: SessionParams,
+      payload: Schema.Struct({ id: Schema.optionalKey(Schema.String), title: Schema.String }),
+      success: Json,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("taskMessages", "/api/experimental/session/:sessionID/tasks/message", {
+      params: SessionParams,
+      success: Json,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("taskSend", "/api/experimental/session/:sessionID/tasks/message", {
+      params: SessionParams,
+      payload: Schema.Struct({ id: Schema.optionalKey(Schema.String), targetID: Schema.String, text: Schema.String }),
+      success: Json,
+    }),
+  )
   .add(HttpApiEndpoint.get("sessionActive", "/api/session/active", { success: Json }))
   .add(
     HttpApiEndpoint.post("rpcCall", "/api/rpc/:rpcID/:method", {
