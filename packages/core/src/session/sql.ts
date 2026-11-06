@@ -35,6 +35,7 @@ export const SessionTable = sqliteTable(
       .references(() => ProjectTable.id, { onDelete: "cascade" }),
     workspace_id: text().$type<Workspace.ID>(),
     parent_id: text().$type<SessionSchema.ID>(),
+    task_parent_id: text().$type<SessionSchema.ID>(),
     fork_session_id: text().$type<SessionSchema.ID>(),
     fork_boundary: text({ mode: "json" }).$type<Session.ForkBoundary>(),
     slug: text().notNull(),
@@ -77,6 +78,7 @@ export const SessionTable = sqliteTable(
     index("session_v2_project_idx").on(table.project_id),
     index("session_v2_workspace_idx").on(table.workspace_id),
     index("session_v2_parent_idx").on(table.parent_id),
+    index("session_v2_task_parent_idx").on(table.task_parent_id),
     index("session_v2_time_suspended_idx")
       .on(table.time_suspended)
       .where(sql`${table.time_suspended} is not null`),

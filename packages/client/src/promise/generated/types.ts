@@ -454,6 +454,15 @@ export type SessionMessageCompactionRunning = {
   summary: string
 }
 
+export type SessionTaskMessage = {
+  id: SessionMessageID
+  from: SessionID
+  to: SessionID
+  text: string
+  time: number
+  state: "pending" | "delivered"
+}
+
 export type UsageLimitsBudgetModel = { providerID: ProviderID; modelID: string; name: string; spent?: MoneyUSD }
 
 export type FileSystemEntry = { path: RelativePath; type: "file" | "directory" }
@@ -2314,6 +2323,7 @@ export type ModelInfo = {
 export type SessionInfo = {
   id: SessionID
   parentID?: SessionID
+  experimental?: { taskParentID?: SessionID }
   fork?: { sessionID: SessionID; boundary: SessionForkBoundary }
   projectID: ProjectID
   agent?: AgentID
@@ -2343,6 +2353,7 @@ export type SessionCreated = {
     location: LocationRef
     subpath?: RelativePath
     parentID?: SessionID
+    taskParentID?: SessionID
     slug: string
     title?: string
     agent?: AgentID
@@ -3792,6 +3803,7 @@ export type ExperimentalSessionImportInput = {
   readonly info: {
     readonly id: string
     readonly parentID?: string
+    readonly experimental?: { readonly taskParentID?: string }
     readonly fork?: {
       readonly sessionID: string
       readonly boundary:
@@ -3877,6 +3889,31 @@ export type ExperimentalSessionInstructionsEntryPutOutput = void
 export type ExperimentalSessionInstructionsEntryRemoveInput = { readonly sessionID: string; readonly key: string }
 
 export type ExperimentalSessionInstructionsEntryRemoveOutput = void
+
+export type ExperimentalSessionTasksTreeInput = { readonly sessionID: string }
+
+export type ExperimentalSessionTasksTreeOutput = { data: Array<SessionInfo> }["data"]
+
+export type ExperimentalSessionTasksCreateInput = {
+  readonly sessionID: string
+  readonly id?: string | undefined
+  readonly title: string
+}
+
+export type ExperimentalSessionTasksCreateOutput = { data: SessionInfo }["data"]
+
+export type ExperimentalSessionTasksMessagesInput = { readonly sessionID: string }
+
+export type ExperimentalSessionTasksMessagesOutput = { data: Array<SessionTaskMessage> }["data"]
+
+export type ExperimentalSessionTasksSendInput = {
+  readonly sessionID: string
+  readonly targetID: string
+  readonly id?: string | undefined
+  readonly text: string
+}
+
+export type ExperimentalSessionTasksSendOutput = { data: SessionInboxSynthetic }["data"]
 
 export type ExperimentalSessionLogInput = {
   readonly sessionID: string
@@ -4894,6 +4931,30 @@ export type SessionInstructionsEntryRemoveInput = ExperimentalSessionInstruction
 
 /** @deprecated Use `ExperimentalSessionInstructionsEntryRemoveOutput`. Removed in the next minor. */
 export type SessionInstructionsEntryRemoveOutput = ExperimentalSessionInstructionsEntryRemoveOutput
+
+/** @deprecated Use `ExperimentalSessionTasksTreeInput`. Removed in the next minor. */
+export type SessionTasksTreeInput = ExperimentalSessionTasksTreeInput
+
+/** @deprecated Use `ExperimentalSessionTasksTreeOutput`. Removed in the next minor. */
+export type SessionTasksTreeOutput = ExperimentalSessionTasksTreeOutput
+
+/** @deprecated Use `ExperimentalSessionTasksCreateInput`. Removed in the next minor. */
+export type SessionTasksCreateInput = ExperimentalSessionTasksCreateInput
+
+/** @deprecated Use `ExperimentalSessionTasksCreateOutput`. Removed in the next minor. */
+export type SessionTasksCreateOutput = ExperimentalSessionTasksCreateOutput
+
+/** @deprecated Use `ExperimentalSessionTasksMessagesInput`. Removed in the next minor. */
+export type SessionTasksMessagesInput = ExperimentalSessionTasksMessagesInput
+
+/** @deprecated Use `ExperimentalSessionTasksMessagesOutput`. Removed in the next minor. */
+export type SessionTasksMessagesOutput = ExperimentalSessionTasksMessagesOutput
+
+/** @deprecated Use `ExperimentalSessionTasksSendInput`. Removed in the next minor. */
+export type SessionTasksSendInput = ExperimentalSessionTasksSendInput
+
+/** @deprecated Use `ExperimentalSessionTasksSendOutput`. Removed in the next minor. */
+export type SessionTasksSendOutput = ExperimentalSessionTasksSendOutput
 
 /** @deprecated Use `ExperimentalSessionLogInput`. Removed in the next minor. */
 export type SessionLogInput = ExperimentalSessionLogInput

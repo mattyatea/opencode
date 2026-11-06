@@ -45,6 +45,7 @@ export const Created = Event.durable({
     location: Location.Ref,
     subpath: RelativePath.pipe(optional),
     parentID: SessionID.pipe(optional),
+    taskParentID: SessionID.pipe(optional),
     slug: Schema.String,
     title: Schema.String.pipe(optional),
     agent: Agent.ID.pipe(optional),

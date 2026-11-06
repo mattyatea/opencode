@@ -39,6 +39,8 @@ export function useSessionModel() {
     const current = info()?.parentID
 
     if (current) return current
+    // Once loaded, ordinary sessions (including persistent tasks) never inherit a tab's subagent ancestry.
+    if (info()) return
     const id = sessionID()
 
     if (!id) return

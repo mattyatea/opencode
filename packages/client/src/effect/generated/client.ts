@@ -107,6 +107,14 @@ import type {
   ExperimentalSessionInstructionsEntryPutOutput,
   ExperimentalSessionInstructionsEntryRemoveInput,
   ExperimentalSessionInstructionsEntryRemoveOutput,
+  ExperimentalSessionTasksTreeInput,
+  ExperimentalSessionTasksTreeOutput,
+  ExperimentalSessionTasksCreateInput,
+  ExperimentalSessionTasksCreateOutput,
+  ExperimentalSessionTasksMessagesInput,
+  ExperimentalSessionTasksMessagesOutput,
+  ExperimentalSessionTasksSendInput,
+  ExperimentalSessionTasksSendOutput,
   ExperimentalSessionLogInput,
   ExperimentalSessionLogOutput,
   MessageListInput,
@@ -867,6 +875,48 @@ const EndpointExperimentalSessionInstructionsEntryRemove =
       ),
     )
 
+const EndpointExperimentalSessionTasksTree =
+  (raw: RawClient["server.session"]) => (input: ExperimentalSessionTasksTreeInput) =>
+    preserveEffect<ExperimentalSessionTasksTreeOutput>()(
+      raw["session.tasks.tree"]({ params: { sessionID: input["sessionID"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalSessionTasksCreate =
+  (raw: RawClient["server.session"]) => (input: ExperimentalSessionTasksCreateInput) =>
+    preserveEffect<ExperimentalSessionTasksCreateOutput>()(
+      raw["session.tasks.create"]({
+        params: { sessionID: input["sessionID"] },
+        payload: { id: input["id"], title: input["title"] },
+      }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalSessionTasksMessages =
+  (raw: RawClient["server.session"]) => (input: ExperimentalSessionTasksMessagesInput) =>
+    preserveEffect<ExperimentalSessionTasksMessagesOutput>()(
+      raw["session.tasks.messages"]({ params: { sessionID: input["sessionID"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalSessionTasksSend =
+  (raw: RawClient["server.session"]) => (input: ExperimentalSessionTasksSendInput) =>
+    preserveEffect<ExperimentalSessionTasksSendOutput>()(
+      raw["session.tasks.send"]({
+        params: { sessionID: input["sessionID"] },
+        payload: { targetID: input["targetID"], id: input["id"], text: input["text"] },
+      }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
 const EndpointExperimentalSessionLog = (raw: RawClient["server.session"]) => (input: ExperimentalSessionLogInput) =>
   preserveStream<ExperimentalSessionLogOutput>()(
     Stream.unwrap(
@@ -892,6 +942,12 @@ const adaptGroupExperimentalSession = (raw: RawClient["server.session"]) => ({
       put: EndpointExperimentalSessionInstructionsEntryPut(raw),
       remove: EndpointExperimentalSessionInstructionsEntryRemove(raw),
     },
+  },
+  tasks: {
+    tree: EndpointExperimentalSessionTasksTree(raw),
+    create: EndpointExperimentalSessionTasksCreate(raw),
+    messages: EndpointExperimentalSessionTasksMessages(raw),
+    send: EndpointExperimentalSessionTasksSend(raw),
   },
   log: EndpointExperimentalSessionLog(raw),
 })
@@ -2028,6 +2084,17 @@ const adaptClient = (raw: RawClient) => {
           /** @deprecated Use `client.experimental.session.instructions.entry.remove`. Removed in the next minor. */
           remove: client.experimental.session.instructions.entry.remove,
         },
+      },
+      /** @deprecated Use `client.experimental.session.tasks`. Removed in the next minor. */
+      tasks: {
+        /** @deprecated Use `client.experimental.session.tasks.tree`. Removed in the next minor. */
+        tree: client.experimental.session.tasks.tree,
+        /** @deprecated Use `client.experimental.session.tasks.create`. Removed in the next minor. */
+        create: client.experimental.session.tasks.create,
+        /** @deprecated Use `client.experimental.session.tasks.messages`. Removed in the next minor. */
+        messages: client.experimental.session.tasks.messages,
+        /** @deprecated Use `client.experimental.session.tasks.send`. Removed in the next minor. */
+        send: client.experimental.session.tasks.send,
       },
       /** @deprecated Use `client.experimental.session.log`. Removed in the next minor. */
       log: client.experimental.session.log,

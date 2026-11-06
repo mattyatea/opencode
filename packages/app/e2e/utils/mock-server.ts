@@ -599,6 +599,7 @@ function mockHandlers(
     attempts: Map<string, number>
   },
 ) {
+  const taskMessages: Array<{ id: string; from: string; to: string; text: string; time: number; state: string }> = []
   const noContent = Effect.succeed(HttpApiSchema.NoContent.make())
   const configEntries = config.configEntries ?? []
 
@@ -731,6 +732,63 @@ function mockHandlers(
         }),
       )
       .handleAll({
+        taskTree: (ctx) =>
+          Effect.sync(() => {
+            const sessions = config.sessions.map((session) => currentSession(session, config.directory))
+            const root = (id: string): string => {
+              const parent = sessions.find((session) => session.id === id)?.experimental?.taskParentID
+              return parent ? root(parent) : id
+            }
+            return {
+              data: sessions.filter((session) => !session.parentID && root(session.id) === root(ctx.params.sessionID)),
+            }
+          }),
+        taskCreate: (ctx) =>
+          Effect.sync(() => {
+            const existing = config.sessions.find((session) => session.id === ctx.payload.id)
+            if (existing) return { data: currentSession(existing, config.directory) }
+            const parent = config.sessions.find((session) => session.id === ctx.params.sessionID)
+            const task = currentSession(
+              {
+                ...parent,
+                id: ctx.payload.id ?? "ses_mock_task",
+                title: ctx.payload.title,
+                experimental: { taskParentID: ctx.params.sessionID },
+              },
+              config.directory,
+            )
+            config.sessions.push(task)
+            return { data: task }
+          }),
+        taskMessages: (ctx) =>
+          Effect.sync(() => ({
+            data: taskMessages.filter(
+              (message) => message.from === ctx.params.sessionID || message.to === ctx.params.sessionID,
+            ),
+          })),
+        taskSend: (ctx) =>
+          Effect.sync(() => {
+            const id = ctx.payload.id ?? `msg_task_${taskMessages.length}`
+            if (!taskMessages.some((message) => message.id === id))
+              taskMessages.push({
+                id,
+                from: ctx.params.sessionID,
+                to: ctx.payload.targetID,
+                text: ctx.payload.text,
+                time: Date.now(),
+                state: "pending",
+              })
+            return {
+              data: {
+                id,
+                sessionID: ctx.payload.targetID,
+                time: { created: Date.now() },
+                type: "synthetic",
+                payload: { text: ctx.payload.text },
+                delivery: "steer",
+              },
+            }
+          }),
         info: () =>
           Effect.succeed({
             version: "2.0.0",
@@ -1478,6 +1536,7 @@ export function currentSession(session: MockSession, fallbackDirectory?: string)
   return {
     id: session.id,
     parentID: session.parentID,
+    experimental: seed.experimental,
     projectID: session.projectID ?? "project",
     agent: session.agent ?? "build",
     model: session.model,
@@ -1569,6 +1628,7 @@ const decodeModel = Schema.decodeUnknownOption(
 // Every field is lenient, so any session object decodes.
 const decodeSession = Schema.decodeUnknownSync(
   Schema.Struct({
+    experimental: lenient(Schema.Struct({ taskParentID: lenient(Schema.String) })),
     time: lenient(
       Schema.Struct({
         created: lenient(Schema.Number),

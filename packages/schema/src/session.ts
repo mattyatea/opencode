@@ -32,6 +32,8 @@ export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
   id: ID,
   parentID: ID.pipe(optional),
+  /** Experimental persistent task relationship, separate from a subagent's parentID. */
+  experimental: Schema.Struct({ taskParentID: ID.pipe(optional) }).pipe(optional),
   fork: Schema.Struct({
     sessionID: ID,
     boundary: ForkBoundary,

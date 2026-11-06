@@ -21,6 +21,13 @@ import { SessionMessage } from "./message.js"
 import { SessionProjector } from "./projector.js"
 import { SessionRunner } from "./runner/index.js"
 import { SessionStore } from "./store.js"
+import { SessionTable } from "./sql.js"
+import { eq } from "drizzle-orm"
+
+export class TaskProjectMismatchError extends Schema.TaggedError<TaskProjectMismatchError>()(
+  "Session.TaskProjectMismatchError",
+  { directory: AbsolutePath },
+) {}
 
 export class DestinationNotFoundError extends Schema.TaggedError<DestinationNotFoundError>()(
   "Session.DestinationNotFoundError",
@@ -45,7 +52,11 @@ export interface Interface {
     delivery?: SessionInbox.Delivery
   }) => Effect.Effect<
     void,
-    NotFoundError | DestinationNotFoundError | DestinationNotDirectoryError | DestinationUnavailableError
+    | NotFoundError
+    | DestinationNotFoundError
+    | DestinationNotDirectoryError
+    | DestinationUnavailableError
+    | TaskProjectMismatchError
   >
 }
 
@@ -83,6 +94,15 @@ const layer = Layer.effect(
       if (!info) return yield* new DestinationNotFoundError({ directory })
       if (info.type !== "Directory") return yield* new DestinationNotDirectoryError({ directory })
       const project = yield* projects.resolve(directory)
+      if (project.id !== session.projectID) {
+        const child = yield* database.db
+          .select({ id: SessionTable.id })
+          .from(SessionTable)
+          .where(eq(SessionTable.task_parent_id, session.id))
+          .get()
+          .pipe(Effect.orDie)
+        if (session.experimental?.taskParentID || child) return yield* new TaskProjectMismatchError({ directory })
+      }
       const destination: SessionInbox.MovePayload = {
         location: Location.Ref.make({ directory, workspaceID: input.workspaceID }),
         projectID: project.id,

@@ -75,6 +75,9 @@ const layer = Layer.effect(
         if (recorded) return yield* new ImportConflictError({ sessionID })
         if (input.data.info.parentID) yield* sessions.get(input.data.info.parentID)
         const project = yield* projects.resolve(input.location.directory)
+        const taskParent = input.data.info.experimental?.taskParentID
+          ? yield* sessions.get(input.data.info.experimental.taskParentID)
+          : undefined
         yield* upsertProject(db, project).pipe(Effect.orDie)
         const importedAt = yield* Clock.currentTimeMillis
         const subpath = RelativePath.make(
@@ -109,6 +112,8 @@ const layer = Layer.effect(
             {
               sessionID,
               parentID: input.data.info.parentID,
+              // An import into another Project is independent of the original task family.
+              taskParentID: taskParent?.projectID === project.id ? taskParent.id : undefined,
               slug: Slug.create(),
               version: app.version,
               projectID: project.id,

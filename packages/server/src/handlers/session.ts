@@ -282,8 +282,68 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
               Effect.catchTag("Session.DestinationUnavailableError", (error) =>
                 Effect.fail(new InvalidRequestError({ message: `Directory is unavailable: ${error.directory}` })),
               ),
+              Effect.catchTag(
+                "Session.TaskProjectMismatchError",
+                () => new InvalidRequestError({ message: "Persistent task families must remain in the same Project." }),
+              ),
             )
           return HttpApiSchema.NoContent.make()
+        }),
+      )
+      .handle(
+        "session.tasks.tree",
+        Effect.fn(function* (ctx) {
+          return {
+            data: yield* session
+              .taskTree(ctx.params.sessionID)
+              .pipe(Effect.catchTag("Session.NotFoundError", missingSession)),
+          }
+        }),
+      )
+      .handle(
+        "session.tasks.create",
+        Effect.fn(function* (ctx) {
+          return {
+            data: yield* session.taskCreate({ ...ctx.payload, sessionID: ctx.params.sessionID }).pipe(
+              Effect.catchTag("Session.NotFoundError", missingSession),
+              Effect.catchTag(
+                "Session.TaskRelationError",
+                (error) => new InvalidRequestError({ message: error.message }),
+              ),
+            ),
+          }
+        }),
+      )
+      .handle(
+        "session.tasks.messages",
+        Effect.fn(function* (ctx) {
+          return {
+            data: yield* session
+              .taskMessages(ctx.params.sessionID)
+              .pipe(Effect.catchTag("Session.NotFoundError", missingSession)),
+          }
+        }),
+      )
+      .handle(
+        "session.tasks.send",
+        Effect.fn(function* (ctx) {
+          return {
+            data: yield* session.taskMessage({ ...ctx.payload, sessionID: ctx.params.sessionID }).pipe(
+              Effect.catchTag("Session.NotFoundError", missingSession),
+              Effect.catchTag(
+                "Session.TaskRelationError",
+                (error) => new InvalidRequestError({ message: error.message }),
+              ),
+              Effect.catchTag(
+                "Session.SyntheticConflictError",
+                (error) =>
+                  new ConflictError({
+                    resource: error.inputID,
+                    message: "Task message ID conflicts with an existing record.",
+                  }),
+              ),
+            ),
+          }
         }),
       )
       .handle(

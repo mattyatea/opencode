@@ -38,6 +38,7 @@ const session = (
   overrides: Partial<V1Migration.TransformInput["session"]> = {},
 ): V1Migration.TransformInput["session"] => ({
   id: SessionSchema.ID.make("ses_test"),
+  task_parent_id: null,
   project_id: Project.ID.global,
   workspace_id: null,
   parent_id: null,

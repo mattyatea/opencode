@@ -27,6 +27,7 @@ import { Npm } from "@opencode/util/npm"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { Provider } from "@opencode/core/provider"
+import { Project } from "@opencode/core/project"
 import { Session } from "@opencode/core/session"
 import { SharedCache } from "@opencode/core/shared-cache"
 import { InstructionEntry } from "@opencode/core/session/instruction-entry"
@@ -86,7 +87,11 @@ const permissionLayer = Layer.succeed(
   }),
 )
 
-export const makePluginTestLayer = (permission = permissionLayer, generate = generateLayer) =>
+export const makePluginTestLayer = (
+  permission = permissionLayer,
+  generate = generateLayer,
+  replacements: LayerNode.Replacements = [],
+) =>
   AppNodeBuilder.build(
     LayerNode.group([
       AppProcess.node,
@@ -110,6 +115,7 @@ export const makePluginTestLayer = (permission = permissionLayer, generate = gen
       AISDK.node,
       Provider.node,
       Model.node,
+      Project.node,
       Command.node,
       InstructionDiscovery.node,
       Integration.node,
@@ -142,6 +148,7 @@ export const makePluginTestLayer = (permission = permissionLayer, generate = gen
       Generate.node.replace(generate),
       Permission.node.replace(permission),
       offlineModels,
+      ...replacements,
     ],
   ).pipe(Layer.provideMerge(configLayer))
 

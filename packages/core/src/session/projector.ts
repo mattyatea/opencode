@@ -208,7 +208,10 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
       .orderBy(asc(SessionMessageTable.seq))
       .limit(ForkBatchSize)
       .all()
-      .pipe(Effect.orDie, Effect.flatMap((rows) => SessionHistory.withParts(db, rows)))
+      .pipe(
+        Effect.orDie,
+        Effect.flatMap((rows) => SessionHistory.withParts(db, rows)),
+      )
     if (rows.length === 0) break
 
     const values = yield* Effect.forEach(rows, (row) =>
@@ -541,6 +544,7 @@ const layer = Layer.effectDiscard(
             project_id: event.data.projectID,
             workspace_id: event.data.location.workspaceID ?? null,
             parent_id: event.data.parentID,
+            task_parent_id: event.data.taskParentID,
             slug: event.data.slug,
             directory: event.data.location.directory,
             path: event.data.subpath,
