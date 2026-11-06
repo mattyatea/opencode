@@ -5,6 +5,7 @@ import { pathKey } from "@/workspaces/path-key"
 export const ProjectSectionsState = Persistence.struct({
   sections: Persistence.array(Schema.Struct({ id: Schema.String, name: Schema.String })),
   order: Persistence.array(Schema.String),
+  projects: Persistence.array(Schema.String),
   assignments: Persistence.record(Schema.String),
   collapsed: Persistence.record(Schema.Boolean),
   sessions: Persistence.record(Schema.Array(Schema.Struct({ id: Schema.String, updated: Schema.Number }))),
