@@ -90,6 +90,7 @@ const permissionLayer = Layer.succeed(
 export const makePluginTestLayer = (
   permission = permissionLayer,
   generate = generateLayer,
+  mcp = emptyMcpLayer,
   replacements: LayerNode.Replacements = [],
 ) =>
   AppNodeBuilder.build(
@@ -144,7 +145,7 @@ export const makePluginTestLayer = (
       Location.node.replace(tempLocationLayer),
       Npm.node.replace(npmLayer),
       Config.node.replace(configLayer),
-      Mcp.node.replace(emptyMcpLayer),
+      Mcp.node.replace(mcp),
       Generate.node.replace(generate),
       Permission.node.replace(permission),
       offlineModels,

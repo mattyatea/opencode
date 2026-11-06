@@ -54,7 +54,7 @@ const permission = permissionLayer({
     ),
 })
 
-const it = testEffect(makePluginTestLayer(permission, undefined, [SessionExecution.node.replace(execution)]))
+const it = testEffect(makePluginTestLayer(permission, undefined, undefined, [SessionExecution.node.replace(execution)]))
 
 const prepareProject = (directory: string, name: string) =>
   Effect.gen(function* () {
