@@ -1,5 +1,6 @@
 import type { SessionInfo } from "@opencode/client/promise"
 import { Key } from "@solid-primitives/keyed"
+import { createMediaQuery } from "@solid-primitives/media"
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, Show } from "solid-js"
 import { createStore, type SetStoreFunction } from "solid-js/store"
 import { InlineInput } from "@opencode/ui/inline-input"
@@ -106,6 +107,19 @@ type HomeSessionRowUI = {
 }
 
 export function HomeSessionsView(props: HomeSessionsViewProps) {
+  const mobile = createMediaQuery("(max-width: 767px)")
+  const projects = createMemo(() => {
+    const groups = new Map<string, { name: string; sessions: HomeSessionRecord[] }>()
+    for (const group of props.groups) {
+      for (const record of group.sessions) {
+        const key = record.project.worktree
+        const project = groups.get(key) ?? { name: record.projectName, sessions: [] }
+        project.sessions.push(record)
+        groups.set(key, project)
+      }
+    }
+    return [...groups.entries()]
+  })
   const [rowUI, setRowUI] = createStore<HomeSessionRowUI>({ menu: undefined, editor: undefined })
   const [hover, setHover] = createStore<{ sessionID: string | undefined }>({ sessionID: undefined })
   const showLocations = createAltHold(props.desktop, props.onRevealLocations)
@@ -185,39 +199,72 @@ export function HomeSessionsView(props: HomeSessionsViewProps) {
             <div ref={props.onSetContent} class="flex flex-col pt-1 pr-3 pb-16 md:pt-3">
               {/* Index keeps group subtrees mounted when the group arrays are
                   rebuilt, so store updates cannot recreate rows mid-gesture. */}
-              <Index each={props.groups}>
-                {(group, index) => (
-                  <>
-                    <HomeSessionGroupHeader
-                      title={group().title}
-                      titleOpacity={props.titleOpacity(group().id)}
-                      onSetRef={(element) => props.onSetHeader(group().id, element)}
-                      elevated={index === 0}
-                    />
-                    <div
-                      class={`flex min-w-0 flex-col gap-px pt-2 md:pt-4 ${index === props.groups.length - 1 ? "" : "mb-6"}`}
-                    >
-                      {/* Rows key by session ID: session.sync replaces the
+              <Show
+                when={!mobile()}
+                fallback={
+                  <Key each={projects()} by={(project) => project[0]}>
+                    {(project) => (
+                      <details open class="group mb-4">
+                        <summary class="flex min-h-11 cursor-pointer list-none items-center gap-2 px-1.5 font-medium [&::-webkit-details-marker]:hidden">
+                          <Icon name="folder" size="small" />
+                          <bdi class="min-w-0 flex-1 truncate">{project()[1].name}</bdi>
+                          <Icon name="chevron-right" size="small" class="rtl:rotate-180 group-open:rotate-90" />
+                        </summary>
+                        <div class="flex min-w-0 flex-col gap-px ps-5">
+                          <Key each={project()[1].sessions} by={(record) => record.session.id}>
+                            {(record) => (
+                              <HomeSessionRow
+                                {...props}
+                                showProjectName={false}
+                                record={record()}
+                                rowUI={rowUI}
+                                setRowUI={setRowUI}
+                                showLocations={showLocations()}
+                                hoveredSession={hover.sessionID}
+                                onHoverSession={(sessionID) => setHover("sessionID", sessionID)}
+                              />
+                            )}
+                          </Key>
+                        </div>
+                      </details>
+                    )}
+                  </Key>
+                }
+              >
+                <Index each={props.groups}>
+                  {(group, index) => (
+                    <>
+                      <HomeSessionGroupHeader
+                        title={group().title}
+                        titleOpacity={props.titleOpacity(group().id)}
+                        onSetRef={(element) => props.onSetHeader(group().id, element)}
+                        elevated={index === 0}
+                      />
+                      <div
+                        class={`flex min-w-0 flex-col gap-px pt-2 md:pt-4 ${index === props.groups.length - 1 ? "" : "mb-6"}`}
+                      >
+                        {/* Rows key by session ID: session.sync replaces the
                           stored session object wholesale, so reference-keyed
                           rows would be disposed mid-interaction whenever a
                           sync response lands. */}
-                      <Key each={group().sessions} by={(record) => record.session.id}>
-                        {(record) => (
-                          <HomeSessionRow
-                            {...props}
-                            record={record()}
-                            rowUI={rowUI}
-                            setRowUI={setRowUI}
-                            showLocations={showLocations()}
-                            hoveredSession={hover.sessionID}
-                            onHoverSession={(sessionID) => setHover("sessionID", sessionID)}
-                          />
-                        )}
-                      </Key>
-                    </div>
-                  </>
-                )}
-              </Index>
+                        <Key each={group().sessions} by={(record) => record.session.id}>
+                          {(record) => (
+                            <HomeSessionRow
+                              {...props}
+                              record={record()}
+                              rowUI={rowUI}
+                              setRowUI={setRowUI}
+                              showLocations={showLocations()}
+                              hoveredSession={hover.sessionID}
+                              onHoverSession={(sessionID) => setHover("sessionID", sessionID)}
+                            />
+                          )}
+                        </Key>
+                      </div>
+                    </>
+                  )}
+                </Index>
+              </Show>
             </div>
           </Show>
         </Show>
