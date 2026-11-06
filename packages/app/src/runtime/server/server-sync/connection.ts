@@ -22,7 +22,11 @@ export function createConnectionSync(input: {
   return { handleEvent }
 }
 
-// Directories a mounted view holds refresh first; the rest keep their existing order behind them.
-export function reconnectOrder(directories: string[], held: (directory: string) => boolean) {
-  return [...directories.filter(held), ...directories.filter((directory) => !held(directory))]
+// Syncing a directory boots its server Location, so a reconnect refreshes only what a mounted view holds. The rest
+// are released to bootstrap on their next access; refreshing them would wake every Location the server had evicted.
+export function reconnectPlan(directories: string[], held: (directory: string) => boolean) {
+  return {
+    refresh: directories.filter(held),
+    release: directories.filter((directory) => !held(directory)),
+  }
 }

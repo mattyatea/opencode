@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test"
-import { reconnectOrder } from "./connection"
+import { reconnectPlan } from "./connection"
 
-test("held directories refresh before the rest, otherwise keeping their order", () => {
+test("a reconnect refreshes held directories and releases the rest", () => {
   const held = new Set(["/b", "/d"])
-  expect(reconnectOrder(["/a", "/b", "/c", "/d"], (directory) => held.has(directory))).toEqual(["/b", "/d", "/a", "/c"])
-  expect(reconnectOrder(["/a", "/c"], (directory) => held.has(directory))).toEqual(["/a", "/c"])
+  expect(reconnectPlan(["/a", "/b", "/c", "/d"], (directory) => held.has(directory))).toEqual({
+    refresh: ["/b", "/d"],
+    release: ["/a", "/c"],
+  })
+  expect(reconnectPlan(["/a"], () => false)).toEqual({ refresh: [], release: ["/a"] })
 })
