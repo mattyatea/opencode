@@ -98,6 +98,7 @@ export interface MockServerConfig {
   onMessage?: (input: { sessionID: string; messageID: string }) => void
   onRevertStage?: (input: { sessionID: string; messageID: string }) => void
   onSession?: (sessionID: string) => void
+  taskMessages?: Array<{ id: string; from: string; to: string; text: string; time: number; state: string }>
   events?: () => OpenCodeEvent[]
   eventRetry?: number
   // Idle event streams send a comment every 15 s like the real server. Set false only to test the client's stall watchdog.
@@ -601,7 +602,7 @@ function mockHandlers(
     attempts: Map<string, number>
   },
 ) {
-  const taskMessages: Array<{ id: string; from: string; to: string; text: string; time: number; state: string }> = []
+  const taskMessages = config.taskMessages ?? []
   const noContent = Effect.succeed(HttpApiSchema.NoContent.make())
   const configEntries = config.configEntries ?? []
 

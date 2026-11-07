@@ -321,6 +321,8 @@ const source = {
   "ui.sessionTimeline.notice.finished": "{{actor}} finished",
   "ui.sessionTimeline.notice.instructionsUpdated": "Instructions updated",
   "ui.sessionTimeline.notice.restart": "Continuing after restart",
+  "ui.sessionTimeline.taskMessage.from": "Message from task {{title}}",
+  "ui.sessionTimeline.taskMessage.to": "Message to task {{title}}",
   "ui.message.queued": "Queued",
   "ui.message.attachment.alt": "attachment",
 

@@ -1,5 +1,36 @@
-import type { ModelRef, SessionInboxInfo, SessionMessageInfo } from "@opencode/client/promise"
+import type {
+  ModelRef,
+  SessionInboxInfo,
+  SessionMessageInfo,
+  SessionTaskMessage,
+  SessionInfo,
+} from "@opencode/client/promise"
 import type { SessionMessageHandoff } from "@/session/handoff"
+
+export function includeOutgoingTaskMessages(
+  messages: SessionMessageInfo[],
+  correspondence: SessionTaskMessage[],
+  tasks: SessionInfo[],
+  sessionID: string,
+) {
+  const existing = new Set(messages.map((message) => message.id))
+  const outgoing = correspondence.filter((message) => message.from === sessionID && !existing.has(message.id))
+  if (!outgoing.length) return messages
+  const result = [...messages]
+  for (const item of outgoing) {
+    const message: SessionMessageInfo = {
+      id: item.id,
+      type: "synthetic",
+      description: tasks.find((task) => task.id === item.to)?.title ?? item.to,
+      text: item.text,
+      time: { created: item.time },
+      metadata: { source: "task", direction: "outgoing", text: item.text, toSessionID: item.to, state: item.state },
+    }
+    const index = result.findIndex((existing) => existing.time.created > item.time)
+    result.splice(index < 0 ? result.length : index, 0, message)
+  }
+  return result
+}
 
 // Projects a submitted prompt, and the agent and model switches it makes, until the server's echoes replace them.
 // The session's live selection takes each switch's echo, so a switch projects only while the session still differs.

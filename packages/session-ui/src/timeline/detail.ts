@@ -118,6 +118,7 @@ export function timelineCategory(
 // A subagent's outcome follows the subagent setting, so it shows wherever its launch does.
 export function timelineNoticePlacement(message: SessionMessageInfo, detail: TimelineDetail): TimelinePlacement {
   const source = message.type === "synthetic" ? message.metadata?.source : undefined
+  if (source === "task") return "separate"
   const placement = source === "subagent" ? detail.subagents.placement : detail.notices.placement
 
   if (placement === "hidden") return timelineNoticeRequired(message) ? "separate" : "hidden"
