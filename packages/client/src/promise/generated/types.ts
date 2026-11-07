@@ -154,6 +154,8 @@ export type SessionStatsToolUsage = {
 
 export type SessionStatsActivity = { date: string; steps: number }
 
+export type SessionStatsSkillUsage = { id: string; calls: number }
+
 export type InstructionEntryKey = string
 
 export type EventID = string
@@ -464,6 +466,15 @@ export type SessionTaskMessage = {
 }
 
 export type UsageLimitsBudgetModel = { providerID: ProviderID; modelID: string; name: string; spent?: MoneyUSD }
+
+export type SessionStatsSessionUsage = {
+  sessionID: SessionID
+  title: string
+  parentID?: SessionID
+  steps: number
+  tokens: TokenUsageInfo
+  cost: MoneyUSD
+}
 
 export type FileSystemEntry = { path: RelativePath; type: "file" | "directory" }
 
@@ -2287,6 +2298,8 @@ export type SessionStatsInfo = {
   streak: number
   activity: Array<SessionStatsActivity>
   models: Array<SessionStatsModelUsage>
+  sessionUsage?: Array<SessionStatsSessionUsage>
+  skills?: Array<SessionStatsSkillUsage>
 }
 
 export type ProviderRequest = {
