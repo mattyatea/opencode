@@ -12,6 +12,9 @@ import { filesystem } from "@opencode/util/effect/app-node-platform"
 import { Database } from "@opencode/core/database/database"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
+import { Document, Info } from "@opencode/schema/config"
+import { ConfigExperimental } from "@opencode/schema/config/experimental"
+import { CodeModeTools } from "@opencode/core/tool/plugin/codemode"
 import { Environment } from "@opencode/core/environment/index"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
@@ -800,10 +803,18 @@ describe("ShellTool", () => {
       reset()
       return withSession(tmp.path, (registry) =>
         Effect.gen(function* () {
-          yield* registry.transform((editor) =>
-            editor.update("shell", (tool) => {
-              tool.options = { ...tool.options, codemode: true }
-            }),
+          yield* registerToolPlugin(CodeModeTools.Plugin, { event: { subscribe: () => Stream.never } }).pipe(
+            Effect.provide(
+              Layer.mock(Config.Service)({
+                entries: () =>
+                  Effect.succeed([
+                    new Document({
+                      type: "document",
+                      info: new Info({ experimental: new ConfigExperimental.Info({ codemode_tools: true }) }),
+                    }),
+                  ]),
+              }),
+            ),
           )
           const command = isWindows ? helloCommand : `${helloCommand}; sleep 0.1`
           const inputs = ["one", "two"].map((text) => JSON.stringify({ command: command.replace("hello", text) }))
@@ -822,6 +833,21 @@ describe("ShellTool", () => {
             { output: "one", exit: 0, truncated: false, status: "completed" },
             { output: "two", exit: 0, truncated: false, status: "completed" },
           ])
+          expect(assertions.filter((input) => input.action === "shell")).toHaveLength(2)
+          expect(assertions.every((input) => input.source?.id === "call-parallel-shells")).toBe(true)
+          denyAction = "shell"
+          const denied = yield* executeTool(registry, {
+            sessionID,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-codemode-shell-denied",
+              name: "execute",
+              input: { code: `return await tools.shell(${inputs[0]})` },
+            },
+          })
+          expect(denied.output).toMatchObject({ error: true, output: expect.stringContaining("Permission denied") })
+          expect(assertions.at(-1)).toMatchObject({ action: "shell", source: { id: "call-codemode-shell-denied" } })
         }),
       )
     }),

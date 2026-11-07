@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect } from "bun:test"
 import path from "path"
-import { Effect, Exit, Layer, Result } from "effect"
+import { Effect, Exit, Layer, Result, Stream } from "effect"
+import { Document, Info } from "@opencode/schema/config"
+import { ConfigExperimental } from "@opencode/schema/config/experimental"
+import { CodeModeTools } from "@opencode/core/tool/plugin/codemode"
 import { Config } from "@opencode/core/config"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -126,7 +129,112 @@ const it = testEffect(readLayer(imageLayer))
 const itWithoutResizer = testEffect(readLayer(unavailableImage))
 const sessionID = Session.ID.make("ses_read_tool_test")
 
+const enableCodeMode = registerToolPlugin(CodeModeTools.Plugin, { event: { subscribe: () => Stream.never } }).pipe(
+  Effect.provide(
+    Layer.mock(Config.Service)({
+      entries: () =>
+        Effect.succeed([
+          new Document({
+            type: "document",
+            info: new Info({ experimental: new ConfigExperimental.Info({ codemode_tools: true }) }),
+          }),
+        ]),
+    }),
+  ),
+)
+
 describe("ReadTool", () => {
+  it.effect("reads and aggregates JSON without returning the source payload", () =>
+    Effect.gen(function* () {
+      readResult = {
+        type: "file",
+        uri: "file:///data.json",
+        encoding: "utf8",
+        mime: "application/json",
+        content: JSON.stringify(
+          Array.from({ length: 100 }, (_, id) => ({ id, active: id % 2 === 0, count: id })),
+          null,
+          2,
+        ),
+      }
+      yield* enableCodeMode
+      const registry = yield* Tool.Service
+      const result = yield* executeTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        call: {
+          type: "tool-call",
+          id: "call-json-reduce",
+          name: "execute",
+          input: {
+            code: `
+          const file = await tools.read({ path: "data.json" });
+          const rows = JSON.parse(file.content).filter(row => row.active);
+          return { path: "data.json", count: rows.length, total: rows.reduce((sum, row) => sum + row.count, 0) };
+        `,
+          },
+        },
+      })
+      expect(result).toMatchObject({
+        status: "completed",
+        output: { output: JSON.stringify({ path: "data.json", count: 50, total: 2450 }, null, 2) },
+      })
+      expect(result.content?.[0]).not.toHaveProperty("text", expect.stringContaining("active"))
+      expect(assertions).toMatchObject([{ action: "read", sessionID, source: { id: "call-json-reduce" } }])
+    }),
+  )
+
+  it.effect("does not read a file denied through Code Mode", () =>
+    Effect.gen(function* () {
+      yield* enableCodeMode
+      allow = false
+      const registry = yield* Tool.Service
+      const result = yield* executeTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        call: {
+          type: "tool-call",
+          id: "call-read-denied",
+          name: "execute",
+          input: { code: 'return await tools.read({ path: "blocked.json" })' },
+        },
+      })
+      expect(result.output).toMatchObject({ error: true, output: expect.stringContaining("Permission denied") })
+      expect(readCalls).toEqual([])
+      expect(assertions).toMatchObject([{ action: "read", source: { id: "call-read-denied" } }])
+    }),
+  )
+
+  it.effect("passes read images through even when the script returns only a caption", () =>
+    Effect.gen(function* () {
+      const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      readResult = {
+        type: "file",
+        uri: "file:///pixel.png",
+        name: "pixel.png",
+        content: png,
+        encoding: "base64",
+        mime: "image/png",
+      }
+      yield* enableCodeMode
+      const registry = yield* Tool.Service
+      const result = yield* executeTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        call: {
+          type: "tool-call",
+          id: "call-image-codemode",
+          name: "execute",
+          input: { code: 'await tools.read({ path: "pixel.png" }); return "Inspect the image"' },
+        },
+      })
+      expect(result.content).toEqual([
+        { type: "text", text: "Inspect the image" },
+        { type: "file", uri: `data:image/png;base64,${png}`, mime: "image/png", name: "pixel.png" },
+      ])
+    }),
+  )
+
   beforeEach(() => {
     assertions.length = 0
     readCalls.length = 0

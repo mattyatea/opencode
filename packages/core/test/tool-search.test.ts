@@ -1,7 +1,11 @@
 import { describe, expect } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Stream } from "effect"
+import { Config } from "@opencode/core/config"
+import { Document, Info } from "@opencode/schema/config"
+import { ConfigExperimental } from "@opencode/schema/config/experimental"
+import { CodeModeTools } from "@opencode/core/tool/plugin/codemode"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -67,6 +71,87 @@ const call = (name: "glob" | "grep", input: unknown) => ({
 })
 
 describe("search tools", () => {
+  it.live("joins real searches and reduces their results in one Code Mode call", () =>
+    withTempDir((tmp) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          Promise.all([
+            Bun.write(path.join(tmp.path, "one.ts"), "needle\nneedle\n"),
+            Bun.write(path.join(tmp.path, "two.ts"), "needle\n"),
+            Bun.write(path.join(tmp.path, "skip.txt"), "needle\n"),
+          ]),
+        )
+        const assertions: Permission.AssertInput[] = []
+        yield* withTools(
+          tmp.path,
+          (registry) =>
+            Effect.gen(function* () {
+              yield* registerToolPlugin(CodeModeTools.Plugin, { event: { subscribe: () => Stream.never } }).pipe(
+                Effect.provide(
+                  Layer.mock(Config.Service)({
+                    entries: () =>
+                      Effect.succeed([
+                        new Document({
+                          type: "document",
+                          info: new Info({ experimental: new ConfigExperimental.Info({ codemode_tools: true }) }),
+                        }),
+                      ]),
+                  }),
+                ),
+              )
+              const result = yield* executeTool(registry, {
+                sessionID,
+                ...toolIdentity,
+                call: {
+                  type: "tool-call",
+                  id: "call-search-compose",
+                  name: "execute",
+                  input: {
+                    code: `
+                  const [files, matches, limited] = await Promise.all([
+                    tools.glob({ pattern: "*.ts" }),
+                    tools.grep({ pattern: "needle" }),
+                    tools.grep({ pattern: "needle", limit: 1 })
+                  ]);
+                  return {
+                    counts: files.items.map(file => ({
+                      path: file.path,
+                      count: matches.items.filter(match => match.entry.path === file.path).length
+                    })).sort((a, b) => a.path.localeCompare(b.path)),
+                    truncated: files.truncated || matches.truncated,
+                    limited: { count: limited.items.length, truncated: limited.truncated }
+                  };
+                `,
+                  },
+                },
+              })
+              expect(result).toMatchObject({
+                status: "completed",
+                output: {
+                  output: JSON.stringify(
+                    {
+                      counts: [
+                        { path: "one.ts", count: 2 },
+                        { path: "two.ts", count: 1 },
+                      ],
+                      truncated: false,
+                      limited: { count: 1, truncated: true },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              })
+              expect(result.content?.[0]).not.toHaveProperty("text", expect.stringContaining("needle"))
+              expect(assertions.filter((input) => input.action === "glob" || input.action === "grep")).toHaveLength(3)
+              expect(assertions.every((input) => input.source?.id === "call-search-compose")).toBe(true)
+            }),
+          assertions,
+        )
+      }),
+    ),
+  )
+
   it.live("merges native grep context and counts only matching lines", () =>
     withTempDir((tmp) =>
       Effect.gen(function* () {
