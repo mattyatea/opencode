@@ -2,7 +2,7 @@ import type { SessionMessageInfo } from "@opencode/client/promise"
 import { DialogFooter, DialogHeader, DialogTitleGroup, Dialog } from "@opencode/ui/dialog"
 import { Button } from "@opencode/ui/button"
 import { useNavigate } from "@solidjs/router"
-import { createEffect, createMemo, on, type Accessor } from "solid-js"
+import { createEffect, createMemo, createResource, on, onCleanup, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Option, Predicate, Schema } from "effect"
 import { notifySessionTabsRemoved } from "@/shell/titlebar/session-events"
@@ -19,7 +19,12 @@ import { sessionTitle } from "@/session/title"
 import { fetchSessionExport, saveSessionExport, sessionExportFilename } from "@/session/commands/export"
 import { showToast } from "@/shell/notifications/toast"
 import { usePlatform } from "@/runtime/platform/platform"
-import { applyTimelineMessageHandoff, timelineChildTitle, visibleTimelineMessages } from "./controller-projection"
+import {
+  applyTimelineMessageHandoff,
+  includeOutgoingTaskMessages,
+  timelineChildTitle,
+  visibleTimelineMessages,
+} from "./controller-projection"
 import { createTimelineProjection } from "./projection"
 import { useServer } from "@/runtime/server/current"
 import { getSessionMessageHandoff } from "@/session/handoff"
@@ -68,6 +73,30 @@ export function createTimelineController(input: { session: TimelineSessionSource
   const language = useLanguage()
   const platform = usePlatform()
 
+  const [correspondence, correspondenceControls] = createResource(
+    () => {
+      const info = input.session.data.info()
+      return input.active() && info && !info.parentID ? info.id : undefined
+    },
+    async (sessionID) => {
+      const messages = await serverSDK.api.experimental.session.tasks.messages({ sessionID })
+      const tasks = messages.some((message) => message.from === sessionID)
+        ? await serverSDK.api.experimental.session.tasks.tree({ sessionID })
+        : []
+      return { sessionID, messages, tasks }
+    },
+  )
+  onCleanup(
+    server.ctx.sdk.event.listen((event) => {
+      if (!input.active()) return
+      if (event.type !== "session.inbox.enqueued" || event.data.item.type !== "synthetic") return
+      const metadata = event.data.item.payload.metadata
+      const id = input.session.identity.sessionID()
+      if (metadata?.source === "task" && (metadata.fromSessionID === id || metadata.toSessionID === id))
+        void correspondenceControls.refetch()
+    }),
+  )
+
   // Pending inputs hold with the history while the view is detached, so a hidden view never shows one against
   // history it has not caught up with.
   const pendingItems = createMemo<{ value: ReturnType<typeof data.session.pending.list> } | undefined>(
@@ -92,13 +121,18 @@ export function createTimelineController(input: { session: TimelineSessionSource
   )
 
   // A handoff projects after visibility: its prompt commits any staged revert, so the boundary does not hide it.
-  const projectedMessages = createMemo(() =>
-    applyTimelineMessageHandoff(
+  const projectedMessages = createMemo(() => {
+    const messages = applyTimelineMessageHandoff(
       visibleMessages(),
       getSessionMessageHandoff(input.session.identity.sessionKey()),
       input.session.data.info(),
-    ),
-  )
+    )
+    if (correspondence.state !== "ready" && correspondence.state !== "refreshing") return messages
+    const loaded = correspondence.latest
+    const id = input.session.identity.sessionID()
+    if (!loaded || !id || loaded.sessionID !== id) return messages
+    return includeOutgoingTaskMessages(messages, loaded.messages, loaded.tasks, id)
+  })
 
   // Inputs that wait behind the active turn. A starting steer opens the next turn instead, so the turn before it
   // stays finished, as it will once the steer is delivered.

@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionInboxInfo, SessionMessageInfo } from "@opencode/client/promise"
 import { createRoot } from "solid-js"
-import { applyTimelineMessageHandoff, visibleTimelineMessages } from "./controller-projection"
+import {
+  applyTimelineMessageHandoff,
+  includeOutgoingTaskMessages,
+  visibleTimelineMessages,
+} from "./controller-projection"
 import { createTimelineProjection } from "./projection"
 import { timelinePresets } from "@opencode/session-ui/timeline/detail"
 
@@ -18,6 +22,22 @@ const messages = [
   { id: "msg_3", type: "user", text: "queued", time: { created: 3 } },
   { id: "msg_4", type: "user", text: "reverted", time: { created: 4 } },
 ] satisfies SessionMessageInfo[]
+
+test("places outgoing task correspondence in the transcript without duplicating incoming messages", () => {
+  const result = includeOutgoingTaskMessages(
+    messages,
+    [
+      { id: "msg_reply", from: "ses_child", to: "ses_parent", text: "Please decide", time: 3, state: "pending" },
+      { id: "msg_1", from: "ses_parent", to: "ses_child", text: "Start work", time: 1, state: "delivered" },
+    ],
+    [],
+    "ses_child",
+  )
+  expect(result.map((message) => message.id)).toEqual(["msg_1", "msg_2", "msg_3", "msg_reply", "msg_4"])
+  expect(result.find((message) => message.id === "msg_reply")).toMatchObject({
+    metadata: { source: "task", direction: "outgoing", text: "Please decide", toSessionID: "ses_parent" },
+  })
+})
 
 describe("visibleTimelineMessages", () => {
   const steer = {

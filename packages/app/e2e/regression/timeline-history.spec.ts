@@ -21,6 +21,87 @@ import { openSession } from "../utils/workspace"
 test.use({ serviceWorkers: "block" })
 
 test.describe("timeline history", () => {
+  test("shows task correspondence in both directions in the conversation", async ({ page }) => {
+    const taskMessages = [
+      {
+        id: "msg_mail_out",
+        from: "ses_mail_parent",
+        to: "ses_mail_child",
+        text: "Use the new base",
+        time: 2,
+        state: "delivered",
+      },
+    ]
+    const workspace = await openSession(page, {
+      name: "Task correspondence",
+      sessions: [
+        { id: "ses_mail_parent", title: "Main task" },
+        { id: "ses_mail_child", title: "Implementation", experimental: { taskParentID: "ses_mail_parent" } },
+      ],
+      seed: { tabs: ["ses_mail_parent"] },
+      taskMessages,
+      pageMessages: () => ({
+        items: [
+          {
+            id: "msg_mail_in",
+            type: "synthetic",
+            description: "Implementation",
+            text: "Message from task with internal instructions",
+            metadata: {
+              source: "task",
+              fromSessionID: "ses_mail_child",
+              toSessionID: "ses_mail_parent",
+              text: "Which base?\nPlease confirm.",
+            },
+            time: { created: 1 },
+          },
+        ],
+      }),
+    })
+    const incoming = page
+      .locator('[data-slot="session-timeline-notice"]')
+      .filter({ hasText: "Message from task Implementation" })
+    const outgoing = page
+      .locator('[data-slot="session-timeline-notice"]')
+      .filter({ hasText: "Message to task Implementation" })
+    await expect(incoming).toContainText("Which base?")
+    await expect(incoming).toContainText("Please confirm.")
+    await expect(outgoing).toContainText("Use the new base")
+    await expect(incoming).not.toContainText("internal instructions")
+    await expect(incoming).toHaveCount(1)
+    await expect(outgoing).toHaveCount(1)
+    taskMessages.push({
+      id: "msg_mail_live",
+      from: "ses_mail_parent",
+      to: "ses_mail_child",
+      text: "Please proceed",
+      time: 3,
+      state: "pending",
+    })
+    await workspace.push([
+      {
+        id: "evt_mail_live",
+        created: 3,
+        type: "session.inbox.enqueued",
+        durable: { aggregateID: "ses_mail_child", seq: 1, version: 1 },
+        location: { directory: workspace.directory },
+        data: {
+          sessionID: "ses_mail_child",
+          inboxID: "msg_mail_live",
+          item: {
+            type: "synthetic",
+            delivery: "steer",
+            payload: {
+              text: "Please proceed",
+              metadata: { source: "task", fromSessionID: "ses_mail_parent", toSessionID: "ses_mail_child" },
+            },
+          },
+        },
+      },
+    ])
+    await expect(page.getByText("Please proceed", { exact: true })).toBeVisible()
+  })
+
   test("restoring a paged transcript waits for another upward scroll before loading history", async ({ page }) => {
     const id = "ses_history_restore"
     const other = "ses_history_other"

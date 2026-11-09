@@ -7,6 +7,8 @@ import { Model } from "@opencode/schema/model"
 import { Permission } from "@opencode/core/permission"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
+import { PluginHooks } from "@opencode/core/plugin/hooks"
+import { Agent } from "@opencode/schema/agent"
 import { Project } from "@opencode/core/project"
 import { Provider } from "@opencode/core/provider"
 import { AbsolutePath } from "@opencode/core/schema"
@@ -59,7 +61,10 @@ const permission = permissionLayer({
 })
 
 const it = testEffect(
-  makePluginTestLayer(permission, undefined, [SessionExecution.node.replace(execution), Bus.node.replace(Bus.configured({ persist: true }))]),
+  makePluginTestLayer(permission, undefined, [
+    SessionExecution.node.replace(execution),
+    Bus.node.replace(Bus.configured({ persist: true })),
+  ]),
 )
 
 const prepareProject = (directory: string, name: string) =>
@@ -113,6 +118,39 @@ const setup = () =>
         )
     return { alpha, beta, alphaID, betaID, caller, registry, sessions, location, database, call, run, sessionCount }
   })
+
+it.live("child task instructions require contacting the parent before waiting", () =>
+  Effect.gen(function* () {
+    const fixture = yield* setup()
+    const child = yield* fixture.sessions.taskCreate({ sessionID: fixture.caller.id, title: "Child" })
+    const hooks = yield* PluginHooks.Service
+    const request = (sessionID: Session.ID) => ({
+      sessionID,
+      agent: Agent.ID.make("build"),
+      model: Model.Ref.make({ providerID: Provider.ID.make("test"), id: Model.ID.make("test") }),
+      system: [],
+      messages: [],
+      options: {},
+      tools: {},
+    })
+
+    for (const name of ["context", "compaction", "generate"] as const) {
+      const childContext = yield* hooks.trigger("session", name, request(child.id))
+      const text = childContext.system.map((part) => part.text).join("\n")
+      expect(text).toContain(`persistent child task of ${fixture.caller.id}`)
+      expect(text).toContain("use opencode.task_send to send the parent the question")
+      expect(text).toContain("before ending or waiting")
+      expect(text).toContain("If sending fails, report that the parent was not notified")
+      expect(text).toContain("Before modifying a Git repository, assess whether isolation is needed")
+      expect(text).toContain("use a dedicated worktree based on the required branch or commit")
+      expect(text).toContain("If the correct base requires a parent decision, ask your parent rather than guessing")
+      expect(text).toContain("The move takes effect at the next safe boundary")
+      const rootContext = yield* hooks.trigger("session", name, request(fixture.caller.id))
+      expect(rootContext.system.map((part) => part.text).join("\n")).not.toContain("This is a persistent child task")
+      expect(rootContext.system.map((part) => part.text).join("\n")).not.toContain("Before modifying a Git repository")
+    }
+  }),
+)
 
 it.effect("lists real Projects by ID, name, and canonical directory", () =>
   Effect.gen(function* () {
