@@ -459,6 +459,16 @@ function normalizeExperimental(
       unsupportedExperimental.forEach((key) =>
         unsupportedIfPresent(experimental, key, ["experimental", key], diagnostics),
       )
+      for (const key of ["json_read", "codemode_tools"] as const) {
+        if (!own(experimental, key)) continue
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields[key],
+          experimental[key],
+          ["experimental", key],
+          diagnostics,
+        )
+        if (value !== undefined) result[key] = value
+      }
       if (own(experimental, "paste_files")) {
         const value = decodeEncoded(
           ConfigExperimental.Info.fields.paste_files,
