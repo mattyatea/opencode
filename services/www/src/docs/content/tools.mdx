@@ -256,8 +256,8 @@ Read package.json and README.md in parallel, then return their relevant setup de
 
 The runtime has no direct filesystem access, imports, or timers. It provides
 `fetch` for HTTP requests; everything else goes through tools in its catalog.
-Denying `execute` with resource `*` removes Code Mode and every tool reached only
-through it, including MCP tools from servers that do not set `codemode: false`.
+Denying `execute` with resource `*` disables Code Mode and exposes its available
+tools directly instead. Each tool's own deny rules still remove it from the catalog.
 Nested built-in and MCP tools still enforce their own permissions, and plugin
 tools enforce the permissions they assert.
 
@@ -276,6 +276,51 @@ The default is full detail. Summary mode preserves complete descriptions and
 pagination; it does not provide the argument schema needed to call a tool.
 Search matches words in the catalog, including Unicode text, but does not
 translate queries. An empty query or `"*"` explicitly browses the catalog.
+
+#### Process built-in results before returning them
+
+Enable the experimental acquisition tools in Code Mode with:
+
+```json
+{
+  "experimental": {
+    "codemode_tools": true
+  }
+}
+```
+
+This moves `read`, `grep`, `glob`, `shell`, `webfetch`, and `websearch` from the
+native tool list into the Code Mode catalog. Editing, questions, skills, subagents,
+and image generation stay native. The setting defaults to `false` and can be
+disabled without changing tool permissions.
+
+Fetch and select the needed facts in one `execute` call instead of returning an
+entire response for the model to process in another step:
+
+```js
+const [files, matches] = await Promise.all([
+  tools.glob({ pattern: "src/**/*.ts", limit: 100 }),
+  tools.grep({ pattern: "TODO", path: "src", limit: 100 }),
+])
+return {
+  files: files.items.map((file) => file.path),
+  matches: matches.items.map((match) => ({
+    path: match.entry.path,
+    line: match.line,
+    text: match.text,
+  })),
+  truncated: files.truncated || matches.truncated,
+}
+```
+
+- With this setting, `glob` and `grep` return `{ items, truncated }` rather than
+  an array, preserving the search completeness signal for scripts.
+- Capture and paging limits still apply. A truncated result is not a complete
+  dataset; keep the signal and narrow the request before computing exact totals.
+- Calls retain the original tool's permission checks, including shell approvals.
+  Images and PDFs read inside Code Mode still reach the model as attachments.
+- Return full content when it is small or every row needs semantic review.
+  Code Mode does not automatically summarize JSON or guarantee fewer tokens.
 
 ### Sessions
 

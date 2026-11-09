@@ -50,6 +50,11 @@ describe("CodeModeInstructions", () => {
         "The tools listed below cannot be called directly: they only work as JavaScript inside the `execute` tool.",
       )
       expect(initialized.text).toContain("The catalog is complete.")
+      expect(initialized.text).toContain("fetch, filter, join, and aggregate inside one execution")
+      expect(initialized.text).toContain(
+        "Small results and tasks requiring every row's meaning may need the full content",
+      )
+      expect(initialized.text).toContain("Code Mode does not bypass a tool's permissions or approvals")
       expect(initialized.text).toContain("## Code Mode tools (call only inside `execute`)")
       expect(initialized.text).toContain(`  - ${echo.signature} // Echo text`)
 

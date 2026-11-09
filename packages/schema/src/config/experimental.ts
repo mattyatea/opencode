@@ -6,6 +6,10 @@ import { ConfigModel } from "./model.js"
 import { ConfigPolicy } from "./policy.js"
 
 export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
+  codemode_tools: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Route read, grep, glob, shell, webfetch, and websearch through Code Mode so results can be filtered before reaching the model. Editing and interactive tools stay native. Defaults to false.",
+  }),
   paste_files: Schema.Boolean.pipe(optional).annotate({
     description:
       "Upload large text pastes as readable paste.txt references instead of sending their contents inline. Defaults to false.",
