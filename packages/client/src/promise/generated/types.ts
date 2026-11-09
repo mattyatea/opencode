@@ -2574,6 +2574,7 @@ export type ConfigEntry =
           }
         }
         experimental?: {
+          json_read?: boolean
           codemode_tools?: boolean
           paste_files?: boolean
           portable_shell_scanner?: boolean
