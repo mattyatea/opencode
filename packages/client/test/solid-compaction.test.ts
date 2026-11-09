@@ -3,6 +3,71 @@ import { createRoot } from "solid-js"
 import { createData, type CreateDataInput } from "../src/solid"
 import { OpenCode, type OpenCodeEvent, type SessionInboxCompaction, type SessionInboxInfo } from "../src/promise"
 
+const target = { providerID: "other", id: "next" }
+
+test.each(["before", "after"])("provider handoff waits for completion %s the admission response", async (timing) => {
+  const proposed = Promise.withResolvers<{ id: string; experimental: { switchModel: typeof target } }>()
+  using fixture = setup(async (request) => {
+    if (!request.url.endsWith("/compact")) return undefined
+    proposed.resolve(await request.json())
+    return fixture.response.promise
+  })
+  let switched = false
+  const switching = fixture.data.session
+    .compactForModelSwitch({ sessionID, model: target })
+    .then(() => (switched = true))
+  const admission = fixture.data.session.compact({ sessionID })
+  const body = await proposed.promise
+  expect(body.experimental).toEqual({ switchModel: target })
+  const complete = () => {
+    fixture.emit({
+      ...event,
+      type: "session.compaction.started",
+      data: { sessionID, inputID: body.id, reason: "manual" },
+    })
+    fixture.emit({
+      ...event,
+      type: "session.compaction.ended",
+      data: { sessionID, reason: "manual", model: { providerID: "old", id: "model" }, text: "Summary" },
+    })
+  }
+  expect(switched).toBe(false)
+  if (timing === "before") complete()
+  fixture.response.resolve(
+    Response.json({ data: { ...item(body.id), payload: { experimental: { switchModel: target } } } }),
+  )
+  await admission
+  if (timing === "after") {
+    expect(switched).toBe(false)
+    complete()
+  }
+  await switching
+  expect(switched).toBe(true)
+  expect(fixture.calls).toEqual([])
+})
+
+test.each(["failed", "cancelled", "disposed"])("provider handoff does not switch when %s", async (outcome) => {
+  using fixture = setup()
+  const switching = fixture.data.session.compactForModelSwitch({ sessionID, model: target })
+  const failed = switching.catch((error: unknown) => error)
+  const admission = fixture.data.session.compact({ sessionID })
+  const id = fixture.data.session.pending.list(sessionID)[0].id
+  fixture.response.resolve(Response.json({ data: { ...item(id), payload: { experimental: { switchModel: target } } } }))
+  await admission
+  if (outcome === "failed") {
+    fixture.emit({
+      ...event,
+      type: "session.compaction.failed",
+      data: { sessionID, inputID: id, reason: "manual", error: { type: "compaction.failed", message: "Failed" } },
+    })
+  }
+  if (outcome === "cancelled")
+    fixture.emit({ ...event, type: "session.inbox.cancelled", data: { sessionID, inboxID: id } })
+  if (outcome === "disposed") fixture.dispose()
+  expect(await failed).toBeInstanceOf(Error)
+  expect(fixture.calls).toEqual(["compact"])
+})
+
 test("admits compaction before model setup and serializes the following prompt", async () => {
   using fixture = setup()
   const compact = fixture.data.session.compact({ sessionID, model: { providerID: "demo", id: "model" } })

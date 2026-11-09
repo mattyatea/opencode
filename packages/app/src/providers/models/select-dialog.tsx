@@ -1,4 +1,5 @@
 import { Popover } from "@kobalte/core/popover"
+import type { ModelRef } from "@opencode/client/promise"
 import {
   Component,
   ComponentProps,
@@ -457,6 +458,8 @@ function createModelSelectorController(input: {
   onSelect: () => void
 }) {
   const model = input.model ?? useLocal().model
+  const data = useData()
+  const dialog = useDialog()
 
   const allModels = createMemo(() =>
     model
@@ -491,9 +494,41 @@ function createModelSelectorController(input: {
       return value ? modelKey(value) : undefined
     },
     select: (item: ModelItem, variant?: string | null) => {
-      model.set({ modelID: item.id, providerID: item.provider.id }, { recent: true })
+      const commit = () => {
+        model.set({ modelID: item.id, providerID: item.provider.id }, { recent: true })
 
-      if (variant !== undefined) model.variant.set(variant ?? undefined)
+        if (variant !== undefined) model.variant.set(variant ?? undefined)
+      }
+
+      const sessionID = model.sessionID()
+      const previous = sessionID ? data.session.get(sessionID)?.model : undefined
+
+      if (
+        sessionID &&
+        previous &&
+        previous.providerID !== item.provider.id &&
+        data.session.message
+          .list(sessionID)
+          .some(
+            (message) =>
+              message.type === "user" ||
+              message.type === "assistant" ||
+              (message.type === "compaction" && message.status === "completed"),
+          )
+      ) {
+        input.onSelect()
+        void dialog.show(() => (
+          <DialogModelSwitch
+            sessionID={sessionID}
+            model={{ providerID: item.provider.id, id: item.id, variant: variant ?? undefined }}
+            onSwitch={commit}
+          />
+        ))
+
+        return
+      }
+
+      commit()
       input.onSelect()
     },
     variant: (item: ModelItem) => model.variant.current({ providerID: item.provider.id, modelID: item.id }),
@@ -504,6 +539,58 @@ function createModelSelectorController(input: {
         .flatMap((item) => (item && (!input.provider() || item.provider.id === input.provider()) ? [item] : [])),
     toggleFavorite: (item: ModelItem) => model.favorite.toggle({ providerID: item.provider.id, modelID: item.id }),
   }
+}
+
+function DialogModelSwitch(props: { sessionID: string; model: ModelRef; onSwitch: () => void }) {
+  const data = useData()
+  const dialog = useDialog()
+  const language = useLanguage()
+  const [store, setStore] = createStore({ busy: false, error: "" })
+  let disposed = false
+  onCleanup(() => (disposed = true))
+
+  const select = async (compact: boolean) => {
+    if (store.busy) return
+
+    if (compact) {
+      setStore({ busy: true, error: "" })
+
+      const completed = await data.session
+        .compactForModelSwitch({ sessionID: props.sessionID, model: props.model })
+        .then(
+          () => true,
+          // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejections are opaque; format only their message
+          (error: unknown) => {
+            if (!disposed) setStore({ busy: false, error: error instanceof Error ? error.message : String(error) })
+
+            return false
+          },
+        )
+
+      if (!completed || disposed) return
+    }
+
+    props.onSwitch()
+    dialog.close()
+  }
+
+  return (
+    <Dialog>
+      <DialogTitle>{language.t("dialog.model.switch.title")}</DialogTitle>
+      <DialogBody class="flex flex-col gap-4">
+        <p>{language.t("dialog.model.switch.description")}</p>
+        <Show when={store.error}>{(error) => <p role="alert">{error()}</p>}</Show>
+        <div class="flex flex-wrap justify-end gap-2">
+          <Button variant="outline" disabled={store.busy} onClick={() => void select(false)}>
+            {language.t("dialog.model.switch.direct")}
+          </Button>
+          <Button disabled={store.busy} onClick={() => void select(true)}>
+            {language.t(store.busy ? "dialog.model.switch.compacting" : "dialog.model.switch.compact")}
+          </Button>
+        </div>
+      </DialogBody>
+    </Dialog>
+  )
 }
 
 function createProviderLabels(all: () => ModelItem[]) {

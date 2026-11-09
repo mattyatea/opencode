@@ -1,6 +1,12 @@
 import { DESKTOP_NATIVE_ENGLISH } from "./desktop-native"
 
 export const dict = {
+  "dialog.model.switch.title": "Switch provider",
+  "dialog.model.switch.description":
+    "Prompt caches are not shared between providers. You can summarize with the current model first. Compaction can lose detail.",
+  "dialog.model.switch.direct": "Switch without compaction",
+  "dialog.model.switch.compact": "Compact and switch",
+  "dialog.model.switch.compacting": "Compacting before switching…",
   "settings.general.row.interfaceMode.projects": "Projects",
   "settings.general.row.interfaceMode.projects.description": "Group projects and sessions into collapsible sections.",
   "sidebar.sections.navigation": "Projects and sessions",

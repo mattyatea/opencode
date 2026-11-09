@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test"
 import type { OpenCodeEvent, SessionMessageInfo, SessionStatsInfo, UsageLimitsInfo } from "@opencode/client/promise"
 import { Permission } from "@opencode/schema/permission"
 import { Model } from "@opencode/schema/model"
+import { SessionInbox } from "@opencode/schema/session-inbox"
 import { Worktree } from "@opencode/schema/worktree"
 import { Effect, Layer, Option, Predicate, Schema } from "effect"
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http"
@@ -1282,7 +1283,7 @@ function mockHandlers(
                 sessionID: ctx.params.sessionID,
                 time: { created: Date.now() },
                 type: "compaction",
-                payload: {},
+                payload: Schema.decodeUnknownSync(SessionInbox.CompactionPayload)(body),
                 delivery: "steer",
               },
             }

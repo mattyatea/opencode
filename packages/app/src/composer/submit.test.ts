@@ -22,6 +22,7 @@ const selectedModel = {
 } as NonNullable<ReturnType<ModelSelection["current"]>>
 
 const selection = {
+  sessionID: () => undefined,
   ready: Object.assign(() => true, { promise: undefined }),
   key: () => ({ providerID: "provider-1", modelID: "model-1" }),
   current: () => selectedModel,

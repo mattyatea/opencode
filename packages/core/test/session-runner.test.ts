@@ -2615,7 +2615,11 @@ describe("SessionRunnerLLM", () => {
     yield* s.admit("Active work")
     const active = yield* s.resumePaused
 
-    const compaction = yield* s.session.compact({ sessionID })
+    const previous = (yield* s.session.get(sessionID)).model
+    const compaction = yield* s.session.compact({
+      sessionID,
+      experimental: { switchModel: Schema.decodeUnknownSync(Model.Ref)({ providerID: "fake", id: "replacement" }) },
+    })
     yield* s.session.prompt({
       sessionID,
       text: "Continue after failure",
@@ -2625,6 +2629,8 @@ describe("SessionRunnerLLM", () => {
     yield* active.finish
 
     expect(s.requests).toHaveLength(4)
+    expect(s.requests[3]?.model).toBe(recoveryModel)
+    expect((yield* s.session.get(sessionID)).model).toEqual(previous)
     expect(userTexts(s.requests[3])).toContain("Continue after failure")
     expect(yield* SessionInbox.find(s.db, compaction.id)).toBeUndefined()
     expect((yield* s.messages).find((message) => message.id === compaction.id)).toMatchObject({
@@ -2676,7 +2682,7 @@ describe("SessionRunnerLLM", () => {
     })
   })
 
-  scenario("runs manual compaction at the next step boundary before queued prompts", function* (s) {
+  scenario("compacts with the old model and selects the target before queued prompts at the same boundary", function* (s) {
     s.currentModel = recoveryModel
     yield* s.llm.push(
       TestLLM.text("Active complete", "text-active-steer-compact"),
@@ -2686,13 +2692,29 @@ describe("SessionRunnerLLM", () => {
     yield* s.admit("Active work")
     const active = yield* s.resumePaused
 
-    const compaction = yield* s.session.compact({ sessionID })
+    // Even a native-compaction model must write a portable text summary before switching.
+    s.compaction = { type: "native" }
+    const target = Schema.decodeUnknownSync(Model.Ref)({ providerID: "fake", id: "replacement" })
+    const compaction = yield* s.session.compact({ sessionID, experimental: { switchModel: target } })
     yield* s.session.prompt({ sessionID, text: "Queued prompt", delivery: "queue", resume: false })
     yield* active.finish
 
     // Steer-delivered compaction runs at the boundary after the active step, ahead of
     // the queued prompt, and consuming it does not trigger an input-free model call.
     expect(s.requests).toHaveLength(3)
+    expect(s.requests[1]?.model).toBe(recoveryModel)
+    expect(s.requests[2]?.model).toBe(replacementModel)
+    expect((yield* s.session.get(sessionID)).model).toEqual({ ...target, variant: Model.VariantID.make("default") })
+    expect(
+      (yield* recordedEventTypes(sessionID)).filter(
+        (type) =>
+          type === Bus.versionedType(SessionEvent.Compaction.Ended.type, 1) ||
+          type === Bus.versionedType(SessionEvent.ModelSelected.type, 1),
+      ),
+    ).toEqual([
+      Bus.versionedType(SessionEvent.Compaction.Ended.type, 1),
+      Bus.versionedType(SessionEvent.ModelSelected.type, 1),
+    ])
     expect(userTexts(s.requests[2])).toContain("Queued prompt")
     expect(yield* SessionInbox.find(s.db, compaction.id)).toBeUndefined()
     expect((yield* s.messages).find((message) => message.id === compaction.id)).toMatchObject({

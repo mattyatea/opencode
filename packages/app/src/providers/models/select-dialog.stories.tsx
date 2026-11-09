@@ -60,6 +60,7 @@ function SelectorStory(props: { favorite?: boolean }) {
   const find = (id: string) => models.find((model) => model.id === id)
 
   const selection = {
+    sessionID: () => undefined,
     ready: Object.assign(() => true, { promise: undefined }),
     key: () => ({ providerID: "openai", modelID: store.current }),
     current: () => find(store.current),

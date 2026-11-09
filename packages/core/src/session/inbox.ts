@@ -227,6 +227,7 @@ export const make = Effect.fn("SessionInbox.make")(function* () {
     readonly id: SessionMessage.ID
     readonly sessionID: SessionSchema.ID
     readonly delivery: Delivery
+    readonly payload?: CompactionPayload
   }) {
     return yield* serialized(
       input.sessionID,
@@ -239,11 +240,21 @@ export const make = Effect.fn("SessionInbox.make")(function* () {
         if (yield* promotedFromMessage(db, input.sessionID, input.id, input.delivery))
           return yield* new LifecycleConflict({ id: input.id })
         const pending = (yield* list(db, input.sessionID)).find((item) => item.type === "compaction")
-        if (pending) return pending
+        if (pending) {
+          const existing = pending.payload.experimental?.switchModel
+          const target = input.payload?.experimental?.switchModel
+          if (
+            existing?.providerID !== target?.providerID ||
+            existing?.id !== target?.id ||
+            (existing?.variant ?? "default") !== (target?.variant ?? "default")
+          )
+            return yield* new LifecycleConflict({ id: input.id })
+          return pending
+        }
         return yield* admit({
           id: input.id,
           sessionID: input.sessionID,
-          item: { type: "compaction", payload: {}, delivery: input.delivery },
+          item: { type: "compaction", payload: input.payload ?? {}, delivery: input.delivery },
         })
       }),
     )
@@ -479,9 +490,15 @@ export const nextPromotable = Effect.fn("SessionInbox.nextPromotable")(function*
   return queued ? promotion(queued) : undefined
 })
 
-/** What a boundary decides on: prompts are promoted by id, so only a move's payload is read. */
+/** What a boundary decides on: prompts are promoted by id; controls also carry their payload. */
 export type Promotion =
-  | { readonly id: SessionMessage.ID; readonly type: "user" | "synthetic" | "compaction"; readonly delivery: Delivery }
+  | { readonly id: SessionMessage.ID; readonly type: "user" | "synthetic"; readonly delivery: Delivery }
+  | {
+      readonly id: SessionMessage.ID
+      readonly type: "compaction"
+      readonly delivery: Delivery
+      readonly payload: CompactionPayload
+    }
   | {
       readonly id: SessionMessage.ID
       readonly type: "move"
@@ -489,10 +506,12 @@ export type Promotion =
       readonly payload: MovePayload
     }
 
-const promotion = (row: typeof SessionInboxTable.$inferSelect): Promotion =>
-  row.type === "move"
-    ? { id: row.id, type: "move", delivery: row.delivery, payload: decodeMove(row.payload) }
-    : { id: row.id, type: row.type, delivery: row.delivery }
+const promotion = (row: typeof SessionInboxTable.$inferSelect): Promotion => {
+  if (row.type === "move") return { id: row.id, type: "move", delivery: row.delivery, payload: decodeMove(row.payload) }
+  if (row.type === "compaction")
+    return { id: row.id, type: "compaction", delivery: row.delivery, payload: decodeCompaction(row.payload) }
+  return { id: row.id, type: row.type, delivery: row.delivery }
+}
 
 /** Which pending rows count: "input" means any item in either delivery mode. */
 export type Scope = "input" | Delivery

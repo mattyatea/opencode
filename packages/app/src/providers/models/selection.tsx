@@ -422,6 +422,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     )
 
     const model = {
+      sessionID: id,
       ready: Object.assign(() => models.ready() && configuredModel.ready(), { promise: models.ready.promise }),
       key,
       preview,

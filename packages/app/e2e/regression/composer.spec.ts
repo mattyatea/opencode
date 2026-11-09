@@ -1,9 +1,83 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
+import { Schema } from "effect"
 import { NO_PROVIDER, SERVER, T0, expectPath, holdRoute, provider, sessionHref } from "../utils/app"
 import { mockWorkspace, openDraft, openSession } from "../utils/workspace"
 import { mockPluginsActivating, type MockServerConfig } from "../utils/mock-server"
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] })
+
+test("provider switching compacts with the old model and keeps it selected on failure", async ({ page }) => {
+  const sessionID = "ses_provider_handoff"
+  const model = { providerID: "opencode", id: "old" }
+  const admissions: Parameters<NonNullable<MockServerConfig["onCompact"]>>[0]["body"][] = []
+
+  const view = await openSession(page, {
+    name: "ProviderHandoff",
+    sessions: [{ id: sessionID, agent: "build", model }],
+    provider: {
+      all: [
+        ...provider({ id: "old", name: "Old model" }).all,
+        { id: "other", name: "Other", models: { next: { id: "next", name: "Next model" } } },
+      ],
+      connected: ["opencode", "other"],
+      default: { providerID: "opencode", modelID: "old" },
+    },
+    pageMessages: () => ({
+      items: [{ id: "msg_handoff_user", type: "user", text: "Continue this work", time: { created: T0 } }],
+    }),
+    onCompact: ({ body }) => void admissions.push(body),
+  })
+
+  const control = page.locator('[data-action="composer-model"]')
+  await expect(control).toHaveText("Old model")
+  await control.click()
+  const picker = page.getByRole("dialog", { name: "Select model", exact: true })
+  await picker.getByRole("combobox", { name: "Search models", exact: true }).fill("Next model")
+  await picker.getByRole("option", { name: /Next model/ }).click()
+  const confirmation = page.getByRole("dialog", { name: "Switch provider", exact: true })
+  await confirmation.getByRole("button", { name: "Compact and switch", exact: true }).click()
+  await expect(confirmation.getByRole("button", { name: "Compacting before switching…", exact: true })).toBeDisabled()
+  await expect.poll(() => admissions.length).toBe(1)
+  expect(admissions[0].experimental).toEqual({ switchModel: { providerID: "other", id: "next" } })
+  // Admission alone must not commit the target model.
+  await expect(control).toHaveText("Old model")
+  await view.push([
+    {
+      id: "evt_handoff_failed",
+      durable: { aggregateID: sessionID, seq: 1, version: 1 },
+      created: T0 + 1,
+      type: "session.compaction.failed",
+      data: {
+        sessionID,
+        inputID: Schema.decodeUnknownSync(Schema.String)(admissions[0].id),
+        reason: "manual",
+        error: { type: "compaction.failed", message: "Summary unavailable" },
+      },
+    },
+  ])
+  await expect(confirmation.getByRole("alert")).toHaveText("Summary unavailable")
+  await expect(control).toHaveText("Old model")
+  await confirmation.getByRole("button", { name: "Compact and switch", exact: true }).click()
+  await expect.poll(() => admissions.length).toBe(2)
+  await view.push([
+    {
+      id: "evt_handoff_started",
+      durable: { aggregateID: sessionID, seq: 2, version: 1 },
+      created: T0 + 2,
+      type: "session.compaction.started",
+      data: { sessionID, inputID: Schema.decodeUnknownSync(Schema.String)(admissions[1].id), reason: "manual" },
+    },
+    {
+      id: "evt_handoff_ended",
+      durable: { aggregateID: sessionID, seq: 3, version: 1 },
+      created: T0 + 3,
+      type: "session.compaction.ended",
+      data: { sessionID, reason: "manual", model, text: "## Objective\n- Continue this work" },
+    },
+  ])
+  await expect(control).toHaveText("Other / Next model")
+  await expect(confirmation).toHaveCount(0)
+})
 
 test("mention a session by title, send its stable token, and open its own tab", async ({ page }) => {
   const target = "ses_0123456789abcdefghijklmnop"
@@ -404,6 +478,10 @@ for (const action of ["tray", "picker"] as const) {
       const picker = page.getByRole("dialog", { name: "Select model", exact: true })
       await picker.getByRole("combobox", { name: "Search models", exact: true }).fill("Big Pickle")
       await picker.getByRole("option", { name: /Big Pickle/ }).click()
+      await page
+        .getByRole("dialog", { name: "Switch provider", exact: true })
+        .getByRole("button", { name: "Switch without compaction", exact: true })
+        .click()
     }
 
     await expect(page.locator('[data-action="composer-model"]')).toContainText("Big Pickle")
@@ -883,7 +961,9 @@ test("keeps a line added at the end of a scrolling prompt clear of the bottom fa
         const viewport = element.closest('[data-component="composer-scroll"]')!
         const range = document.createRange()
         range.selectNodeContents(element)
-        const line = Array.from(range.getClientRects()).reduce((last, rect) => (rect.bottom > last.bottom ? rect : last))
+        const line = Array.from(range.getClientRects()).reduce((last, rect) =>
+          rect.bottom > last.bottom ? rect : last,
+        )
         const fade = parseFloat(getComputedStyle(viewport).getPropertyValue("--composer-fade-bottom"))
 
         return Math.max(0, Math.round(line.bottom - (viewport.getBoundingClientRect().bottom - fade)))

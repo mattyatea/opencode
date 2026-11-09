@@ -411,6 +411,8 @@ export function createData(config: CreateDataInput) {
   const messageLoads = new Map<string, Promise<unknown>>()
   const compacting = new Map<string, { id: string; observed: Set<string>; request: Promise<SessionInboxCompaction> }>()
   onCleanup(() => compacting.clear())
+  const compactionWaiters = new Set<() => void>()
+  onCleanup(() => compactionWaiters.forEach((cancel) => cancel()))
 
   // Register `promise` under `key` until it settles. A later registration
   // replaces an earlier one; settlement only clears its own entry.
@@ -1692,7 +1694,50 @@ export function createData(config: CreateDataInput) {
         if (fresh) track(creating, id, request)
         return { id, request }
       },
-      compact(input: { sessionID: string; model?: ModelRef }) {
+      async compactForModelSwitch(input: { sessionID: string; model: ModelRef }) {
+        const sessionID = input.sessionID
+        const item = await result.session.compact({ sessionID, experimental: { switchModel: input.model } })
+        const target = item.payload.experimental?.switchModel
+        if (
+          target?.providerID !== input.model.providerID ||
+          target.id !== input.model.id ||
+          (target.variant ?? "default") !== (input.model.variant ?? "default")
+        )
+          throw new Error("Another compaction is already pending")
+        if (disposed) throw new Error("Client disposed")
+        return new Promise<void>((resolve, reject) => {
+          const finish = (error?: Error) => {
+            stop()
+            compactionWaiters.delete(cancel)
+            if (error) {
+              reject(error)
+              return
+            }
+            resolve()
+          }
+          const cancel = () => finish(new Error("Compaction cancelled"))
+          const check = () => {
+            const message = store.session.message[sessionID]?.find((message) => message.id === item.id)
+            if (message?.type === "compaction" && message.status === "completed") return finish()
+            if (message?.type === "compaction" && message.status === "failed")
+              return finish(new Error(message.error.message))
+            if (!message && !store.session.pending[sessionID]?.some((pending) => pending.id === item.id)) cancel()
+          }
+          const stop = config.event.listen(({ details }) => {
+            if (
+              (details.type === "session.compaction.ended" ||
+                details.type === "session.compaction.failed" ||
+                details.type === "session.inbox.cancelled" ||
+                details.type === "session.deleted") &&
+              details.data.sessionID === sessionID
+            )
+              check()
+          })
+          compactionWaiters.add(cancel)
+          check()
+        })
+      },
+      compact(input: { sessionID: string; model?: ModelRef } & SessionInboxCompaction["payload"]) {
         const active = compacting.get(input.sessionID)
         if (active) return active.request
         // A known pending control ID may be consumed while setup waits. Propose
@@ -1706,7 +1751,7 @@ export function createData(config: CreateDataInput) {
             time: { created: Date.now() },
             type: "compaction",
             delivery: "steer",
-            payload: {},
+            payload: { experimental: input.experimental },
           })
         }
         // Compaction admission can coalesce onto a different ID. Retire the
@@ -1715,7 +1760,7 @@ export function createData(config: CreateDataInput) {
         const observed = new Set<string>()
         const request = sendAdmission(input.sessionID, async () => {
           if (input.model) await api().session.switchModel({ sessionID: input.sessionID, model: input.model })
-          return api().session.compact({ sessionID: input.sessionID, id })
+          return api().session.compact({ sessionID: input.sessionID, id, experimental: input.experimental })
         })
           .then((item) => {
             batch(() => {
