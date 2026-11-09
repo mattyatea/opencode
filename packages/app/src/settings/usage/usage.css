@@ -4,8 +4,7 @@
   color: var(--v2-text-text-base);
 }
 
-.usage-controls,
-.usage-meter > div {
+.usage-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -40,25 +39,11 @@
 .usage-table small {
   color: var(--v2-text-text-muted);
 }
+.usage-note {
+  white-space: pre-line;
+}
 .usage-section {
   gap: 12px;
-}
-.usage-meter {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.usage-meter-track {
-  width: 100%;
-  height: 6px;
-  overflow: hidden;
-  border-radius: 3px;
-  background: var(--v2-background-bg-layer-03);
-}
-.usage-meter-track > span {
-  display: block;
-  height: 100%;
-  background: var(--v2-text-text-base);
 }
 .usage-chart {
   display: flex;

@@ -68,7 +68,7 @@ test("usage settings show recorded activity and switch reporting periods", async
   ).toBeVisible()
   await expect(settings.getByRole("row", { name: "Weekly work 3 2,000 $0.42", exact: true })).toBeVisible()
   await expect(settings.getByRole("row", { name: "effect 5", exact: true })).toBeVisible()
-  await expect(settings.getByText("No provider allowance is available.", { exact: false })).toBeVisible()
+  await expect(settings.getByRole("meter")).toHaveCount(0)
   await settings.getByRole("button", { name: "30 days", exact: true }).click()
   await expect(settings.getByRole("row", { name: "Monthly work 3 2,000 $0.42", exact: true })).toBeVisible()
   await expect(settings.getByText("Weekly work", { exact: true })).toHaveCount(0)
@@ -93,12 +93,65 @@ test("usage settings can retry a failed read without leaving settings", async ({
   await expect(settings.getByRole("alert")).toHaveCount(0)
 })
 
-test("usage settings distinguish provider allowances from local estimates", async ({ page }) => {
-  const { settings } = await open(page, { sessionStats: usageStats, usageLimits: usageLimits() })
+test("usage settings use Japanese labels without loading provider limits", async ({ page }) => {
+  const requests: string[] = []
+  page.on("request", (request) => requests.push(new URL(request.url()).pathname))
+  await mockWorkspace(page, {
+    name: "Usage settings",
+    directory,
+    sessionStats: usageStats,
+    usageLimits: usageLimits(),
+    seed: { locale: "ja", tabs: [] },
+  })
+  await page.goto("/settings?tab=usage")
+  const settings = page.getByTestId("settings-screen")
+  await expect(settings.getByRole("heading", { name: "使用量", exact: true })).toBeVisible()
+  await expect(settings.getByRole("button", { name: "7日間", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(settings.getByRole("button", { name: "更新", exact: true })).toBeEnabled()
+  await expect(settings.getByRole("table", { name: "モデル別", exact: true })).toContainText("usage-model")
+  await expect(settings.getByRole("table", { name: "スキル別", exact: true })).toContainText("effect")
+  await expect(settings.getByRole("meter")).toHaveCount(0)
+  expect(requests).not.toContain("/api/experimental/usage/limits")
+})
+
+test("usage settings keep the selected period and data through health reconnects", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-11-09T12:00:00Z") })
+  await mockRemoteServer(page, { name: "Other server" })
+  let failed = false
+  let reads = 0
+  const { settings } = await open(page, {
+    hostname: "usage-host",
+    infoFailures: () => failed,
+    sessionStats: (from, to) => {
+      reads++
+      return usageStats(from, to)
+    },
+  })
   await settings.getByRole("tab", { name: "Usage", exact: true }).click()
-  await expect(settings.getByRole("meter", { name: "Weekly", exact: true })).toHaveAttribute("aria-valuenow", "36")
-  await settings.getByRole("button", { name: "View budget details", exact: true }).click()
-  await expect(page.getByRole("dialog")).toContainText("Usage workspace")
+  await expect(settings.getByText("Weekly work", { exact: true })).toBeVisible()
+  await settings.getByRole("button", { name: "30 days", exact: true }).click()
+  await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
+
+  failed = true
+  const offline = page.waitForResponse((response) => response.url() === `${SERVER}/api/info` && response.status() === 500)
+  await page.clock.fastForward(10_000)
+  await offline
+  const switcher = settings.locator('[data-action="settings-server-select"]:visible')
+  await switcher.click()
+  await expect(page.getByRole("menuitemradio", { name: /usage-host/ })).toContainText("Unreachable")
+  await page.keyboard.press("Escape")
+  await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
+  await expect(settings.getByRole("button", { name: "30 days", exact: true })).toHaveAttribute("aria-pressed", "true")
+
+  failed = false
+  const online = page.waitForResponse((response) => response.url() === `${SERVER}/api/info` && response.status() === 200)
+  await page.clock.fastForward(10_000)
+  await online
+  await switcher.click()
+  await expect(page.getByRole("menuitemradio", { name: /usage-host/ })).not.toContainText("Unreachable")
+  await page.keyboard.press("Escape")
+  await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
+  expect(reads).toBe(2)
 })
 
 test("settings has its own route and returns through app history", async ({ page }) => {

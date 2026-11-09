@@ -2,6 +2,7 @@
 - Keep runtime dependencies directed from Schema to Core and Protocol, then from Core and Protocol to Server. Client runtime code may depend on Schema and Protocol but never Core or Server; `sdk` composes Client, Core, and Server.
 - This repository does not use Changesets. Do not add `.changeset` files; follow the existing release workflow instead.
 - The default branch is `dev`. Base branches and worktrees on `origin/dev`, target PRs at `dev`, and diff against `origin/dev` unless told otherwise.
+- Create PRs only in the user's fork, `mattyatea/opencode`, targeting `dev`. Never create PRs in upstream `anomalyco/opencode`; explicitly pass `--repo mattyatea/opencode` when creating a PR.
 
 ## Live TUI Testing
 
