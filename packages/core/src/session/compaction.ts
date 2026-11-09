@@ -17,6 +17,7 @@ import {
 import type { StreamOptions } from "@opencode/ai/route"
 import type { SessionCompactionResult } from "@opencode/plugin/effect/session"
 import type { SessionError } from "@opencode/schema/session-error"
+import type { Event } from "@opencode/schema/event"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Context, Effect, Exit, Fiber, Layer, Result, Scope, Stream } from "effect"
 import { Agent } from "../agent.js"
@@ -60,7 +61,13 @@ export type Trigger =
   /** `overflow`: the provider just rejected this context as too long. `estimate` is `estimatePrompt(context)`. */
   | { readonly reason: "auto" | "overflow"; readonly context: SessionContext.Loaded; readonly estimate?: Estimate }
   /** `inputID` is the `/compact` inbox item, whose message shows the outcome. */
-  | { readonly reason: "manual"; readonly context: SessionContext.Loaded; readonly inputID: SessionMessage.ID }
+  | {
+      readonly reason: "manual"
+      readonly context: SessionContext.Loaded
+      readonly inputID: SessionMessage.ID
+      /** Select this model only after a portable summary succeeds, at the same step boundary. */
+      readonly switchModel?: Model.Ref
+    }
 
 export type Outcome =
   /** Only `auto` skips: the context fits, or automatic compaction is off. */
@@ -277,9 +284,9 @@ export const layer = Layer.effect(
     const selectModel = Effect.fnUntraced(function* (
       context: SessionContext.Loaded,
       buffer: Settings["buffer"],
-      native: boolean,
+      useCurrent: boolean,
     ) {
-      const agent = native ? undefined : yield* agents.get(Agent.ID.make("compaction"))
+      const agent = useCurrent ? undefined : yield* agents.get(Agent.ID.make("compaction"))
       const model =
         (agent?.model &&
           (yield* models
@@ -307,8 +314,17 @@ export const layer = Layer.effect(
         return { status: "skipped" }
       const held = precomputed.get(context.session.id)
       precomputed.delete(context.session.id)
-      const native = context.model.compaction?.type === "native"
-      const model = yield* selectModel(context, settings.buffer, native)
+      const target = trigger.reason === "manual" ? trigger.switchModel : undefined
+      if (target) {
+        const error = yield* models
+          .resolve({ ...context.session, model: target }, catalog.available)
+          .pipe(Effect.match({ onFailure: toSessionError, onSuccess: () => undefined }))
+        if (error) return yield* publish(trigger, { error })
+      }
+      const handoff = target !== undefined
+      const native = !handoff && context.model.compaction?.type === "native"
+      // Handoffs reuse the current provider's cache and must not produce a provider-specific native window.
+      const model = yield* selectModel(context, settings.buffer, native || handoff)
       // The provider just rejected this context, so the estimate ran low; the first attempt already aims below it.
       const budget =
         trigger.reason === "overflow"
@@ -901,6 +917,12 @@ export const layer = Layer.effect(
       const sessionID = context.session.id
       const reason = trigger.reason === "manual" ? "manual" : "auto"
       const usage = spent.get(sessionID)
+      const target = trigger.reason === "manual" ? trigger.switchModel : undefined
+
+      if (target && "native" in outcome && outcome.native)
+        return yield* publish(trigger, {
+          error: { type: "compaction.failed", message: "Provider handoffs require a text summary" },
+        })
 
       if ("error" in outcome) {
         yield* bus.publish(SessionEvent.Compaction.Failed, {
@@ -913,18 +935,21 @@ export const layer = Layer.effect(
         return { status: "failed", error: outcome.error }
       }
 
-      yield* bus.publish(
-        SessionEvent.Compaction.Ended,
-        {
-          sessionID,
-          reason,
-          model: context.model.ref,
-          native: outcome.native,
-          text: outcome.text,
-          ...usage,
-        },
-        { metadata: outcome.metadata },
-      )
+      const ended: Event.Data<typeof SessionEvent.Compaction.Ended> = {
+        sessionID,
+        reason,
+        model: context.model.ref,
+        native: outcome.native,
+        text: outcome.text,
+        ...usage,
+      }
+      const options = { metadata: outcome.metadata }
+      if (target)
+        yield* bus.publishAll([
+          [SessionEvent.Compaction.Ended, ended, options],
+          [SessionEvent.ModelSelected, { sessionID, model: target, previous: context.session.model }],
+        ])
+      if (!target) yield* bus.publish(SessionEvent.Compaction.Ended, ended, options)
       return { status: "completed" }
     })
 

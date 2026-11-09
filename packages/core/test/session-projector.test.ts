@@ -1393,7 +1393,7 @@ describe("SessionProjector", () => {
       const refs = [
         { mime: "image/png", source: { type: "inline" }, name: "shot.png", uri },
         { mime: "image/png", source: { type: "inline" }, name: "copy.png", uri },
-      ]
+      ] satisfies SessionStored.UserPayload["files"]
 
       yield* inbox.admit({ id, sessionID, item: { type: "user", payload: { text: "look", files }, delivery: "steer" } })
       const queued = yield* db

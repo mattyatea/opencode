@@ -190,6 +190,7 @@ export function createComposerModelSelection(input: {
   )
 
   const selection = {
+    sessionID: () => undefined,
     trackSessionCommit: local.model.trackSessionCommit,
     remembered: () => Object.fromEntries(Object.entries(remembered).map(([name, model]) => [name, { model }])),
     ready: Object.assign(() => models.ready() && configuredModel.ready(), { promise: models.ready.promise }),

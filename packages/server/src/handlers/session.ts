@@ -478,19 +478,17 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         "session.compact",
         Effect.fn(function* (ctx) {
           return {
-            data: yield* session
-              .compact({ sessionID: ctx.params.sessionID, id: ctx.payload.id, delivery: ctx.payload.delivery })
-              .pipe(
-                Effect.catchTag("Session.NotFoundError", missingSession),
-                Effect.catchTag("Session.CompactionConflictError", (error) =>
-                  Effect.fail(
-                    new ConflictError({
-                      message: `Compaction input ID conflicts with an existing durable record: ${error.inputID}`,
-                      resource: error.inputID,
-                    }),
-                  ),
+            data: yield* session.compact({ sessionID: ctx.params.sessionID, ...ctx.payload }).pipe(
+              Effect.catchTag("Session.NotFoundError", missingSession),
+              Effect.catchTag("Session.CompactionConflictError", (error) =>
+                Effect.fail(
+                  new ConflictError({
+                    message: `Compaction input ID conflicts with an existing durable record: ${error.inputID}`,
+                    resource: error.inputID,
+                  }),
                 ),
               ),
+            ),
           }
         }),
       )

@@ -988,6 +988,28 @@ it.effect("native compaction fails without a model call on a route that cannot c
   }),
 )
 
+it.effect("an unavailable handoff target leaves the old model and history unchanged", () =>
+  Effect.gen(function* () {
+    requests = []
+    const compaction = yield* SessionCompaction.Service
+    const bus = yield* Bus.Service
+    const store = yield* SessionStore.Service
+    const session = yield* insertSession(Session.ID.make("ses_unavailable_handoff"))
+    const inputID = SessionMessage.ID.create()
+    yield* bus.publish(SessionEvent.Compaction.Started, { sessionID: session.id, reason: "manual", inputID })
+    const outcome = yield* compaction.compact({
+      reason: "manual",
+      inputID,
+      switchModel: Schema.decodeUnknownSync(Model.Ref)({ providerID: "missing-provider", id: "missing-model" }),
+      context: loaded(session, [textUser("Keep this work on the current model.")]),
+    })
+    expect(outcome.status).toBe("failed")
+    expect(requests).toHaveLength(0)
+    expect((yield* store.get(session.id))?.model).toEqual(session.model)
+    expect(yield* store.message(inputID)).toMatchObject({ message: { type: "compaction", status: "failed" } })
+  }),
+)
+
 it.effect("forked session compaction reuses the fork root prompt cache key", () =>
   Effect.gen(function* () {
     requests = []

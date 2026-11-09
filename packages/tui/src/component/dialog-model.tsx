@@ -1,5 +1,5 @@
-import type { ModelInfo } from "@opencode/client"
-import { createMemo, createSignal, onMount, Show } from "solid-js"
+import type { ModelInfo, ModelRef } from "@opencode/client"
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { useLocal } from "../context/local"
 import { DialogSelect } from "../ui/dialog-select"
 import { useDialog } from "../ui/dialog"
@@ -15,14 +15,19 @@ import { DialogFreeModels } from "./dialog-model-free"
 import { FavoriteMarker, ModelDetail, isFreeModel, prioritizeFavorites, sortModelOptions } from "./model-options"
 import { DialogUsage, useUsageLimits } from "./usage"
 import { formatDollars, usageLevel } from "../util/usage-limits"
+import { useRoute } from "../context/route"
+import { useToast } from "../ui/toast"
+import { errorMessage } from "../util/error"
 
 export function DialogModel(props: { providerID?: string }) {
   const local = useLocal()
   const dialog = useDialog()
   const newDesigns = useNewDesigns()
   const connected = useConnected()
+  const data = useData()
+  const route = useRoute()
 
-  function select(providerID: string, modelID: string) {
+  function commit(providerID: string, modelID: string) {
     local.model.set({ providerID, modelID }, { recent: true })
     const list = local.model.variant.list()
     const cur = local.model.variant.current()
@@ -35,6 +40,34 @@ export function DialogModel(props: { providerID?: string }) {
       return
     }
     dialog.clear()
+  }
+
+  function select(providerID: string, modelID: string) {
+    const sessionID = route.data.type === "session" ? route.data.sessionID : undefined
+    const previous = sessionID ? data.session.get(sessionID)?.model : undefined
+    if (
+      sessionID &&
+      previous &&
+      previous.providerID !== providerID &&
+      data.session.message
+        .list(sessionID)
+        .some(
+          (message) =>
+            message.type === "user" ||
+            message.type === "assistant" ||
+            (message.type === "compaction" && message.status === "completed"),
+        )
+    ) {
+      dialog.replace(() => (
+        <DialogModelSwitch
+          sessionID={sessionID}
+          model={{ providerID, id: modelID }}
+          onSwitch={() => commit(providerID, modelID)}
+        />
+      ))
+      return
+    }
+    commit(providerID, modelID)
   }
 
   function connect() {
@@ -50,6 +83,42 @@ export function DialogModel(props: { providerID?: string }) {
     >
       <DialogFreeModels onSelect={select} onConnect={connect} />
     </Show>
+  )
+}
+
+function DialogModelSwitch(props: { sessionID: string; model: ModelRef; onSwitch: () => void }) {
+  const data = useData()
+  const toast = useToast()
+  const [busy, setBusy] = createSignal(false)
+  let disposed = false
+  onCleanup(() => (disposed = true))
+
+  return (
+    <DialogSelect
+      title={busy() ? "Compacting before switching…" : "Switch provider"}
+      description="Prompt caches are not shared between providers. Compaction can lose detail."
+      renderFilter={false}
+      locked={busy()}
+      options={[
+        { title: "Switch without compaction", value: false },
+        { title: "Compact and switch", value: true, description: "Summarize with the current model first" },
+      ]}
+      onSelect={(option) => {
+        if (busy()) return
+        if (!option.value) return props.onSwitch()
+        setBusy(true)
+        void data.session.compactForModelSwitch({ sessionID: props.sessionID, model: props.model }).then(
+          () => {
+            if (!disposed) props.onSwitch()
+          },
+          (error) => {
+            if (disposed) return
+            setBusy(false)
+            toast.show({ title: "Compaction failed", message: errorMessage(error), variant: "error" })
+          },
+        )
+      }}
+    />
   )
 }
 

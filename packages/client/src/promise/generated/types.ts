@@ -95,8 +95,6 @@ export type SessionInboxDelivery = "steer" | "queue"
 
 export type SessionInboxSyntheticPayload = { text: string; description?: string; metadata?: { [x: string]: JsonValue } }
 
-export type SessionInboxCompactionPayload = {}
-
 export type ShellID = string
 
 export type SessionMessageNative = { [x: string]: JsonValue }
@@ -525,15 +523,6 @@ export type SessionInboxSynthetic = {
   time: { created: number }
   type: "synthetic"
   payload: SessionInboxSyntheticPayload
-  delivery: SessionInboxDelivery
-}
-
-export type SessionInboxCompaction = {
-  id: SessionMessageID
-  sessionID: SessionID
-  time: { created: number }
-  type: "compaction"
-  payload: SessionInboxCompactionPayload
   delivery: SessionInboxDelivery
 }
 
@@ -1066,6 +1055,8 @@ export type SessionMessageCompactionCompleted = {
 }
 
 export type SessionStatsModelUsage = { model: ModelRef; steps: number; tokens: TokenUsageInfo; cost: MoneyUSD }
+
+export type SessionInboxCompactionPayload = { experimental?: { switchModel?: ModelRef } }
 
 export type ProviderSettings = {
   timeout?: number | false
@@ -2302,6 +2293,15 @@ export type SessionStatsInfo = {
   skills?: Array<SessionStatsSkillUsage>
 }
 
+export type SessionInboxCompaction = {
+  id: SessionMessageID
+  sessionID: SessionID
+  time: { created: number }
+  type: "compaction"
+  payload: SessionInboxCompactionPayload
+  delivery: SessionInboxDelivery
+}
+
 export type ProviderRequest = {
   settings: ProviderSettings
   headers: { [x: string]: string }
@@ -3498,8 +3498,11 @@ export type SessionShellOutput = void
 
 export type SessionCompactInput = {
   readonly sessionID: string
-  readonly id?: string | undefined
-  readonly delivery?: ("steer" | "queue") | undefined
+  readonly id?: string | null | undefined
+  readonly delivery?: ("steer" | "queue") | null | undefined
+  readonly experimental?:
+    | { readonly switchModel?: { readonly id: string; readonly providerID: string; readonly variant?: string } }
+    | undefined
 }
 
 export type SessionCompactOutput = { data: SessionInboxCompaction }["data"]
