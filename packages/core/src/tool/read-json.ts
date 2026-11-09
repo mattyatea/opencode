@@ -3,7 +3,7 @@ export * as ReadJson from "./read-json.js"
 import { Option, Schema } from "effect"
 import { NonNegativeInt } from "../schema.js"
 
-const Pointer = Schema.String.check(Schema.isPattern(/^(?:\/(?:[^~]|~[01])*)*$/))
+const Pointer = Schema.String.check(Schema.isPattern(/^(?:\/(?:[^~/]|~[01])*)*$/))
 const Scalar = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null])
 
 export const Input = Schema.Struct({
@@ -41,6 +41,7 @@ export const Input = Schema.Struct({
   }),
 })
 
+/** Returns bounded JSON evidence only when parsing preserves the source; undefined keeps ordinary reads. */
 export function read(text: string, input?: typeof Input.Type) {
   if (input?.mode === "full") return
   const parsed = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))(text)
@@ -107,6 +108,7 @@ export function read(text: string, input?: typeof Input.Type) {
   })
 }
 
+/** Resolves an RFC 6901 pointer without confusing absent own properties with falsy values. */
 function pointer(document: Schema.Json, path: string): { exists: true; value: Schema.Json } | { exists: false } {
   if (path === "") return { exists: true, value: document }
   let value = document
@@ -123,6 +125,7 @@ function pointer(document: Schema.Json, path: string): { exists: true; value: Sc
   return { exists: true, value }
 }
 
+/** Describes types and keys, never values; nested objects stop expanding after two levels. */
 function structure(value: Schema.Json, depth = 0): Schema.Json {
   if (value === null) return { type: "null" }
   if (isArray(value))
@@ -157,6 +160,7 @@ function isArray(value: Schema.Json): value is ReadonlyArray<Schema.Json> {
   return Array.isArray(value)
 }
 
+/** Removes only insignificant JSON whitespace so round-trip comparison detects lossy parsing. */
 function compact(text: string) {
   const parts: string[] = []
   let quoted = false

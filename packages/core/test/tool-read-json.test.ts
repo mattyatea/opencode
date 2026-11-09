@@ -115,9 +115,14 @@ describe("ReadJson", () => {
   })
 
   test("validates pointers, typed conditions and page bounds at the input boundary", () => {
+    for (const path of ["", "/", "/~0/~1", "/".repeat(5000)])
+      expect(Schema.decodeUnknownSync(ReadJson.Input)({ mode: "get", path }).path).toBe(path)
     for (const input of [
       { mode: "get", path: "a" },
       { mode: "get", path: "/~2" },
+      { mode: "get", path: "/".repeat(5000) + "~2" },
+      { mode: "query", fields: ["/".repeat(5000) + "~"] },
+      { mode: "query", where: [{ field: "/".repeat(5000) + "~2", op: "exists" }] },
       { mode: "query", fields: ["id"] },
       { mode: "query", limit: 201 },
       { mode: "query", limit: 0 },
