@@ -8,7 +8,7 @@ export const DEFAULT_MODEL = "mlx-community/Qwen3-ASR-0.6B-8bit"
 export const MLX_AUDIO = "mlx-audio==0.6.5"
 
 export default Plugin.define({
-  id: "opencode.voice-input",
+  id: "voice-input",
   async setup(ctx) {
     const lease = acquire(config(ctx.options))
     const failure = (error: unknown) =>

@@ -5,7 +5,7 @@ const Failure = Schema.toStandardSchemaV1(Schema.Struct({ log: Schema.String }))
 
 /** The voice input plugin's server contract, shared by its server part and its window part. */
 export const Dictation = Rpc.define({
-  id: "opencode.voice-input",
+  id: "voice-input",
   methods: {
     /** Starts the local transcription worker and loads the model, downloading it on first use. */
     prepare: {

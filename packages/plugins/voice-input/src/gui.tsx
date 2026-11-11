@@ -6,8 +6,11 @@ import ja from "../i18n/ja"
 import { encodeChunks, level, RATE, toPcm16, withTranscript } from "./pcm"
 import css from "./style.css?inline"
 
-/** How often the growing dictation is transcribed again while the user speaks. */
-const PARTIAL_MS = 700
+/**
+ * How often the window asks for a new partial transcript. A tick while a pass runs is skipped, so passes run back to
+ * back and each one only waits for the previous decode (about 0.1–0.3 s).
+ */
+const PARTIAL_MS = 250
 /** A model that has not answered `prepare` by then is loading or downloading; say so. */
 const LOADING_TOAST_MS = 1500
 
@@ -49,7 +52,7 @@ export default Plugin.define({
       const audio = new AudioContext({ sampleRate: RATE })
       const source = audio.createMediaStreamSource(stream)
       // ScriptProcessor needs no worklet module, which a plugin bundle cannot ship as a second file.
-      const processor = audio.createScriptProcessor(4096, 1, 1)
+      const processor = audio.createScriptProcessor(2048, 1, 1)
       const chunks: Int16Array[] = []
       processor.onaudioprocess = (event) => {
         const samples = event.inputBuffer.getChannelData(0)

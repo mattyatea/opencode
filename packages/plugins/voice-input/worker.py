@@ -29,7 +29,9 @@ SEGMENT_SEARCH = RATE * 6
 # which stops the model from inventing text on silence.
 VOICE_RMS = 0.006
 # Partial passes wait for this much audio; a fraction of a word decodes into guesses that flicker in the prompt.
-PARTIAL_MIN = RATE
+PARTIAL_MIN = RATE // 2
+# A pause this long after speech commits the segment, so each partial pass re-decodes only the current phrase.
+PAUSE_FRAMES = 500 // 30
 
 replies = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
 # Native code writes to fd 1 directly; point it at stderr so only replies reach the plugin.
@@ -94,16 +96,41 @@ def split_point(audio):
     return start + int(np.argmin(rms)) * FRAME if len(rms) else len(audio)
 
 
+def pause_cut(audio):
+    # The middle of the last pause that follows speech, or None while the speaker has not paused.
+    voiced = frames_rms(audio) >= VOICE_RMS
+    if not voiced.any():
+        return None
+    cut, run = None, 0
+    for index in range(int(np.argmax(voiced)), len(voiced)):
+        run = 0 if voiced[index] else run + 1
+        if run == PAUSE_FRAMES:
+            cut = (index - PAUSE_FRAMES // 2) * FRAME
+    return cut
+
+
 def transcribe(request):
     session = sessions.setdefault(request["session"], {"committed": [], "segment": np.zeros(0, dtype=np.float32)})
     pcm = np.frombuffer(base64.b64decode(request.get("audio") or ""), dtype="<i2").astype(np.float32) / 32768.0
     session["segment"] = np.concatenate([session["segment"], pcm])
+    cut = None if request.get("final") else pause_cut(session["segment"])
+    if cut:
+        session["committed"].append(decode(session["segment"][:cut]))
+        session["segment"] = session["segment"][cut:]
+        session["shown"] = ""
+    elif frames_rms(session["segment"]).max(initial=0) < VOICE_RMS and len(session["segment"]) > RATE:
+        # Leading silence is never decoded; keep only its end so the next word starts a short segment.
+        session["segment"] = session["segment"][-RATE // 2 :]
     if not request.get("final") and len(session["segment"]) > SEGMENT_MAX:
         cut = split_point(session["segment"])
         session["committed"].append(decode(session["segment"][:cut]))
         session["segment"] = session["segment"][cut:]
     final = request.get("final")
     pending = "" if not final and len(session["segment"]) < PARTIAL_MIN else decode(session["segment"])
+    # A partial pass that hears nothing new keeps the last words shown, so the prompt never blinks empty mid-phrase.
+    if not final and not pending and session.get("shown"):
+        pending = session["shown"]
+    session["shown"] = pending
     text = join([*session["committed"], pending])
     if final:
         sessions.pop(request["session"], None)
