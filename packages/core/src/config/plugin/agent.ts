@@ -68,8 +68,12 @@ export const Plugin = define({
       )
       const configuredDefault = Config.latest(loaded.documents, "default_agent")
       if (configuredDefault !== undefined) editor.default(Agent.ID.make(configuredDefault))
+      const parallelToolCalls = Config.latest(loaded.documents, "tool_calls")?.parallel
       for (const current of editor.list()) {
-        editor.update(current.id, (agent) => agent.permissions.push(...permissions))
+        editor.update(current.id, (agent) => {
+          agent.permissions.push(...permissions)
+          if (parallelToolCalls !== undefined) agent.parallel_tool_calls = parallelToolCalls
+        })
       }
 
       for (const document of loaded.documents) {
@@ -99,6 +103,8 @@ export const Plugin = define({
             if (item.hidden !== undefined) agent.hidden = item.hidden
             if (item.color !== undefined) agent.color = item.color
             if (item.steps !== undefined) agent.steps = item.steps
+            if (item.parallel_tool_calls !== undefined)
+              agent.parallel_tool_calls = item.parallel_tool_calls
             if (item.permissions !== undefined) {
               agent.permissions.push(...expandPermissions(item.permissions, global.home))
             }

@@ -19,6 +19,16 @@ export type Name = typeof Name.Type
 export const Color = Schema.String.annotate({ identifier: "Agent.Color" })
 export type Color = typeof Color.Type
 
+/**
+ * Whether the tool calls of one model step run at the same time. `"auto"` (default) runs them concurrently without
+ * changing the provider request, `true` also asks the provider to enable parallel tool calling, and `false` runs them
+ * one at a time.
+ */
+export const ParallelToolCalls = Schema.Union([Schema.Boolean, Schema.Literal("auto")]).annotate({
+  identifier: "Agent.ParallelToolCalls",
+})
+export type ParallelToolCalls = typeof ParallelToolCalls.Type
+
 export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
   id: ID,
@@ -31,6 +41,7 @@ export const Info = Schema.Struct({
   hidden: Schema.Boolean,
   color: Color.pipe(optional),
   steps: PositiveInt.pipe(optional),
+  parallel_tool_calls: ParallelToolCalls.pipe(optional),
   permissions: Permission.Ruleset,
 })
   .annotate({ identifier: "Agent.Info" })
