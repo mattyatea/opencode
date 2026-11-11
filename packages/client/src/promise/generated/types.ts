@@ -33,6 +33,8 @@ export type ProviderEncoding = "zstd" | "gzip" | "none"
 
 export type AgentColor = string
 
+export type AgentParallelToolCalls = boolean | "auto"
+
 export type PermissionEffect = "allow" | "deny" | "ask"
 
 export type PluginID = string
@@ -2445,6 +2447,7 @@ export type ConfigEntry =
             hidden?: boolean
             color?: string
             steps?: number
+            parallel_tool_calls?: AgentParallelToolCalls
             disabled?: boolean
             permissions?: PermissionRuleset
           }
@@ -2478,6 +2481,7 @@ export type ConfigEntry =
           image?: { auto_resize?: boolean; max_width?: number; max_height?: number; max_base64_bytes?: number }
         }
         tool_output?: { max_lines?: number; max_bytes?: number }
+        tool_calls?: { parallel?: AgentParallelToolCalls }
         mcp?: {
           timeout?: { startup?: number; catalog?: number; execution?: number }
           servers?: {
@@ -2723,6 +2727,7 @@ export type AgentInfo = {
   hidden: boolean
   color?: AgentColor
   steps?: number
+  parallel_tool_calls?: AgentParallelToolCalls
   permissions: PermissionRuleset
 }
 

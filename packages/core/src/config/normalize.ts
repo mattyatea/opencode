@@ -213,6 +213,7 @@ export function normalize(input: unknown): Result {
     timezone: Info.fields.timezone,
     snapshots: Info.fields.snapshots,
     media: Info.fields.media,
+    tool_calls: Info.fields.tool_calls,
     tool_output: Info.fields.tool_output,
     websearch: Info.fields.websearch,
     worktree: Info.fields.worktree,

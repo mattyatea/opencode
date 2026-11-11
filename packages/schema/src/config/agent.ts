@@ -1,6 +1,7 @@
 export * as ConfigAgent from "./agent.js"
 
 import { Effect, Schema } from "effect"
+import { ParallelToolCalls } from "../agent.js"
 import { Permission } from "../permission.js"
 import { optional, PositiveInt } from "../schema.js"
 import { ConfigModel } from "./model.js"
@@ -21,6 +22,9 @@ export class Info extends Schema.Class<Info>("Config.Agent")({
     optional,
   ),
   steps: PositiveInt.pipe(optional),
+  parallel_tool_calls: ParallelToolCalls.pipe(optional).annotate({
+    description: "Override the global tool_calls.parallel setting for this agent",
+  }),
   disabled: Schema.Boolean.pipe(optional),
   permissions: Permission.Ruleset.pipe(optional),
 }) {}
