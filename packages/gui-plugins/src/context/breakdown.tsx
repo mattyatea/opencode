@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js"
+import { isServiceUnavailableError } from "@opencode/client/promise"
 import { createLatest, usePanel, usePlugin, type MountedSession } from "@opencode/plugin/gui"
 import { Icon } from "@opencode/ui/icon"
 import { useI18n } from "@opencode/ui/context/i18n"
@@ -67,12 +68,22 @@ export function ContextWindow(props: { session: MountedSession }) {
     ].join(":")
   })
 
-  const breakdown = createLatest(revision, (_revision, signal) => {
+  const breakdown = createLatest(revision, async (_revision, signal) => {
     const sessionID = props.session.id
 
-    if (!sessionID || !panel.visible()) return Promise.resolve(undefined)
+    if (!sessionID || !panel.visible()) return undefined
 
-    return props.session.server.client.experimental.session.contextBreakdown({ sessionID }, { signal })
+    // A cold Location answers 503 until its plugins finish activating. Keep the panel estimating through that
+    // window instead of asking the user to retry a server that is still starting.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await props.session.server.client.experimental.session.contextBreakdown({ sessionID }, { signal })
+      } catch (error) {
+        if (signal.aborted || !isServiceUnavailableError(error) || attempt >= 8) throw error
+        await new Promise((resolve) => setTimeout(resolve, 1_000 + attempt * 1_000))
+        if (signal.aborted) throw error
+      }
+    }
   })
 
   const compact = createMemo(
