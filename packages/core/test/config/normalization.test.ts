@@ -57,8 +57,10 @@ function withoutEmptyCompatibilityContainers(input: Record<string, unknown>) {
 }
 
 describe("ConfigNormalize", () => {
-  test.each([true, false])("preserves the paste files experiment when set to %s", (enabled) => {
-    expect(decoded({ experimental: { paste_files: enabled } }).experimental?.paste_files).toBe(enabled)
+  test.each(["paste_files", "json_read", "codemode_tools"] as const)("preserves the %s experiment", (key) => {
+    for (const enabled of [true, false]) {
+      expect(decoded({ experimental: { [key]: enabled } }).experimental?.[key]).toBe(enabled)
+    }
   })
 
   test("accepts tool.use without losing statement order", () => {

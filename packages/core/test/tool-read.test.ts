@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { Effect, Exit, Layer, Result, Stream } from "effect"
+import { Effect, Exit, Layer, PubSub, Ref, Result, Stream } from "effect"
+import { Event } from "@opencode/schema/event"
 import { Document, Info } from "@opencode/schema/config"
 import { ConfigExperimental } from "@opencode/schema/config/experimental"
 import { CodeModeTools } from "@opencode/core/tool/plugin/codemode"
@@ -30,11 +31,13 @@ import { Environment } from "@opencode/core/environment/index"
 import { testEffect } from "./lib/effect"
 import { permissionLayer } from "./lib/permission"
 import { toolIdentity, executeTool, registerToolPlugin, toolDefinitions } from "./lib/tool"
+import { advance } from "./lib/clock"
 
 const readToolNode = makeLocationNode({
   name: "test/read-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(ReadTool.Plugin)),
   deps: [
+    Config.node,
     Tool.node,
     ReadToolFileSystem.node,
     FileAccess.node,
@@ -118,15 +121,29 @@ const unavailableImage = Layer.mock(Image.Service, {
 })
 const readLayer = (imageLayer: Layer.Layer<Image.Service>) =>
   Layer.mergeAll(
-    AppNodeBuilder.build(LayerNode.group([Tool.node, readToolNode, Skill.node]), [
-      ReadToolFileSystem.node.replace(reader),
-      Environment.node.replace(hostEnvironmentLayer),
-      Permission.node.replace(permission),
-      Config.node.replace(config),
-      Image.node.replace(imageLayer),
-      Location.node.replace(locationLayer),
-      Global.node.replace(Global.layerWith({ data: Global.Path.data })),
-    ]),
+    AppNodeBuilder.build(
+      LayerNode.group([
+        Tool.node,
+        readToolNode,
+        Skill.node,
+        ReadToolFileSystem.node,
+        FileAccess.node,
+        Permission.node,
+        SessionInstructions.node,
+        FSUtil.node,
+        Location.node,
+        Environment.node,
+      ]),
+      [
+        ReadToolFileSystem.node.replace(reader),
+        Environment.node.replace(hostEnvironmentLayer),
+        Permission.node.replace(permission),
+        Config.node.replace(config),
+        Image.node.replace(imageLayer),
+        Location.node.replace(locationLayer),
+        Global.node.replace(Global.layerWith({ data: Global.Path.data })),
+      ],
+    ),
     // Merge by reference so Config.Test and Image.Service resolve to the memoized instances.
     config,
     imageLayer,
@@ -181,7 +198,174 @@ const enableCodeMode = registerToolPlugin(CodeModeTools.Plugin, { event: { subsc
   ),
 )
 
+const enableJsonRead = registerToolPlugin(ReadTool.Plugin, { event: { subscribe: () => Stream.never } }).pipe(
+  Effect.provide(
+    Layer.mock(Config.Service)({
+      entries: () =>
+        Effect.succeed([
+          new Document({
+            type: "document",
+            info: new Info({ experimental: new ConfigExperimental.Info({ json_read: true }) }),
+          }),
+        ]),
+    }),
+  ),
+)
+
 describe("ReadTool", () => {
+  it.effect("offers opt-in JSON selection natively and inside Code Mode with the same read permission", () =>
+    Effect.gen(function* () {
+      readResult = {
+        type: "file",
+        uri: "file:///data.json",
+        encoding: "utf8",
+        mime: "application/json",
+        content: JSON.stringify(
+          Array.from({ length: 100 }, (_, id) => ({ id, active: id % 2 === 0, amount: id })),
+          null,
+          2,
+        ),
+      }
+      const registry = yield* Tool.Service
+      expect(JSON.stringify(yield* toolDefinitions(registry))).not.toContain('"json"')
+      yield* enableJsonRead
+      expect(JSON.stringify(yield* toolDefinitions(registry))).toContain('"json"')
+      const request = {
+        sessionID,
+        ...toolIdentity,
+        call: { type: "tool-call" as const, id: "json-read", name: "read", input: { path: "data.json" } },
+      }
+      const preview = yield* executeTool(registry, request)
+      expect(preview.output).toMatchObject({ content: expect.stringContaining('"json-structure"') })
+      const selected = yield* executeTool(registry, {
+        ...request,
+        call: {
+          ...request.call,
+          input: {
+            path: "data.json",
+            json: {
+              mode: "query",
+              where: [{ field: "/active", op: "eq", value: true }],
+              fields: ["/amount"],
+              limit: 200,
+            },
+          },
+        },
+      })
+      const page = JSON.parse(selected.output.content)
+      expect(page).toMatchObject({ matched: 50, shown: 50, truncated: false })
+      expect(page.rows[0]).toEqual({ index: 0, values: { "/amount": 0 }, missing: [] })
+      expect(page.rows.at(-1)).toEqual({ index: 98, values: { "/amount": 98 }, missing: [] })
+      const full = yield* executeTool(registry, {
+        ...request,
+        call: { ...request.call, input: { path: "data.json", json: { mode: "full" } } },
+      })
+      expect(full.output.content).toBe(readResult.content)
+      yield* enableCodeMode
+      const computed = yield* executeTool(registry, {
+        ...request,
+        call: {
+          ...request.call,
+          name: "execute",
+          input: {
+            code: 'const file=await tools.read({path:"data.json",json:{mode:"query",where:[{field:"/active",op:"eq",value:true}],fields:["/amount"],limit:200}});const page=JSON.parse(file.content);return {count:page.matched,total:page.rows.reduce((sum,row)=>sum+row.values["/amount"],0),truncated:page.truncated};',
+          },
+        },
+      })
+      expect(computed).toMatchObject({
+        status: "completed",
+        output: { output: JSON.stringify({ count: 50, total: 2450, truncated: false }, null, 2) },
+      })
+      expect(computed.content).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('"json-selection"') })]),
+      )
+      expect(assertions.filter((assertion) => assertion.action === "read")).toHaveLength(4)
+    }),
+  )
+
+  it.effect("reloads the JSON schema and behavior without mutating captured snapshots", () =>
+    Effect.gen(function* () {
+      const document = (json_read: boolean) =>
+        new Document({ type: "document", info: new Info({ experimental: new ConfigExperimental.Info({ json_read }) }) })
+      const entries = yield* Ref.make([document(false)])
+      const event = { id: Event.ID.create(), created: 0, type: "config.updated" as const, data: {} }
+      const updates = yield* PubSub.unbounded<typeof event>()
+      yield* registerToolPlugin(ReadTool.Plugin, { event: { subscribe: () => Stream.fromPubSub(updates) } }).pipe(
+        Effect.provide(Layer.mock(Config.Service)({ entries: () => Ref.get(entries) })),
+      )
+      const registry = yield* Tool.Service
+      const states: boolean[] = []
+      yield* registry.transform((editor) => {
+        states.push(editor.get("read")?.input !== ReadTool.Input)
+      })
+      const before = yield* registry.snapshot()
+      yield* Ref.set(entries, [document(true)])
+      yield* PubSub.publish(updates, event)
+      yield* advance(() => states.at(-1) === true)
+      const enabled = yield* registry.snapshot()
+      expect(JSON.stringify(before.definitions)).not.toContain('"json"')
+      expect(JSON.stringify(enabled.definitions)).toContain('"json"')
+      yield* Ref.set(entries, [document(false)])
+      yield* PubSub.publish(updates, event)
+      yield* advance(() => states.at(-1) === false)
+      expect(JSON.stringify((yield* registry.snapshot()).definitions)).not.toContain('"json"')
+      readResult = {
+        type: "file",
+        uri: "file:///data.json",
+        encoding: "utf8",
+        mime: "application/json",
+        content: JSON.stringify({ text: "x".repeat(2100) }),
+      }
+      expect(
+        yield* enabled.execute({
+          sessionID,
+          ...toolIdentity,
+          call: { type: "tool-call", id: "json-stale", name: "read", input: { path: "data.json" } },
+        }),
+      ).toMatchObject({ output: { content: expect.stringContaining('"json-structure"') } })
+    }),
+  )
+
+  it.effect("does not transform explicit pages, truncated input, non-JSON or denied reads", () =>
+    Effect.gen(function* () {
+      yield* enableJsonRead
+      const registry = yield* Tool.Service
+      const call = (input: object) => ({
+        sessionID,
+        ...toolIdentity,
+        call: { type: "tool-call" as const, id: "json-bypass", name: "read", input },
+      })
+      readResult = {
+        type: "file",
+        uri: "file:///data.json",
+        encoding: "utf8",
+        mime: "application/json",
+        content: JSON.stringify({ text: "x".repeat(2100) }),
+      }
+      const content = readResult.content
+      expect((yield* executeTool(registry, call({ path: "data.json", offset: 1 }))).output.content).toBe(content)
+      expect((yield* executeTool(registry, call({ path: "data.txt" }))).output.content).toBe(content)
+      readResult = new ReadToolFileSystem.TextPage({
+        type: "text-page",
+        content,
+        mime: "application/json",
+        offset: 1,
+        truncated: true,
+        next: 2,
+      })
+      expect(yield* executeTool(registry, call({ path: "data.json", json: { mode: "query" } }))).toMatchObject({
+        output: { type: "text-page", content, truncated: true, next: 2 },
+        metadata: { truncated: true },
+      })
+      readCalls.length = 0
+      allow = false
+      expect(yield* executeTool(registry, call({ path: "data.json", json: { mode: "get" } }))).toMatchObject({
+        status: "error",
+      })
+      expect(readCalls).toHaveLength(0)
+    }),
+  )
+
   it.effect("reads and aggregates JSON without returning the source payload", () =>
     Effect.gen(function* () {
       readResult = {

@@ -51,6 +51,8 @@ export interface MockServerConfig {
   server?: string
   // The machine name `/api/info` reports; omitted like a server that predates it.
   hostname?: string
+  // Fail health probes while a scenario simulates a temporarily disconnected server.
+  infoFailures?: () => boolean
   provider: Resolvable<MockProviderCatalog>
   integrations?: Resolvable<unknown[]>
   // Runs on POST /api/credential/:id/activate; the fixture swaps its integrations and catalog to the new account.
@@ -852,7 +854,9 @@ function mockHandlers(
             }
           }),
         info: () =>
-          Effect.succeed({
+          config.infoFailures?.()
+            ? Effect.fail(new MockInternal({ message: "Server temporarily unavailable" }))
+            : Effect.succeed({
             version: "2.0.0",
             pid: 1,
             hostname: config.hostname,

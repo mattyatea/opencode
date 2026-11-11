@@ -322,6 +322,70 @@ return {
 - Return full content when it is small or every row needs semantic review.
   Code Mode does not automatically summarize JSON or guarantee fewer tokens.
 
+#### Select JSON or compute on it
+
+Enable JSON structure previews and exact selection on `read`. Add `codemode_tools`
+to use the same selection inside `execute`; without it, `read` stays native.
+
+```json
+{
+  "experimental": {
+    "json_read": true,
+    "codemode_tools": true
+  }
+}
+```
+
+Choose selected text for interpretation, or compute numeric results inside Code
+Mode before returning them. This does not install a task classifier or guarantee
+lower subscription usage.
+
+```js
+const file = await tools.read({
+  path: "orders.json",
+  json: {
+    mode: "query",
+    where: [{ field: "/status", op: "eq", value: "paid" }],
+    fields: ["/id", "/total"],
+    limit: 200,
+  },
+})
+const page = JSON.parse(file.content)
+if (page.error) return page
+if (page.truncated) return { next: page.next, matched: page.matched, rows: page.rows }
+return {
+  count: page.matched,
+  total: page.rows.reduce((sum, row) => sum + row.values["/total"], 0),
+}
+```
+
+- Complete canonical `.json` files above 2,000 UTF-8 bytes return types, field
+  names, and array counts by default. Small JSON stays whole. A preview has no
+  values and does not establish that a nested value is absent.
+- `path`, projected fields, and condition fields use RFC 6901 pointers: root is
+  `""`, `~` becomes `~0`, and `/` becomes `~1`. Conditions are ANDed and distinguish
+  missing keys from `null`, `false`, and `0`.
+- Pages include original row indices, projected missing fields, `matched`,
+  `shown`, `truncated`, and `next`. Follow `next` until `truncated` is false before
+  claiming to have examined every matching row. The default page is 20 rows,
+  the maximum is 200, and generated JSON results are bounded to 12,000 characters.
+- Explicit line offsets or limits, paged files, media, and other file types keep
+  ordinary read behavior. Existing read and tool-output limits still apply.
+  Permission checks run before JSON processing.
+- Automatic preview preserves the original when parsing would erase duplicate
+  keys, round a number, or change number spellings. Explicit selection instead
+  returns an error asking for the original. The feature defaults to disabled;
+  config changes update the available schema without restarting.
+
+Retrieve one exact value with an explicit `exists` flag, or return every relevant
+text for all-row semantic review instead of sampling:
+
+```js
+const value = await tools.read({ path: "settings.json", json: { mode: "get", path: "/enabled" } })
+const cases = await tools.read({ path: "cases.json", json: { mode: "full" } })
+return { setting: JSON.parse(value.content), cases: cases.content }
+```
+
 ### Sessions
 
 The `opencode` Code Mode namespace contains session utilities:

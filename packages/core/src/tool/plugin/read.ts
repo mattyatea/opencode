@@ -9,6 +9,9 @@ import { Location } from "../../location.js"
 import { FileAccess } from "../../file-access.js"
 import { Permission } from "../../permission.js"
 import { SessionInstructions } from "../../session/instructions.js"
+import { Config } from "../../config.js"
+import { ConfigEntryObserver } from "../../config/plugin/entry-observer.js"
+import { ReadJson } from "../read-json.js"
 import { AbsolutePath } from "../../schema.js"
 import { Skill } from "../../skill.js"
 import { SkillDiscovery } from "../../skill/discovery.js"
@@ -28,6 +31,13 @@ const LocationInput = Schema.Struct({
 })
 export const Input = LocationInput
 type Missing = { input: string; requested: FileAccess.Target; context: FileAccess.Invocation }
+const JsonInput = Schema.Struct({
+  ...Input.fields,
+  json: Schema.optionalKey(ReadJson.Input).annotate({
+    description:
+      "Optional JSON retrieval. Without it, complete JSON above 2000 UTF-8 bytes returns structure only; small JSON stays whole. Use get/query for exact values or full for every relevant text. Ordinary offset/limit bypasses JSON processing.",
+  }),
+})
 const Output = Schema.Union([ReadToolFileSystem.FileContent, ReadToolFileSystem.TextPage, ReadToolFileSystem.ListPage])
 
 export const Plugin = {
@@ -41,17 +51,20 @@ export const Plugin = {
     const fs = yield* FSUtil.Service
     const location = yield* Location.Service
     const environment = yield* Environment.Service
+    const config = yield* Config.Service
+    const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ctx.tool.reload())
 
     yield* ctx.tool
-      .transform((editor) =>
+      .transform((editor) => {
+        const json = Config.latest(loaded.entries, "experimental")?.json_read === true
         editor.add({
           name,
           options: { codemode: false },
           description:
             "Read the contents of a file or directory. Supports text files, images, and PDFs. Images and PDFs are presented directly to the model. Each text line is prefixed by its 1-based line number as <line>: <content>. The prefix is for reference and is not part of the file content. Directory entries are returned one per line. Use offset and limit to read large files or directories in sections. Prefer one larger read over many small slices, and use grep to find specific content in large files.",
-          input: Input,
+          input: json ? JsonInput : Input,
           output: Output,
-          execute: (input, context) => {
+          execute: (input: typeof JsonInput.Type, context) => {
             return Effect.gen(function* () {
               if (Skill.isUri(input.path)) {
                 const parsed = parseSkillUri(input.path)
@@ -154,11 +167,26 @@ export const Plugin = {
               )
               return { output: result.content, path: result.path }
             }).pipe(
-              Effect.map((result) => ({
-                output: result.output,
-                content: toModelContent(result.path, input.offset, result.output),
-                metadata: { truncated: result.output.type === "file" ? false : result.output.truncated },
-              })),
+              Effect.map((result) => {
+                const selected =
+                  json &&
+                  input.offset === undefined &&
+                  input.limit === undefined &&
+                  result.output.type === "file" &&
+                  result.output.encoding === "utf8" &&
+                  result.path.toLowerCase().endsWith(".json")
+                    ? ReadJson.read(result.output.content, input.json)
+                    : undefined
+                const output = selected === undefined ? result.output : { ...result.output, content: selected }
+                return {
+                  output,
+                  content:
+                    selected === undefined
+                      ? toModelContent(result.path, input.offset, result.output)
+                      : [{ type: "text" as const, text: selected }],
+                  metadata: { truncated: result.output.type === "file" ? false : result.output.truncated },
+                }
+              }),
               Effect.mapError((error) => {
                 if (error instanceof ToolFailure) return error
                 const message =
@@ -172,8 +200,8 @@ export const Plugin = {
               }),
             )
           },
-        }),
-      )
+        })
+      })
       .pipe(Effect.orDie)
 
     const alternatePath = Effect.fn("ReadTool.alternatePath")(function* (absolute: string) {
