@@ -5,6 +5,7 @@ import { createStore } from "solid-js/store"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useTabs } from "@/shell/tabs/tabs"
 import { useGlobal, useServerCtx } from "@/runtime/server/runtime"
+import { ServerProvider } from "@/runtime/server/current"
 import { ServerConnection } from "@/runtime/server/registry"
 import type { LocalProject } from "@/shell/state/layout"
 import { DialogServer } from "@/servers/connect/dialog"
@@ -296,13 +297,23 @@ function RootSettings() {
       <Tabs.Content value="about" class="settings-panel settings-about">
         <SettingsAbout active={surface.view().tab === "about"} />
       </Tabs.Content>
+      {/* Keep recorded usage mounted while a server reconnects, rather than restarting its reads on every probe. */}
+      <Show when={surface.server()?.connection} keyed>
+        {(server) => (
+          <ServerProvider conn={server}>
+            <Tabs.Content value="usage" class="settings-panel">
+              <SettingsUsage active={surface.view().tab === "usage"} headerAction={<SettingsServerSwitcher />} />
+            </Tabs.Content>
+          </ServerProvider>
+        )}
+      </Show>
       <Show
         when={reachable()}
         keyed
         fallback={
           <Show when={surface.server()}>
             {(entry) => (
-              <For each={serverTabs}>
+              <For each={serverTabs.filter((item) => item.value !== "usage")}>
                 {(item) => (
                   <Tabs.Content value={item.value} class="settings-panel">
                     <SettingsServerUnavailable
@@ -322,9 +333,6 @@ function RootSettings() {
       >
         {(server) => (
           <SettingsServerDataScope server={server}>
-            <Tabs.Content value="usage" class="settings-panel">
-              <SettingsUsage active={surface.view().tab === "usage"} headerAction={<SettingsServerSwitcher />} />
-            </Tabs.Content>
             <Tabs.Content value="providers" class="settings-panel">
               <SettingsProviders
                 directory={undefined}

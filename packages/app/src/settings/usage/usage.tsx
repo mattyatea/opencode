@@ -1,11 +1,9 @@
 import { Button } from "@opencode/ui/button"
 import { Loader } from "@opencode/ui/loader"
-import { useDialog } from "@opencode/ui/context/dialog"
 import { createMemo, createResource, For, Show, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useServerSDK } from "@/runtime/server/client"
-import { UsageDialogContent } from "@/usage/dialog"
 import { useUsageFormat } from "@/usage/format"
 import { TokenUsage } from "@opencode/schema/token-usage"
 import "./usage.css"
@@ -13,7 +11,6 @@ import "./usage.css"
 export function SettingsUsage(props: { active: boolean; headerAction?: JSX.Element }) {
   const language = useLanguage()
   const sdk = useServerSDK()
-  const dialog = useDialog()
   const format = useUsageFormat()
   const [state, setState] = createStore({ days: 7, sessions: 10 })
   const [stats, actions] = createResource(
@@ -32,16 +29,11 @@ export function SettingsUsage(props: { active: boolean; headerAction?: JSX.Eleme
       return { days, value: result }
     },
   )
-  const [limits, limitActions] = createResource(
-    () => props.active,
-    async () => (await sdk.api.experimental.usage.limits()).data,
-  )
   // A settings read must not suspend the whole route or display the previous period as the new one.
   const info = () =>
     (stats.state === "ready" || stats.state === "refreshing") && stats.latest?.days === state.days
       ? stats.latest.value
       : undefined
-  const allowance = () => (limits.state === "ready" || limits.state === "refreshing" ? limits.latest : undefined)
   const number = (value: number) => new Intl.NumberFormat(language.intl()).format(value)
   const toolUsage = () => {
     const tools = info()?.tools
@@ -68,7 +60,6 @@ export function SettingsUsage(props: { active: boolean; headerAction?: JSX.Eleme
   const maximum = () => Math.max(1, ...activity().map((day) => day.steps))
   const refresh = () => {
     void actions.refetch()
-    void limitActions.refetch()
   }
 
   function Section(section: { title: string; children: JSX.Element; note?: string }) {
@@ -109,63 +100,11 @@ export function SettingsUsage(props: { active: boolean; headerAction?: JSX.Eleme
               )}
             </For>
           </div>
-          <Button variant="ghost" disabled={stats.loading || limits.loading} onClick={refresh}>
+          <Button variant="ghost" disabled={stats.loading} onClick={refresh}>
             {language.t("settings.usage.refresh")}
           </Button>
         </div>
-        <Section title={language.t("settings.usage.limits")} note={language.t("settings.usage.limitsNote")}>
-          <Show when={limits.loading}>
-            <Loader />
-          </Show>
-          <Show when={limits.error}>
-            <p class="usage-note" role="alert">
-              {language.t("settings.usage.limitError")}
-            </p>
-          </Show>
-          <Show when={!limits.loading && !limits.error && !allowance()}>
-            <p class="usage-note">{language.t("settings.usage.limitsUnavailable")}</p>
-          </Show>
-          <Show when={allowance()}>
-            {(value) => (
-              <div class="usage-card">
-                <strong>
-                  <bdi>{value().workspace.name ?? value().workspace.id}</bdi>
-                </strong>
-                <Show when={value().go}>
-                  {(go) => (
-                    <For each={["rolling", "weekly", "monthly"] as const}>
-                      {(window) => (
-                        <div class="usage-meter">
-                          <div>
-                            <span>{language.t(`usage.go.${window}`)}</span>
-                            <span>{language.t("usage.go.used", { percent: Math.round(go()[window].percent) })}</span>
-                          </div>
-                          <div
-                            class="usage-meter-track"
-                            role="meter"
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                            aria-valuenow={go()[window].percent}
-                            aria-label={language.t(`usage.go.${window}`)}
-                          >
-                            <span style={{ width: `${go()[window].percent}%` }} />
-                          </div>
-                          <span class="usage-note">
-                            {language.t("settings.usage.resets", { time: format.time(go()[window].resetsAt) })}
-                          </span>
-                        </div>
-                      )}
-                    </For>
-                  )}
-                </Show>
-                <Button variant="ghost" onClick={() => dialog.show(() => <UsageDialogContent info={value()} />)}>
-                  {language.t("settings.usage.limitDetails")}
-                </Button>
-              </div>
-            )}
-          </Show>
-        </Section>
-        <Show when={stats.loading}>
+        <Show when={stats.loading && !info()}>
           <div role="status">
             <Loader />
           </div>
