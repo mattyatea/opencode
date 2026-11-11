@@ -100,7 +100,6 @@ function ComposerStory(props: {
     setVisibility() {},
     variant: {
       configured: () => STORY_MODEL.variant,
-      selected: () => story.variant,
       current: () => story.variant,
       list: () => ["balanced", "high"],
       set: (variant: string | undefined) => setStory("variant", variant ?? "balanced"),
@@ -243,6 +242,8 @@ function ComposerStory(props: {
               undoing: () => false,
               cancelEdit() {},
               editFirst: () => false,
+              first() {},
+              steerFirst() {},
             }
           : undefined,
         onSubmit: () => {
