@@ -8,6 +8,7 @@ import {
   fromPathname,
   localeFromCookieHeader,
   localeFromRequest,
+  localized,
   route,
   strip,
 } from "~/lib/language"
@@ -15,7 +16,7 @@ import { absoluteUrl, markdownHeaders } from "~/lib/markdown"
 import { changelogEntryJson } from "~/lib/changelog-releases"
 import { findPageMarkdown, renderPageMarkdown } from "~/lib/page-markdown"
 import { htmlCache } from "~/lib/html-cache"
-import { oneStylesheet } from "~/lib/one-stylesheet"
+import { headLinks } from "~/lib/head-links"
 import securityTxt from "~/lib/legal/security.txt?raw"
 import humansTxt from "~/lib/humans.txt?raw"
 import { robotsTxt } from "~/lib/robots-txt"
@@ -23,13 +24,17 @@ import { mediaUrl } from "~/lib/media"
 import { legacyRedirect } from "~/lib/legacy"
 import { metaResponse } from "~/lib/meta"
 import { setSecurityHeaders } from "~/lib/security-headers"
-import { v1DocsOrigin } from "~/lib/docs"
+import { noindexDev } from "~/lib/noindex"
 import { docsMiddleware } from "~/docs/middleware"
+import { staticPages } from "~/static/render"
 
-// The V2 docs (everything under /v2, docs/middleware.ts), then the page middleware, then the HTML
-// cache headers and edge cache (lib/html-cache.ts), which see the request without its locale, then
-// one stylesheet per page (lib/one-stylesheet.ts), inside the cache so cached pages carry it too.
+// dev.opencode.ai's noindex header on every response (lib/noindex.ts), then the docs (everything
+// under /docs and /v1/docs, and the V1 docs' old host, docs/middleware.ts), then the page middleware, then the HTML cache headers and edge
+// cache (lib/html-cache.ts), which see the request without its locale, then the page's head links
+// (lib/head-links.ts), inside the cache so cached pages carry them too, then the pages rendered
+// without hydration (static/render.tsx), which answer before the app does.
 export default [
+  noindexDev,
   ...docsMiddleware,
   ...createMiddleware({
     async onRequest(event) {
@@ -42,6 +47,8 @@ export default [
       event.request = sanitizeServerActionRequest(event.request)
 
       const url = new URL(event.request.url)
+      // The V2 install script (`curl -fsSL https://opencode.ai/v2/install | bash`), always the latest.
+      if (url.pathname === "/v2/install") return installScript()
       // The brand zip lived at the site root; it is in the files bucket now (src/lib/media.ts).
       if (url.pathname === "/opencode-brand-assets.zip")
         return new Response(null, { status: 301, headers: { Location: mediaUrl(url.pathname) } })
@@ -66,15 +73,6 @@ export default [
       })
       if (legacy) return legacy
 
-      // The V1 docs live at /v1/docs on our domain (English only, so the locale is dropped). Their
-      // app is built for docs.opencode.ai/docs/ (absolute links and assets), so it can't be proxied
-      // under another path: the same path there, permanently, until it's built for /v1/docs.
-      if (/^\/v1\/docs(?=$|\/)/.test(url.pathname))
-        return new Response(null, {
-          status: 308,
-          headers: { Location: `${v1DocsOrigin}${url.pathname.slice("/v1/docs/".length)}${url.search}` },
-        })
-
       // The download page's content moved to /product and the product pages, and /products became
       // /product. The legacy redirects (/go, /zen, /enterprise, /black, /auth, …) are zone rules.
       const moved = movedPath(url.pathname)
@@ -87,15 +85,21 @@ export default [
 
       if (event.request.method !== "GET" && event.request.method !== "HEAD") return
       const path = url.pathname.length > 1 ? url.pathname.replace(/\/$/, "") : url.pathname
-      // One address per page: English pages have no /en prefix, the English-only changelog and font
+      // One address per page: English pages have no /en prefix, addresses that never take a locale
+      // (the docs, the Console, the English-only changelog and font; lib/language.ts `localized`)
       // have no locale prefix, and pages have no trailing slash, so those addresses redirect rather
       // than serve a duplicate. /data picks its own locale and keeps /en; the docs have their own
       // slash rules.
       const english = locale === "en" && !/^\/data(\/|$)/.test(path)
-      const englishOnly = locale !== null && /^\/(changelog|font)(?=$|[/.])/.test(path)
+      const englishOnly = locale !== null && !localized(path)
       const slash = requested.length > 1 && requested.endsWith("/") && !/^\/docs(\/|$)/.test(path)
       if (english || englishOnly || (slash && findPageMarkdown(path))) {
-        return new Response(null, { status: 301, headers: { Location: `${route(locale ?? "en", path)}${url.search}` } })
+        // Pages lose a trailing slash; other apps' addresses (the docs) keep theirs.
+        const target = findPageMarkdown(path) ? path : url.pathname
+        return new Response(null, {
+          status: 301,
+          headers: { Location: `${route(locale ?? "en", target)}${url.search}` },
+        })
       }
       // One release as JSON, at a stable URL per version (for the apps' "What's new").
       const release = path.match(/^\/changelog\/(v\d[\w.+-]*)\.json$/)?.[1]
@@ -142,13 +146,21 @@ export default [
     },
   }),
   htmlCache,
-  oneStylesheet,
+  headLinks,
+  staticPages,
 ]
 
 // The text files above change with releases and carry dates, so they are cached for an hour.
 const textHeaders = {
   "Content-Type": "text/plain; charset=utf-8",
   "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+}
+
+async function installScript() {
+  const response = await fetch("https://raw.githubusercontent.com/anomalyco/opencode/dev/install")
+  const headers = new Headers(response.headers)
+  headers.set("Cache-Control", "no-store")
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
 }
 
 /** Where an old URL (without its locale) lives now, or undefined when it has not moved. */

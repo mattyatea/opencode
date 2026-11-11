@@ -537,7 +537,7 @@ export function make(options: ClientOptions) {
             path: `/api/agent`,
             query: { location: input?.["location"] },
             successStatus: 200,
-            declaredStatuses: [400, 401, 404, 503],
+            declaredStatuses: [400, 401, 404],
             empty: false,
           },
           requestOptions,
@@ -825,7 +825,7 @@ export function make(options: ClientOptions) {
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/compact`,
-            body: { id: input["id"], delivery: input["delivery"] },
+            body: { id: input["id"], delivery: input["delivery"], experimental: input["experimental"] },
             successStatus: 200,
             declaredStatuses: [400, 401, 404, 409],
             empty: false,

@@ -16,11 +16,12 @@ import { Session } from "@opencode/core/session"
 import { SessionCompaction } from "@opencode/core/session/compaction"
 import { SessionEvent } from "@opencode/core/session/event"
 import { SessionMessage } from "@opencode/core/session/message"
+import { Model } from "@opencode/schema/model"
 import { SessionProjector } from "@opencode/core/session/projector"
 import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionRunnerModel } from "@opencode/core/session/runner/model"
 import { SessionStore } from "@opencode/core/session/store"
-import { Effect, Layer, LayerMap, Stream } from "effect"
+import { Effect, Layer, LayerMap, Schema, Stream } from "effect"
 import { testEffect } from "./lib/effect"
 import { globalProjectNode } from "./lib/project"
 
@@ -38,7 +39,7 @@ const client = Layer.mock(LLMClient.Service)({
   },
   generate: () => Effect.die("unused"),
 })
-const config = Layer.mock(Config.Service)({ entries: () => Effect.succeed([]), snapshot: () => [] })
+const config = Layer.mock(Config.Service)({ entries: () => Effect.succeed([]) })
 const models = Layer.mock(SessionRunnerModel.Service)({
   resolve: () =>
     Effect.succeed(
@@ -129,6 +130,27 @@ describe("Session.compact", () => {
 
       expect(admitted[1]?.id).toBe(admitted[0]?.id)
       expect(yield* session.inbox(created.id)).toHaveLength(1)
+    }),
+  )
+
+  it.effect("preserves provider handoffs and does not coalesce them with ordinary compaction", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const model = Schema.decodeUnknownSync(Model.Ref)({ providerID: "other", id: "next" })
+      for (const target of [model, undefined]) {
+        const created = yield* session.create({ location })
+        const first = yield* session.compact({ sessionID: created.id, experimental: { switchModel: target } })
+        const payload = { experimental: target ? { switchModel: target } : {} }
+        expect(first.payload).toEqual(payload)
+        expect(yield* session.inbox(created.id)).toMatchObject([{ id: first.id, payload }])
+        expect(
+          yield* session
+            .compact({ sessionID: created.id, experimental: { switchModel: target ? undefined : model } })
+            .pipe(Effect.flip),
+        ).toMatchObject({ _tag: "Session.CompactionConflictError" })
+        const second = yield* session.compact({ sessionID: created.id, experimental: { switchModel: target } })
+        expect(second.id).toBe(first.id)
+      }
     }),
   )
 

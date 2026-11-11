@@ -57,6 +57,12 @@ function withoutEmptyCompatibilityContainers(input: Record<string, unknown>) {
 }
 
 describe("ConfigNormalize", () => {
+  test.each(["paste_files", "json_read", "codemode_tools"] as const)("preserves the %s experiment", (key) => {
+    for (const enabled of [true, false]) {
+      expect(decoded({ experimental: { [key]: enabled } }).experimental?.[key]).toBe(enabled)
+    }
+  })
+
   test("accepts tool.use without losing statement order", () => {
     const policies = [
       { action: "tool.use", effect: "deny", resource: "shell:*" },
@@ -205,6 +211,22 @@ describe("ConfigNormalize", () => {
       providerID: "anthropic",
       model: "claude",
     })
+  })
+
+  test("keeps an inline variant in legacy model references", () => {
+    const result = normalized({
+      small_model: "anthropic/claude-haiku-4-5#low",
+      agent: { reviewer: { model: "anthropic/claude#high", variant: "low" } },
+      command: { review: { template: "review", model: "anthropic/claude#high" } },
+    })
+    expect(result.encoded.agents).toEqual({
+      reviewer: { model: { providerID: "anthropic", model: "claude", variant: "high" } },
+      title: { model: { providerID: "anthropic", model: "claude-haiku-4-5", variant: "low" } },
+    })
+    expect(result.encoded.commands).toEqual({
+      review: { template: "review", model: { providerID: "anthropic", model: "claude", variant: "high" } },
+    })
+    expect(result.diagnostics).toEqual([])
   })
 
   test("migrates the legacy small model to the title agent", () => {
@@ -554,6 +576,7 @@ describe("ConfigNormalize", () => {
           background_compaction: true,
           media_blob: true,
           part_rows: true,
+          codemode_vm: true,
           image_generate: { model: "openai/gpt-image-2" },
           subagent_depth: 0,
           location_idle_timeout: "2 hours",
@@ -567,6 +590,7 @@ describe("ConfigNormalize", () => {
         background_compaction: true,
         media_blob: true,
         part_rows: true,
+        codemode_vm: true,
         image_generate: { model: { providerID: "openai", model: "gpt-image-2" } },
         subagent_depth: 0,
         location_idle_timeout: "7200000 millis",

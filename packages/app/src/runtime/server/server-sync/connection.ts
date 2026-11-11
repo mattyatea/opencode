@@ -32,3 +32,11 @@ export function createConnectionSync(input: {
 
   return { handleEvent }
 }
+
+// Refresh mounted Locations and release the rest so they bootstrap on their next access.
+export function reconnectPlan(directories: string[], held: (directory: string) => boolean) {
+  return {
+    refresh: directories.filter(held),
+    release: directories.filter((directory) => !held(directory)),
+  }
+}

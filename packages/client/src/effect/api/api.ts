@@ -14,9 +14,9 @@ import type { SessionInbox } from "@opencode/schema/session-inbox"
 import type { PromptInput } from "@opencode/schema/prompt-input"
 import type { AgentAttachment } from "@opencode/schema/prompt"
 import type { FileDiff } from "@opencode/schema/file-diff"
+import type { Money } from "@opencode/schema/money"
 import type { Form } from "@opencode/schema/form"
 import type { DateTime } from "effect"
-import type { Money } from "@opencode/schema/money"
 import type { Skill } from "@opencode/schema/skill"
 import type { InstructionEntry } from "@opencode/schema/instruction-entry"
 import type { Schema } from "effect"
@@ -260,6 +260,7 @@ export type SessionCompactInput = {
   readonly sessionID: Session.ID
   readonly id?: SessionMessage.ID | undefined
   readonly delivery?: SessionInbox.Delivery | undefined
+  readonly experimental?: { readonly switchModel?: Model.Ref | undefined } | undefined
 }
 export type SessionCompactOutput = SessionInbox.Compaction
 export type SessionCompactOperation<E = never> = (input: SessionCompactInput) => Effect.Effect<SessionCompactOutput, E>
@@ -322,7 +323,16 @@ export type SessionInboxUpdateOperation<E = never> = (
 ) => Effect.Effect<SessionInboxUpdateOutput, E>
 
 export type SessionGenerateInput = { readonly sessionID: Session.ID; readonly prompt: string }
-export type SessionGenerateOutput = { readonly text: string }
+export type SessionGenerateOutput = {
+  readonly text: string
+  readonly tokens: {
+    readonly input: number
+    readonly output: number
+    readonly reasoning: number
+    readonly cache: { readonly read: number; readonly write: number }
+  }
+  readonly cost: Money.USD
+}
 export type SessionGenerateOperation<E = never> = (
   input: SessionGenerateInput,
 ) => Effect.Effect<SessionGenerateOutput, E>
@@ -553,6 +563,22 @@ export type ExperimentalSessionStatsOutput = {
     }
     readonly cost: Money.USD
   }>
+  readonly sessionUsage?:
+    | ReadonlyArray<{
+        readonly sessionID: Session.ID
+        readonly title: string
+        readonly parentID?: Session.ID | undefined
+        readonly steps: number
+        readonly tokens: {
+          readonly input: number
+          readonly output: number
+          readonly reasoning: number
+          readonly cache: { readonly read: number; readonly write: number }
+        }
+        readonly cost: Money.USD
+      }>
+    | undefined
+  readonly skills?: ReadonlyArray<{ readonly id: string; readonly calls: number }> | undefined
 }
 export type ExperimentalSessionStatsOperation<E = never> = (
   input?: ExperimentalSessionStatsInput,
@@ -746,6 +772,17 @@ export type ExperimentalSessionLogOutput =
             | { readonly directory: AbsolutePath; readonly workspaceID?: Workspace.ID | undefined }
             | undefined
           readonly data: { readonly sessionID: Session.ID; readonly title: string }
+        }
+      | {
+          readonly id: Event.ID
+          readonly created: number
+          readonly metadata?: { readonly [x: string]: unknown } | undefined
+          readonly type: "session.task.detached"
+          readonly durable: { readonly aggregateID: string; readonly seq: Event.Seq; readonly version: Event.Version }
+          readonly location?:
+            | { readonly directory: AbsolutePath; readonly workspaceID?: Workspace.ID | undefined }
+            | undefined
+          readonly data: { readonly sessionID: Session.ID }
         }
       | {
           readonly id: Event.ID
@@ -1445,7 +1482,7 @@ export type ExperimentalSessionLogOutput =
             | undefined
           readonly data: {
             readonly sessionID: Session.ID
-            readonly source: "title" | "compaction"
+            readonly source: "title" | "compaction" | "generate"
             readonly cost: Money.USD
             readonly tokens: {
               readonly input: number
@@ -2123,6 +2160,7 @@ export type EventSubscribeInput = {
         | "session.model.selected"
         | "session.moved"
         | "session.renamed"
+        | "session.task.detached"
         | "session.metadata.updated"
         | "session.permissions"
         | "session.viewed"

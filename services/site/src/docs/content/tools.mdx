@@ -63,6 +63,28 @@ The default limit is 100 matching lines and the search timeout is 30 seconds.
 Permission: `grep` with the requested pattern, not the search path, as its
 resource.
 
+Use `context` to include up to 20 neighboring lines on each side of a match.
+Overlapping windows are merged, and context lines are distinguished from matches:
+
+```json
+{ "pattern": "^export function lookup", "path": "src", "context": 5, "limit": 10 }
+```
+
+`limit` counts matching lines, not context. Context output has an additional cap
+of 1,000 total lines and 200,000 preview characters; a truncated result says so.
+Definitions and references are different searches: an import match alone does
+not establish a declaration or its behavior.
+
+Use `output: "files"` when you only need distinct matching paths:
+
+```json
+{ "pattern": "request timed out", "literal": true, "path": "src", "output": "files" }
+```
+
+In files mode, `limit` counts files and `context` is ignored. Keep the default
+content mode when code or values are needed, so locating files does not add
+unnecessary reads. Existing regex, case, include, and permission behavior is unchanged.
+
 ### Edit
 
 `edit` replaces text in an existing file. Supply `path`, `oldString`, and a
@@ -234,10 +256,135 @@ Read package.json and README.md in parallel, then return their relevant setup de
 
 The runtime has no direct filesystem access, imports, or timers. It provides
 `fetch` for HTTP requests; everything else goes through tools in its catalog.
-Denying `execute` with resource `*` removes Code Mode and every tool reached only
-through it, including MCP tools from servers that do not set `codemode: false`.
+Denying `execute` with resource `*` disables Code Mode and exposes its available
+tools directly instead. Each tool's own deny rules still remove it from the catalog.
 Nested built-in and MCP tools still enforce their own permissions, and plugin
 tools enforce the permissions they assert.
+
+For broad tool discovery, request candidate descriptions without signatures,
+then retrieve the chosen tool's full specification before invoking it:
+
+```js
+return search({ namespace: "my_server", query: "lookup", detail: "summary", limit: 3 })
+```
+
+```js
+return search({ query: "tools.my_server.lookup", detail: "full" })
+```
+
+The default is full detail. Summary mode preserves complete descriptions and
+pagination; it does not provide the argument schema needed to call a tool.
+Search matches words in the catalog, including Unicode text, but does not
+translate queries. An empty query or `"*"` explicitly browses the catalog.
+
+#### Process built-in results before returning them
+
+Enable the experimental acquisition tools in Code Mode with:
+
+```json
+{
+  "experimental": {
+    "codemode_tools": true
+  }
+}
+```
+
+This moves `read`, `grep`, `glob`, `shell`, `webfetch`, and `websearch` from the
+native tool list into the Code Mode catalog. Editing, questions, skills, subagents,
+and image generation stay native. The setting defaults to `false` and can be
+disabled without changing tool permissions.
+
+Fetch and select the needed facts in one `execute` call instead of returning an
+entire response for the model to process in another step:
+
+```js
+const [files, matches] = await Promise.all([
+  tools.glob({ pattern: "src/**/*.ts", limit: 100 }),
+  tools.grep({ pattern: "TODO", path: "src", limit: 100 }),
+])
+return {
+  files: files.items.map((file) => file.path),
+  matches: matches.items.map((match) => ({
+    path: match.entry.path,
+    line: match.line,
+    text: match.text,
+  })),
+  truncated: files.truncated || matches.truncated,
+}
+```
+
+- With this setting, `glob` and `grep` return `{ items, truncated }` rather than
+  an array, preserving the search completeness signal for scripts.
+- Capture and paging limits still apply. A truncated result is not a complete
+  dataset; keep the signal and narrow the request before computing exact totals.
+- Calls retain the original tool's permission checks, including shell approvals.
+  Images and PDFs read inside Code Mode still reach the model as attachments.
+- Return full content when it is small or every row needs semantic review.
+  Code Mode does not automatically summarize JSON or guarantee fewer tokens.
+
+#### Select JSON or compute on it
+
+Enable JSON structure previews and exact selection on `read`. Add `codemode_tools`
+to use the same selection inside `execute`; without it, `read` stays native.
+
+```json
+{
+  "experimental": {
+    "json_read": true,
+    "codemode_tools": true
+  }
+}
+```
+
+Choose selected text for interpretation, or compute numeric results inside Code
+Mode before returning them. This does not install a task classifier or guarantee
+lower subscription usage.
+
+```js
+const file = await tools.read({
+  path: "orders.json",
+  json: {
+    mode: "query",
+    where: [{ field: "/status", op: "eq", value: "paid" }],
+    fields: ["/id", "/total"],
+    limit: 200,
+  },
+})
+const page = JSON.parse(file.content)
+if (page.error) return page
+if (page.truncated) return { next: page.next, matched: page.matched, rows: page.rows }
+return {
+  count: page.matched,
+  total: page.rows.reduce((sum, row) => sum + row.values["/total"], 0),
+}
+```
+
+- Complete canonical `.json` files above 2,000 UTF-8 bytes return types, field
+  names, and array counts by default. Small JSON stays whole. A preview has no
+  values and does not establish that a nested value is absent.
+- `path`, projected fields, and condition fields use RFC 6901 pointers: root is
+  `""`, `~` becomes `~0`, and `/` becomes `~1`. Conditions are ANDed and distinguish
+  missing keys from `null`, `false`, and `0`.
+- Pages include original row indices, projected missing fields, `matched`,
+  `shown`, `truncated`, and `next`. Follow `next` until `truncated` is false before
+  claiming to have examined every matching row. The default page is 20 rows,
+  the maximum is 200, and generated JSON results are bounded to 12,000 characters.
+- Explicit line offsets or limits, paged files, media, and other file types keep
+  ordinary read behavior. Existing read and tool-output limits still apply.
+  Permission checks run before JSON processing.
+- Automatic preview preserves the original when parsing would erase duplicate
+  keys, round a number, or change number spellings. Explicit selection instead
+  returns an error asking for the original. The feature defaults to disabled;
+  config changes update the available schema without restarting.
+
+Retrieve one exact value with an explicit `exists` flag, or return every relevant
+text for all-row semantic review instead of sampling:
+
+```js
+const value = await tools.read({ path: "settings.json", json: { mode: "get", path: "/enabled" } })
+const cases = await tools.read({ path: "cases.json", json: { mode: "full" } })
+return { setting: JSON.parse(value.content), cases: cases.content }
+```
 
 ### Sessions
 

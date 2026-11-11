@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect } from "bun:test"
+import fs from "fs/promises"
 import path from "path"
-import { Effect, Exit, Layer, Result } from "effect"
+import { Effect, Exit, Layer, PubSub, Ref, Result, Stream } from "effect"
+import { Event } from "@opencode/schema/event"
+import { Document, Info } from "@opencode/schema/config"
+import { ConfigExperimental } from "@opencode/schema/config/experimental"
+import { CodeModeTools } from "@opencode/core/tool/plugin/codemode"
 import { Config } from "@opencode/core/config"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -14,7 +19,9 @@ import { Skill } from "@opencode/core/skill"
 import { AbsolutePath, RelativePath } from "@opencode/core/schema"
 import { Global } from "@opencode/util/global"
 import { FileAccess } from "@opencode/core/file-access"
+import { hostEnvironmentLayer } from "./fixture/environment"
 import { location } from "./fixture/location"
+import { withTempDir } from "./fixture/tmpdir"
 import { Tool } from "@opencode/core/tool"
 import { ReadTool } from "@opencode/core/tool/plugin/read"
 import { ReadToolFileSystem } from "@opencode/core/tool/read-filesystem"
@@ -24,11 +31,13 @@ import { Environment } from "@opencode/core/environment/index"
 import { testEffect } from "./lib/effect"
 import { permissionLayer } from "./lib/permission"
 import { toolIdentity, executeTool, registerToolPlugin, toolDefinitions } from "./lib/tool"
+import { advance } from "./lib/clock"
 
 const readToolNode = makeLocationNode({
   name: "test/read-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(ReadTool.Plugin)),
   deps: [
+    Config.node,
     Tool.node,
     ReadToolFileSystem.node,
     FileAccess.node,
@@ -37,6 +46,7 @@ const readToolNode = makeLocationNode({
     SessionInstructions.node,
     Skill.node,
     FSUtil.node,
+    Environment.node,
     Location.node,
   ],
 })
@@ -98,6 +108,7 @@ const permission = permissionLayer({
             ),
       ),
     ),
+  allows: (input) => Effect.succeed(allow && !input.resources.some((resource) => resource === deniedResource)),
 })
 const config = Config.testLayer()
 const imageLayer = AppNodeBuilder.build(Image.node)
@@ -110,23 +121,342 @@ const unavailableImage = Layer.mock(Image.Service, {
 })
 const readLayer = (imageLayer: Layer.Layer<Image.Service>) =>
   Layer.mergeAll(
-    AppNodeBuilder.build(LayerNode.group([Tool.node, readToolNode, Skill.node]), [
-      ReadToolFileSystem.node.replace(reader),
-      Permission.node.replace(permission),
-      Config.node.replace(config),
-      Image.node.replace(imageLayer),
-      Location.node.replace(locationLayer),
-      Global.node.replace(Global.layerWith({ data: Global.Path.data })),
-    ]),
+    AppNodeBuilder.build(
+      LayerNode.group([
+        Tool.node,
+        readToolNode,
+        Skill.node,
+        ReadToolFileSystem.node,
+        FileAccess.node,
+        Permission.node,
+        SessionInstructions.node,
+        FSUtil.node,
+        Location.node,
+        Environment.node,
+      ]),
+      [
+        ReadToolFileSystem.node.replace(reader),
+        Environment.node.replace(hostEnvironmentLayer),
+        Permission.node.replace(permission),
+        Config.node.replace(config),
+        Image.node.replace(imageLayer),
+        Location.node.replace(locationLayer),
+        Global.node.replace(Global.layerWith({ data: Global.Path.data })),
+      ],
+    ),
     // Merge by reference so Config.Test and Image.Service resolve to the memoized instances.
     config,
     imageLayer,
   )
 const it = testEffect(readLayer(imageLayer))
+// Real-file tests provide their own layer per temp folder.
+const live = testEffect(Layer.empty)
+// Reads through the real filesystem with the location at `directory`; returns the failure message.
+const readMissing = (directory: string, file: string) =>
+  Effect.gen(function* () {
+    const registry = yield* Tool.Service
+    const result = yield* executeTool(registry, {
+      sessionID,
+      ...toolIdentity,
+      call: { type: "tool-call", id: "call-suggest", name: "read", input: { path: file } },
+    })
+    return result.error?.message
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        AppNodeBuilder.build(LayerNode.group([Tool.node, readToolNode, Skill.node]), [
+          Environment.node.replace(hostEnvironmentLayer),
+          Permission.node.replace(permission),
+          Config.node.replace(config),
+          Image.node.replace(imageLayer),
+          Location.node.replace(
+            Layer.succeed(Location.Service, Location.Service.of(location({ directory: AbsolutePath.make(directory) }))),
+          ),
+          Global.node.replace(Global.layerWith({ data: Global.Path.data })),
+        ]),
+        config,
+        imageLayer,
+      ),
+    ),
+  )
+const write = (file: string) =>
+  Effect.promise(() => fs.mkdir(path.dirname(file), { recursive: true }).then(() => fs.writeFile(file, "x\n")))
 const itWithoutResizer = testEffect(readLayer(unavailableImage))
 const sessionID = Session.ID.make("ses_read_tool_test")
 
+const enableCodeMode = registerToolPlugin(CodeModeTools.Plugin, { event: { subscribe: () => Stream.never } }).pipe(
+  Effect.provide(
+    Layer.mock(Config.Service)({
+      entries: () =>
+        Effect.succeed([
+          new Document({
+            type: "document",
+            info: new Info({ experimental: new ConfigExperimental.Info({ codemode_tools: true }) }),
+          }),
+        ]),
+    }),
+  ),
+)
+
+const enableJsonRead = registerToolPlugin(ReadTool.Plugin, { event: { subscribe: () => Stream.never } }).pipe(
+  Effect.provide(
+    Layer.mock(Config.Service)({
+      entries: () =>
+        Effect.succeed([
+          new Document({
+            type: "document",
+            info: new Info({ experimental: new ConfigExperimental.Info({ json_read: true }) }),
+          }),
+        ]),
+    }),
+  ),
+)
+
 describe("ReadTool", () => {
+  it.effect("offers opt-in JSON selection natively and inside Code Mode with the same read permission", () =>
+    Effect.gen(function* () {
+      readResult = {
+        type: "file",
+        uri: "file:///data.json",
+        encoding: "utf8",
+        mime: "application/json",
+        content: JSON.stringify(
+          Array.from({ length: 100 }, (_, id) => ({ id, active: id % 2 === 0, amount: id })),
+          null,
+          2,
+        ),
+      }
+      const registry = yield* Tool.Service
+      expect(JSON.stringify(yield* toolDefinitions(registry))).not.toContain('"json"')
+      yield* enableJsonRead
+      expect(JSON.stringify(yield* toolDefinitions(registry))).toContain('"json"')
+      const request = {
+        sessionID,
+        ...toolIdentity,
+        call: { type: "tool-call" as const, id: "json-read", name: "read", input: { path: "data.json" } },
+      }
+      const preview = yield* executeTool(registry, request)
+      expect(preview.output).toMatchObject({ content: expect.stringContaining('"json-structure"') })
+      const selected = yield* executeTool(registry, {
+        ...request,
+        call: {
+          ...request.call,
+          input: {
+            path: "data.json",
+            json: {
+              mode: "query",
+              where: [{ field: "/active", op: "eq", value: true }],
+              fields: ["/amount"],
+              limit: 200,
+            },
+          },
+        },
+      })
+      const page = JSON.parse(selected.output.content)
+      expect(page).toMatchObject({ matched: 50, shown: 50, truncated: false })
+      expect(page.rows[0]).toEqual({ index: 0, values: { "/amount": 0 }, missing: [] })
+      expect(page.rows.at(-1)).toEqual({ index: 98, values: { "/amount": 98 }, missing: [] })
+      const full = yield* executeTool(registry, {
+        ...request,
+        call: { ...request.call, input: { path: "data.json", json: { mode: "full" } } },
+      })
+      expect(full.output.content).toBe(readResult.content)
+      yield* enableCodeMode
+      const computed = yield* executeTool(registry, {
+        ...request,
+        call: {
+          ...request.call,
+          name: "execute",
+          input: {
+            code: 'const file=await tools.read({path:"data.json",json:{mode:"query",where:[{field:"/active",op:"eq",value:true}],fields:["/amount"],limit:200}});const page=JSON.parse(file.content);return {count:page.matched,total:page.rows.reduce((sum,row)=>sum+row.values["/amount"],0),truncated:page.truncated};',
+          },
+        },
+      })
+      expect(computed).toMatchObject({
+        status: "completed",
+        output: { output: JSON.stringify({ count: 50, total: 2450, truncated: false }, null, 2) },
+      })
+      expect(computed.content).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('"json-selection"') })]),
+      )
+      expect(assertions.filter((assertion) => assertion.action === "read")).toHaveLength(4)
+    }),
+  )
+
+  it.effect("reloads the JSON schema and behavior without mutating captured snapshots", () =>
+    Effect.gen(function* () {
+      const document = (json_read: boolean) =>
+        new Document({ type: "document", info: new Info({ experimental: new ConfigExperimental.Info({ json_read }) }) })
+      const entries = yield* Ref.make([document(false)])
+      const event = { id: Event.ID.create(), created: 0, type: "config.updated" as const, data: {} }
+      const updates = yield* PubSub.unbounded<typeof event>()
+      yield* registerToolPlugin(ReadTool.Plugin, { event: { subscribe: () => Stream.fromPubSub(updates) } }).pipe(
+        Effect.provide(Layer.mock(Config.Service)({ entries: () => Ref.get(entries) })),
+      )
+      const registry = yield* Tool.Service
+      const states: boolean[] = []
+      yield* registry.transform((editor) => {
+        states.push(editor.get("read")?.input !== ReadTool.Input)
+      })
+      const before = yield* registry.snapshot()
+      yield* Ref.set(entries, [document(true)])
+      yield* PubSub.publish(updates, event)
+      yield* advance(() => states.at(-1) === true)
+      const enabled = yield* registry.snapshot()
+      expect(JSON.stringify(before.definitions)).not.toContain('"json"')
+      expect(JSON.stringify(enabled.definitions)).toContain('"json"')
+      yield* Ref.set(entries, [document(false)])
+      yield* PubSub.publish(updates, event)
+      yield* advance(() => states.at(-1) === false)
+      expect(JSON.stringify((yield* registry.snapshot()).definitions)).not.toContain('"json"')
+      readResult = {
+        type: "file",
+        uri: "file:///data.json",
+        encoding: "utf8",
+        mime: "application/json",
+        content: JSON.stringify({ text: "x".repeat(2100) }),
+      }
+      expect(
+        yield* enabled.execute({
+          sessionID,
+          ...toolIdentity,
+          call: { type: "tool-call", id: "json-stale", name: "read", input: { path: "data.json" } },
+        }),
+      ).toMatchObject({ output: { content: expect.stringContaining('"json-structure"') } })
+    }),
+  )
+
+  it.effect("does not transform explicit pages, truncated input, non-JSON or denied reads", () =>
+    Effect.gen(function* () {
+      yield* enableJsonRead
+      const registry = yield* Tool.Service
+      const call = (input: object) => ({
+        sessionID,
+        ...toolIdentity,
+        call: { type: "tool-call" as const, id: "json-bypass", name: "read", input },
+      })
+      readResult = {
+        type: "file",
+        uri: "file:///data.json",
+        encoding: "utf8",
+        mime: "application/json",
+        content: JSON.stringify({ text: "x".repeat(2100) }),
+      }
+      const content = readResult.content
+      expect((yield* executeTool(registry, call({ path: "data.json", offset: 1 }))).output.content).toBe(content)
+      expect((yield* executeTool(registry, call({ path: "data.txt" }))).output.content).toBe(content)
+      readResult = new ReadToolFileSystem.TextPage({
+        type: "text-page",
+        content,
+        mime: "application/json",
+        offset: 1,
+        truncated: true,
+        next: 2,
+      })
+      expect(yield* executeTool(registry, call({ path: "data.json", json: { mode: "query" } }))).toMatchObject({
+        output: { type: "text-page", content, truncated: true, next: 2 },
+        metadata: { truncated: true },
+      })
+      readCalls.length = 0
+      allow = false
+      expect(yield* executeTool(registry, call({ path: "data.json", json: { mode: "get" } }))).toMatchObject({
+        status: "error",
+      })
+      expect(readCalls).toHaveLength(0)
+    }),
+  )
+
+  it.effect("reads and aggregates JSON without returning the source payload", () =>
+    Effect.gen(function* () {
+      readResult = {
+        type: "file",
+        uri: "file:///data.json",
+        encoding: "utf8",
+        mime: "application/json",
+        content: JSON.stringify(
+          Array.from({ length: 100 }, (_, id) => ({ id, active: id % 2 === 0, count: id })),
+          null,
+          2,
+        ),
+      }
+      yield* enableCodeMode
+      const registry = yield* Tool.Service
+      const result = yield* executeTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        call: {
+          type: "tool-call",
+          id: "call-json-reduce",
+          name: "execute",
+          input: {
+            code: `
+          const file = await tools.read({ path: "data.json" });
+          const rows = JSON.parse(file.content).filter(row => row.active);
+          return { path: "data.json", count: rows.length, total: rows.reduce((sum, row) => sum + row.count, 0) };
+        `,
+          },
+        },
+      })
+      expect(result).toMatchObject({
+        status: "completed",
+        output: { output: JSON.stringify({ path: "data.json", count: 50, total: 2450 }, null, 2) },
+      })
+      expect(result.content?.[0]).not.toHaveProperty("text", expect.stringContaining("active"))
+      expect(assertions).toMatchObject([{ action: "read", sessionID, source: { id: "call-json-reduce" } }])
+    }),
+  )
+
+  it.effect("does not read a file denied through Code Mode", () =>
+    Effect.gen(function* () {
+      yield* enableCodeMode
+      allow = false
+      const registry = yield* Tool.Service
+      const result = yield* executeTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        call: {
+          type: "tool-call",
+          id: "call-read-denied",
+          name: "execute",
+          input: { code: 'return await tools.read({ path: "blocked.json" })' },
+        },
+      })
+      expect(result.output).toMatchObject({ error: true, output: expect.stringContaining("Permission denied") })
+      expect(readCalls).toEqual([])
+      expect(assertions).toMatchObject([{ action: "read", source: { id: "call-read-denied" } }])
+    }),
+  )
+
+  it.effect("passes read images through even when the script returns only a caption", () =>
+    Effect.gen(function* () {
+      const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      readResult = {
+        type: "file",
+        uri: "file:///pixel.png",
+        name: "pixel.png",
+        content: png,
+        encoding: "base64",
+        mime: "image/png",
+      }
+      yield* enableCodeMode
+      const registry = yield* Tool.Service
+      const result = yield* executeTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        call: {
+          type: "tool-call",
+          id: "call-image-codemode",
+          name: "execute",
+          input: { code: 'await tools.read({ path: "pixel.png" }); return "Inspect the image"' },
+        },
+      })
+      expect(result.content).toEqual([
+        { type: "text", text: "Inspect the image" },
+        { type: "file", uri: `data:image/png;base64,${png}`, mime: "image/png", name: "pixel.png" },
+      ])
+    }),
+  )
+
   beforeEach(() => {
     assertions.length = 0
     readCalls.length = 0
@@ -644,25 +974,14 @@ describe("ReadTool", () => {
   it.effect("preserves actionable read failure messages", () =>
     Effect.gen(function* () {
       const registry = yield* Tool.Service
-      for (const [error, message] of [
-        [
-          new ReadToolFileSystem.OffsetOutOfRangeError({ offset: 10, lines: 3 }),
-          "Offset 10 is out of range for this file (3 lines)",
-        ],
-        [
-          new ReadToolFileSystem.PathKindError({ resource: "socket", expected: "a file" }),
-          "Path is not a file: socket",
-        ],
-      ] as const) {
-        readFailure = error
-        expect(
-          yield* executeTool(registry, {
-            sessionID,
-            ...toolIdentity,
-            call: { type: "tool-call", id: `call-${error._tag}`, name: "read", input: { path: "target" } },
-          }),
-        ).toEqual({ status: "error", error: { type: "unknown", message } })
-      }
+      readFailure = new ReadToolFileSystem.PathKindError({ resource: "socket", expected: "a file" })
+      expect(
+        yield* executeTool(registry, {
+          sessionID,
+          ...toolIdentity,
+          call: { type: "tool-call", id: "call-path-kind", name: "read", input: { path: "target" } },
+        }),
+      ).toEqual({ status: "error", error: { type: "unknown", message: "Path is not a file: socket" } })
     }),
   )
 
@@ -724,7 +1043,7 @@ describe("ReadTool", () => {
         status: "error",
         error: {
           type: "tool.execution",
-          message: `File not found: ${missingPath}\n\nDid you mean one of these?\n__missing_read_target__.txt.bak\ncopy___missing_read_target__.txt\nold___missing_read_target__.txt`,
+          message: `File not found: ${missingPath}\n\nDid you mean one of these?\n__missing_read_target__.txt.bak\nold___missing_read_target__.txt\ncopy___missing_read_target__.txt`,
         },
       })
       expect(assertions).toMatchObject([{ sessionID, action: "read", resources: [missingPath], save: ["*"] }])
@@ -792,6 +1111,85 @@ describe("ReadTool", () => {
         },
       })
     }),
+  )
+
+  live.live("suggests close names from the same folder", () =>
+    withTempDir((tmp) =>
+      Effect.gen(function* () {
+        for (const file of ["typo/config.ts", "typo/db.ts", "ext/config.yaml", "case/README.md"])
+          yield* write(path.join(tmp.path, file))
+        for (const file of ["short/db.ts", "short/io.ts", "short/api.ts", "short/build.ts"])
+          yield* write(path.join(tmp.path, file))
+
+        expect(yield* readMissing(tmp.path, "typo/conifg.ts")).toBe(
+          `File not found: typo/conifg.ts\n\nDid you mean one of these?\n${path.join("typo", "config.ts")}`,
+        )
+        expect(yield* readMissing(tmp.path, "ext/config.yml")).toBe(
+          `File not found: ext/config.yml\n\nDid you mean one of these?\n${path.join("ext", "config.yaml")}`,
+        )
+        expect(yield* readMissing(tmp.path, "short/ui.ts")).toBe("File not found: short/ui.ts")
+        // Case-insensitive filesystems, such as macOS by default, simply read the file.
+        expect([undefined, `File not found: case/readme.md\n\nDid you mean one of these?\n${path.join("case", "README.md")}`]).toContain(
+          yield* readMissing(tmp.path, "case/readme.md"),
+        )
+      }),
+    ),
+  )
+
+  it.effect("ranks same-folder suggestions and shows at most three", () =>
+    Effect.gen(function* () {
+      readFailure = new Environment.NotFound({ path: path.join(process.cwd(), "config.ts") })
+      const registry = yield* Tool.Service
+      const read = () =>
+        executeTool(registry, {
+          sessionID,
+          ...toolIdentity,
+          call: { type: "tool-call", id: "call-ranked", name: "read", input: { path: "config.ts" } },
+        }).pipe(Effect.map((result) => result.error?.message))
+
+      // Listed worst first: a typo, a containing name, the same stem, and the same name in another case.
+      directoryEntryDetails = ["confix.ts", "config.test.ts", "config.json", "Config.ts"].map((name) => ({
+        name,
+        type: "file" as const,
+      }))
+      expect(yield* read()).toBe(
+        "File not found: config.ts\n\nDid you mean one of these?\nConfig.ts\nconfig.json\nconfig.test.ts",
+      )
+      directoryEntryDetails = directoryEntryDetails.filter((entry) => entry.name !== "Config.ts")
+      expect(yield* read()).toBe(
+        "File not found: config.ts\n\nDid you mean one of these?\nconfig.json\nconfig.test.ts\nconfix.ts",
+      )
+    }),
+  )
+
+  live.live("suggests a path written from the parent of the location first", () =>
+    withTempDir((tmp) =>
+      Effect.gen(function* () {
+        const repo = path.join(tmp.path, "repo")
+        yield* write(path.join(repo, "src", "a.ts"))
+        const requested = path.join(tmp.path, "src", "a.ts")
+
+        expect(yield* readMissing(repo, requested)).toBe(
+          `File not found: ${requested}\n\nThe folder ${path.join(tmp.path, "src")} does not exist. The nearest folder that does is ${tmp.path}.\n\nDid you mean one of these?\n${path.join(repo, "src", "a.ts")}`,
+        )
+        yield* write(path.join(tmp.path, "src", "a.tsx"))
+        expect(yield* readMissing(repo, requested)).toBe(
+          `File not found: ${requested}\n\nDid you mean one of these?\n${path.join(repo, "src", "a.ts")}\n${path.join(tmp.path, "src", "a.tsx")}`,
+        )
+      }),
+    ),
+  )
+
+  live.live("suggests close folder names from the nearest existing folder", () =>
+    withTempDir((tmp) =>
+      Effect.gen(function* () {
+        yield* write(path.join(tmp.path, "lib", "x.ts"))
+
+        expect(yield* readMissing(tmp.path, "libs/x.ts")).toBe(
+          `File not found: libs/x.ts\n\nThe folder ${path.join(tmp.path, "libs")} does not exist. The nearest folder that does is ${tmp.path}.\n\nDid you mean one of these?\n${path.join(tmp.path, "lib")}`,
+        )
+      }),
+    ),
   )
 
   it.effect("recovers a unique file whose non-breaking spaces differ", () =>
@@ -1056,6 +1454,55 @@ describe("ReadTool", () => {
       expect(readCalls).toEqual([
         { input: AbsolutePath.make(path.join(process.cwd(), "large.txt")), page: { offset: 2, limit: 1 } },
       ])
+    }),
+  )
+
+  it.effect("forwards a negative offset and shows the real line numbers and continuation", () =>
+    Effect.gen(function* () {
+      readResult = new ReadToolFileSystem.TextPage({
+        type: "text-page",
+        content: "nine\nten",
+        mime: "text/plain",
+        offset: 9,
+        truncated: true,
+        next: 11,
+      })
+      const registry = yield* Tool.Service
+
+      const result = yield* executeTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        call: { type: "tool-call", id: "call-tail", name: "read", input: { path: "log.txt", offset: -5, limit: 2 } },
+      })
+      expect(result.status).toBe("completed")
+      if (result.status !== "completed") return
+      expect(result.content).toEqual([
+        {
+          type: "text",
+          text: "Read file log.txt, lines 9-10\n9: nine\n10: ten\n[Output truncated. Continue reading with offset: 11]",
+        },
+      ])
+      expect(readCalls).toEqual([
+        { input: AbsolutePath.make(path.join(process.cwd(), "log.txt")), page: { offset: -5, limit: 2 } },
+      ])
+    }),
+  )
+
+  it.effect("returns the negative directory offset error to the model", () =>
+    Effect.gen(function* () {
+      readFailure = new ReadToolFileSystem.DirectoryOffsetError({ resource: "src" })
+      const registry = yield* Tool.Service
+
+      expect(
+        yield* executeTool(registry, {
+          sessionID,
+          ...toolIdentity,
+          call: { type: "tool-call", id: "call-dir-tail", name: "read", input: { path: "src", offset: -5 } },
+        }),
+      ).toEqual({
+        status: "error",
+        error: { type: "unknown", message: "A negative offset only works for files, and src is a directory" },
+      })
     }),
   )
 

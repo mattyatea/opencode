@@ -87,6 +87,7 @@ function ComposerStory(props: {
   }))
 
   const modelSelection = {
+    sessionID: () => undefined,
     ready: Object.assign(() => true, { promise: undefined }),
     key: () => ({ providerID: modelOption().provider.id, modelID: modelOption().id }),
     current: () => modelOption(),
@@ -241,6 +242,8 @@ function ComposerStory(props: {
               undoing: () => false,
               cancelEdit() {},
               editFirst: () => false,
+              first() {},
+              steerFirst() {},
             }
           : undefined,
         onSubmit: () => {

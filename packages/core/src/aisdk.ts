@@ -438,7 +438,6 @@ function providerOptionKey(packageName: string | undefined, providerID: Provider
   if (packageName === "@ai-sdk/amazon-bedrock") return "bedrock"
   if (packageName === "@ai-sdk/amazon-bedrock/mantle") return "openai"
   if (packageName === "@ai-sdk/azure") return "azure"
-  if (packageName === "@ai-sdk/github-copilot") return "copilot"
   if (packageName === "@jerome-benoit/sap-ai-provider-v2") return "sap-ai"
   if (packageName === "@ai-sdk/openai-compatible") return providerID.split(".")[0]
   if (packageName === "@openrouter/ai-sdk-provider") return "openrouter"
@@ -671,12 +670,13 @@ function toolOutput(result: ToolResultValue) {
   }
 }
 
-function tool(input: ToolDefinition): LanguageModelV3FunctionTool {
+function tool(input: ToolDefinition): LanguageModelV3FunctionTool & { readonly readOnly?: boolean } {
   return {
     type: "function",
     name: input.name,
     description: input.description,
     inputSchema: input.inputSchema as JSONSchema7,
+    ...(input.readOnly === undefined ? {} : { readOnly: input.readOnly }),
   }
 }
 

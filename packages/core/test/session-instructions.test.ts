@@ -13,6 +13,7 @@ import { Global } from "@opencode/util/global"
 import { Image } from "@opencode/core/image"
 import { Location } from "@opencode/core/location"
 import { FileAccess } from "@opencode/core/file-access"
+import { Environment } from "@opencode/core/environment/index"
 import { Model } from "@opencode/core/model"
 import { Permission } from "@opencode/core/permission"
 import { Project } from "@opencode/core/project"
@@ -42,6 +43,7 @@ const readToolNode = makeLocationNode({
   name: "test/read-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(ReadTool.Plugin)),
   deps: [
+    Config.node,
     Tool.node,
     ReadToolFileSystem.node,
     FileAccess.node,
@@ -50,6 +52,7 @@ const readToolNode = makeLocationNode({
     SessionInstructions.node,
     Skill.node,
     FSUtil.node,
+    Environment.node,
     Location.node,
   ],
 })

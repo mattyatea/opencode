@@ -128,7 +128,7 @@ export const layer = (options?: Options) =>
         const target = path.resolve(input.path)
         const ignore = [...new Set(input.type === "directory" ? (input.ignore ?? []) : [])].toSorted()
         const names = [...new Set(input.type === "entries" ? input.names : [])].toSorted()
-        yield* Effect.logInfo("watcher subscribe", {
+        yield* Effect.logDebug("watcher subscribe", {
           path: target,
           type: input.type,
           ignores: ignore.length,

@@ -1,9 +1,111 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
+import { Schema } from "effect"
 import { NO_PROVIDER, SERVER, T0, expectPath, holdRoute, pageMessagesFrom, provider, sessionHref } from "../utils/app"
 import { mockWorkspace, openDraft, openSession } from "../utils/workspace"
 import { mockPluginsActivating, type MockServerConfig } from "../utils/mock-server"
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] })
+
+test("provider switching compacts with the old model and keeps it selected on failure", async ({ page }) => {
+  const sessionID = "ses_provider_handoff"
+  const model = { providerID: "opencode", id: "old" }
+  const admissions: Parameters<NonNullable<MockServerConfig["onCompact"]>>[0]["body"][] = []
+
+  const view = await openSession(page, {
+    name: "ProviderHandoff",
+    seed: { locale: "ja", theme: { id: "oc-2", scheme: "dark" } },
+    sessions: [{ id: sessionID, agent: "build", model }],
+    provider: {
+      all: [
+        ...provider({ id: "old", name: "Old model" }).all,
+        { id: "other", name: "Other", models: { next: { id: "next", name: "Next model" } } },
+      ],
+      connected: ["opencode", "other"],
+      default: { providerID: "opencode", modelID: "old" },
+    },
+    pageMessages: () => ({
+      items: [{ id: "msg_handoff_user", type: "user", text: "Continue this work", time: { created: T0 } }],
+    }),
+    onCompact: ({ body }) => void admissions.push(body),
+  })
+
+  const control = page.locator('[data-action="composer-model"]')
+  await expect(control).toHaveText("Old model")
+  await control.click()
+  const picker = page.getByRole("dialog", { name: "モデルを選択", exact: true })
+  await picker.getByRole("combobox", { name: "モデルを検索", exact: true }).fill("Next model")
+  await picker.getByRole("option", { name: /Next model/ }).click()
+  const confirmation = page.getByRole("dialog", { name: "プロバイダーを切り替え", exact: true })
+  await expect(confirmation).toHaveAccessibleDescription(
+    "プロバイダー間ではプロンプトキャッシュを共有できません。 切り替える前に、現在のモデルで会話を要約できます。 要約すると細かい情報が失われることがあります。",
+  )
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 })
+    await expect
+      .poll(() =>
+        confirmation.evaluate((element) => {
+          const bounds = element.getBoundingClientRect()
+          const buttons = Array.from(element.querySelectorAll("button"))
+
+          return {
+            fits:
+              bounds.left >= 12 && bounds.right <= window.innerWidth - 12 && element.scrollWidth <= element.clientWidth,
+            compact: bounds.bottom - Math.max(...buttons.map((button) => button.getBoundingClientRect().bottom)) <= 24,
+          }
+        }),
+      )
+      .toEqual({ fits: true, compact: true })
+    await expect(confirmation.getByRole("button", { name: "そのまま切り替え", exact: true })).toBeInViewport({
+      ratio: 1,
+    })
+    await expect(confirmation.getByRole("button", { name: "要約して切り替え", exact: true })).toBeInViewport({
+      ratio: 1,
+    })
+  }
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await confirmation.getByRole("button", { name: "要約して切り替え", exact: true }).click()
+  await expect(confirmation.getByRole("button", { name: "切り替える前に要約中…", exact: true })).toBeDisabled()
+  await expect.poll(() => admissions.length).toBe(1)
+  expect(admissions[0].experimental).toEqual({ switchModel: { providerID: "other", id: "next" } })
+  // Admission alone must not commit the target model.
+  await expect(control).toHaveText("Old model")
+  await view.push([
+    {
+      id: "evt_handoff_failed",
+      durable: { aggregateID: sessionID, seq: 1, version: 1 },
+      created: T0 + 1,
+      type: "session.compaction.failed",
+      data: {
+        sessionID,
+        inputID: Schema.decodeUnknownSync(Schema.String)(admissions[0].id),
+        reason: "manual",
+        error: { type: "compaction.failed", message: "Summary unavailable" },
+      },
+    },
+  ])
+  await expect(confirmation.getByRole("alert")).toHaveText("Summary unavailable")
+  await expect(control).toHaveText("Old model")
+  await confirmation.getByRole("button", { name: "要約して切り替え", exact: true }).click()
+  await expect.poll(() => admissions.length).toBe(2)
+  await view.push([
+    {
+      id: "evt_handoff_started",
+      durable: { aggregateID: sessionID, seq: 2, version: 1 },
+      created: T0 + 2,
+      type: "session.compaction.started",
+      data: { sessionID, inputID: Schema.decodeUnknownSync(Schema.String)(admissions[1].id), reason: "manual" },
+    },
+    {
+      id: "evt_handoff_ended",
+      durable: { aggregateID: sessionID, seq: 3, version: 1 },
+      created: T0 + 3,
+      type: "session.compaction.ended",
+      data: { sessionID, reason: "manual", model, text: "## Objective\n- Continue this work" },
+    },
+  ])
+  await expect(control).toHaveText("Other / Next model")
+  await expect(confirmation).toHaveCount(0)
+})
 
 test("mention a session by title, send its stable token, and open its own tab", async ({ page }) => {
   const target = "ses_0123456789abcdefghijklmnop"
@@ -32,11 +134,17 @@ test("mention a session by title, send its stable token, and open its own tab", 
   await view.editor.pressSequentially(" mid")
   await suggestions.getByRole("button", { name: /Auth middleware/ }).click()
   await expect(view.editor.locator('[data-mention="session"]')).toHaveText("@Auth middleware")
+  // The mention's context menu copies the ID it stands for; the rest of the editor keeps the native menu.
+  await view.editor.locator('[data-mention="session"]').click({ button: "right" })
+  await page.getByRole("menuitem", { name: "Copy Session ID", exact: true }).click()
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(target)
+  await expect(page.getByRole("menu")).toHaveCount(0)
+  await view.editor.press("End")
   await view.editor.press("Enter")
   await expect.poll(() => prompts.length).toBe(1)
   expect(prompts[0]?.text).toBe(`Compare with @session:${target} `)
   const message = page.locator('[data-timeline-row="UserMessage"]')
-  const chip = message.getByRole("button", { name: "Auth middleware", exact: true })
+  const chip = message.getByRole("button", { name: "@Auth middleware", exact: true })
   await expect(chip).toBeVisible()
   await chip.click()
   await expect(page).toHaveURL(new RegExp(`${target}$`))
@@ -432,6 +540,10 @@ for (const action of ["tray", "picker"] as const) {
       const picker = page.getByRole("dialog", { name: "Select model", exact: true })
       await picker.getByRole("combobox", { name: "Search models", exact: true }).fill("Big Pickle")
       await picker.getByRole("option", { name: /Big Pickle/ }).click()
+      await page
+        .getByRole("dialog", { name: "Switch provider", exact: true })
+        .getByRole("button", { name: "Switch without compaction", exact: true })
+        .click()
     }
 
     await expect(page.locator('[data-action="composer-model"]')).toContainText("Big Pickle")

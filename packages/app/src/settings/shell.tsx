@@ -5,6 +5,7 @@ import { createStore } from "solid-js/store"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useTabs } from "@/shell/tabs/tabs"
 import { useGlobal, useServerCtx } from "@/runtime/server/runtime"
+import { ServerProvider } from "@/runtime/server/current"
 import { ServerConnection } from "@/runtime/server/registry"
 import type { LocalProject } from "@/shell/state/layout"
 import { DialogServer } from "@/servers/connect/dialog"
@@ -16,6 +17,7 @@ import { SettingsKeybinds } from "./keybinds/keybinds"
 import { SettingsNotifications } from "./notifications/notifications"
 import { SettingsProviders } from "./providers/providers"
 import { SettingsModels } from "./models/models"
+import { SettingsUsage } from "./usage/usage"
 import { SettingsServerGeneral, SettingsServerList } from "./servers/servers"
 import { SettingsServerSwitcher } from "./servers/switcher"
 import { SettingsServerUnavailable } from "./servers/unavailable"
@@ -44,6 +46,7 @@ const rootClientTabs = [
 ] as const
 
 const serverTabs = [
+  { value: "usage", icon: pageIcons.usage, label: "settings.usage.title" },
   { value: "providers", icon: pageIcons.providers, label: "settings.providers.title" },
   { value: "models", icon: pageIcons.models, label: "settings.models.title" },
   { value: "extensions", icon: pageIcons.extensions, label: "settings.tab.extensions" },
@@ -53,6 +56,7 @@ const serverTabs = [
 
 // The heading of each per-server page, which its unreachable state keeps.
 const serverPages = {
+  usage: { title: "settings.usage.title", description: "settings.usage.description" },
   providers: { title: "settings.providers.title", description: "settings.providers.description" },
   models: { title: "settings.models.title", description: "settings.models.description" },
   extensions: { title: "settings.tab.extensions", description: "settings.extensions.description" },
@@ -266,13 +270,23 @@ function RootSettings() {
       <Tabs.Content value="about" class="settings-panel settings-about">
         <SettingsAbout active={surface.view().tab === "about"} />
       </Tabs.Content>
+      {/* Keep recorded usage mounted while a server reconnects, rather than restarting its reads on every probe. */}
+      <Show when={surface.server()?.connection} keyed>
+        {(server) => (
+          <ServerProvider conn={server}>
+            <Tabs.Content value="usage" class="settings-panel">
+              <SettingsUsage active={surface.view().tab === "usage"} headerAction={<SettingsServerSwitcher />} />
+            </Tabs.Content>
+          </ServerProvider>
+        )}
+      </Show>
       <Show
         when={reachable()}
         keyed
         fallback={
           <Show when={surface.server()}>
             {(entry) => (
-              <For each={serverTabs}>
+              <For each={serverTabs.filter((item) => item.value !== "usage")}>
                 {(item) => (
                   <Tabs.Content value={item.value} class="settings-panel">
                     <SettingsServerUnavailable

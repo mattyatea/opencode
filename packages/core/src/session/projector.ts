@@ -982,6 +982,9 @@ const layer = Layer.effectDiscard(
     yield* bus.project(SessionEvent.Renamed, (event) =>
       setSession(db, event.data.sessionID, { title: event.data.title, time_updated: event.created }),
     )
+    yield* bus.project(SessionEvent.TaskDetached, (event) =>
+      setSession(db, event.data.sessionID, { task_parent_id: null, time_updated: sql`${SessionTable.time_updated}` }),
+    )
     yield* bus.project(SessionEvent.MetadataUpdated, (event) =>
       setSession(db, event.data.sessionID, { metadata: event.data.metadata, time_updated: event.created }),
     )

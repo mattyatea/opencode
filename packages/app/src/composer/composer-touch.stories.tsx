@@ -123,6 +123,8 @@ function TouchComposer(props: { state: State }) {
     confirmEdit: (delivery: "steer" | "queue") => record(`Edited queued prompt, ${delivery}`),
     cancelEdit: () => record("Cancelled the edit"),
     editFirst: () => false,
+    first() {},
+    steerFirst() {},
   }
 
   const editor = createComposerEditor({
@@ -168,6 +170,7 @@ function TouchComposer(props: { state: State }) {
   })
 
   const selection = {
+    sessionID: () => undefined,
     ready: Object.assign(() => true, { promise: undefined }),
     key: () => ({ providerID: selectedModel.provider.id, modelID: selectedModel.id }),
     current: () => selectedModel,

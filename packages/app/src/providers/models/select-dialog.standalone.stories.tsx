@@ -112,6 +112,7 @@ function SelectorStory(props: { favorite?: boolean }) {
   const find = (key: string) => models.find((model) => keyOf(model) === key)
 
   const selection = {
+    sessionID: () => undefined,
     ready: Object.assign(() => true, { promise: undefined }),
     key: () => {
       const item = find(store.current)

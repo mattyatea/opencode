@@ -7,6 +7,18 @@ import { ConfigModel } from "./model.js"
 import { ConfigPolicy } from "./policy.js"
 
 export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
+  json_read: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Enable JSON structure previews and optional exact selection on read. Small JSON stays whole; full text remains available. Combine with codemode_tools to compute on selected values before returning evidence. Defaults to false.",
+  }),
+  codemode_tools: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Route read, grep, glob, shell, webfetch, and websearch through Code Mode so results can be filtered before reaching the model. Editing and interactive tools stay native. Defaults to false.",
+  }),
+  paste_files: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Upload large text pastes as readable paste.txt references instead of sending their contents inline. Defaults to false.",
+  }),
   portable_shell_scanner: Schema.Boolean.pipe(optional).annotate({
     description: "Deprecated: the built-in shell permission scanner is now always enabled.",
   }),

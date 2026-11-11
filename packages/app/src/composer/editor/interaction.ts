@@ -1,4 +1,5 @@
 import { Predicate } from "effect"
+import { largePaste } from "@opencode/util/paste"
 import { createEffect, createMemo, createSignal, on, onCleanup, untrack, type Accessor } from "solid-js"
 import { unwrap } from "solid-js/store"
 import { useFilteredList } from "@opencode/ui/hooks"
@@ -75,7 +76,7 @@ export type ComposerEditorView = {
       delivery: Accessor<ComposerDelivery | undefined>
       onSubmit: (key: string, comment: string) => Promise<boolean>
     }
-    onSubmit: (options?: { alternate?: boolean }) => void
+    onSubmit: (options?: { alternate?: boolean; first?: boolean }) => void
     onStop: () => void
   }
   shell?: {
@@ -467,6 +468,13 @@ export function createComposerEditor(input: {
   }
 
   const onKeyDown = (event: KeyboardEvent, height?: number) => {
+    // Escape, Enter and Tab cancel, confirm or cycle IME candidates; Safari can report them as keyCode 229.
+    if (
+      event.isComposing ||
+      (event.keyCode === 229 && (event.key === "Escape" || event.key === "Enter" || event.key === "Tab"))
+    )
+      return true
+
     flushFocus()
 
     if (
@@ -518,8 +526,7 @@ export function createComposerEditor(input: {
       !event.shiftKey &&
       !event.altKey &&
       !event.ctrlKey &&
-      !event.metaKey &&
-      !event.isComposing
+      !event.metaKey
     ) {
       event.preventDefault()
 
@@ -549,7 +556,6 @@ export function createComposerEditor(input: {
       !event.altKey &&
       !event.ctrlKey &&
       !event.metaKey &&
-      !event.isComposing &&
       (event.key === "ArrowUp" || event.key === "ArrowDown") &&
       (event.shiftKey
         ? event.key === "ArrowUp" && openHistory(height)
@@ -743,7 +749,7 @@ export function createComposerEditor(input: {
     openShell() {
       dispatch({ type: "mode.shell" })
     },
-    submit(options?: { alternate?: boolean }) {
+    submit(options?: { alternate?: boolean; first?: boolean }) {
       if (input.view.submit.available?.() === false) return
 
       if (input.view.draftOnly) return
@@ -765,7 +771,14 @@ export function createComposerEditor(input: {
       const clipboard = event.clipboardData
       const text = clipboard?.getData("text/plain")
 
-      if (attachments && shouldHandlePasteAsAttachment(clipboard, !!input.attachments?.readClipboardImage)) {
+      if (
+        attachments &&
+        shouldHandlePasteAsAttachment(
+          clipboard,
+          !!input.attachments?.readClipboardImage,
+          input.attachments?.pasteFiles?.(),
+        )
+      ) {
         void attachments.handlePaste(event)
 
         return
@@ -840,8 +853,14 @@ export function createComposerEditor(input: {
 
 export type ComposerEditorModel = ReturnType<typeof createComposerEditor>
 
-export function shouldHandlePasteAsAttachment(clipboard: DataTransfer | null, readClipboardImage: boolean) {
+export function shouldHandlePasteAsAttachment(
+  clipboard: DataTransfer | null,
+  readClipboardImage: boolean,
+  pasteFiles = false,
+) {
   if (Array.from(clipboard?.items ?? []).some((item) => item.kind === "file")) return true
+
+  if (pasteFiles && largePaste((clipboard?.getData("text/plain") ?? "").replace(/\r\n?/g, "\n"))) return true
 
   if (Array.from(clipboard?.types ?? []).some((type) => type.startsWith("text/"))) return false
 

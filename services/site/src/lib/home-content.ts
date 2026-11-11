@@ -3,10 +3,11 @@ import { config } from "~/config"
 import { logoMetrics } from "~/component/site/logo-metrics"
 import type { Translate } from "~/i18n"
 import { rich } from "~/i18n/rich"
+import { logoWalls } from "~/lib/logo-walls"
 import type { RichText } from "~/lib/markdown"
 
-// Product order rule: whenever copy lists the products, name them in this order: desktop, mobile,
-// terminal, SDK (the order of `products` in component/site/product-data.ts).
+// Product order rule: whenever copy lists the products, name them in this order: desktop, terminal,
+// mobile, SDK (the order of `products` in component/site/product-data.ts).
 
 /** Splits copy into text and links wherever one of the phrases appears, in any letter case. */
 export function linkPhrases(text: string, links: readonly { text: string; href: string }[]): RichText {
@@ -51,56 +52,16 @@ export function homeContent(t: Translate, route: (path: string) => string) {
       { text: "through ACP", href: docs("/cli/acp/") },
       { text: "listed in the docs", href: docs("/console/models/#privacy") },
     ],
-    // Below the hero: company wordmarks (sources in public/logos/companies/README.md), or the model
-    // providers OpenCode works with (marks from models.dev), cycling in slots on the carousel's grid.
+    // Below the hero, cycling in slots on the carousel's grid (logoWalls).
     companies: {
       label: t("home.companies.label"),
       // Shown instead of the label when its column is too narrow for it on one line (logo-wall.tsx).
       labelShort: t("home.companies.labelShort"),
-      items: [
-        { name: "NVIDIA", logo: "nvidia" },
-        { name: "Cloudflare", logo: "cloudflare" },
-        { name: "Microsoft", logo: "microsoft" },
-        { name: "GitHub", logo: "github" },
-        { name: "ByteDance", logo: "bytedance" },
-        { name: "Revolut", logo: "revolut" },
-        { name: "Salesforce", logo: "salesforce" },
-        { name: "Cisco", logo: "cisco" },
-        { name: "Red Hat", logo: "red-hat" },
-        { name: "Intel", logo: "intel" },
-        { name: "Adobe", logo: "adobe" },
-        { name: "IBM", logo: "ibm" },
-        { name: "SAP", logo: "sap" },
-        { name: "Lenovo", logo: "lenovo" },
-        { name: "Linear", logo: "linear" },
-        // Measured and ready to swap in: Shopee ("shopee"), Shopify ("shopify"), MongoDB ("mongodb"),
-        // Inditex ("inditex"), Zara ("zara"), HackerOne ("hackerone") and Bosch ("bosch").
-      ].map((item) => ({
-        name: item.name,
-        logo: `/logos/companies/${item.logo}.svg`,
-        metrics: logoMetrics.companies[item.logo],
-      })),
+      items: logoWalls.companies,
     },
     providers: {
       label: t("home.providers.label"),
-      items: [
-        { name: "Anthropic", logo: "anthropic" },
-        { name: "OpenAI", logo: "openai" },
-        { name: "Google", logo: "google" },
-        { name: "GitHub Copilot", logo: "github-copilot" },
-        { name: "xAI", logo: "xai" },
-        { name: "DeepSeek", logo: "deepseek" },
-        { name: "Mistral", logo: "mistral" },
-        { name: "Ollama", logo: "ollama" },
-        { name: "OpenRouter", logo: "openrouter" },
-        { name: "Amazon Bedrock", logo: "amazon-bedrock" },
-        { name: "Moonshot AI", logo: "moonshotai" },
-        { name: "Z.ai", logo: "zai" },
-      ].map((item) => ({
-        name: item.name,
-        logo: `/logos/providers/${item.logo}.svg`,
-        metrics: logoMetrics.providers[item.logo],
-      })),
+      items: logoWalls.providers,
     },
     // Services with official MCP servers (icons from Simple Icons), and the ways to extend OpenCode.
     tools: {
@@ -198,14 +159,6 @@ export function homeContent(t: Translate, route: (path: string) => string) {
         { label: t("home.growth.monthlyDevs"), value: config.stats.monthlyUsers },
       ],
     },
-    privacy: {
-      title: t("home.privacy.title"),
-      body: [
-        `${t("home.privacy.body")} `,
-        { text: `${t("home.privacy.learnMore")} ${t("home.privacy.link")}`, href: docs("/policies/") },
-        ".",
-      ] satisfies RichText,
-    },
     console: {
       title: t("site.nav.console"),
       headline: t("home.console.headline"),
@@ -214,64 +167,6 @@ export function homeContent(t: Translate, route: (path: string) => string) {
       // The slim option: one line that names the Console, and a second action.
       slimHeadline: t("home.console.slimHeadline"),
       sales: { text: t("home.console.sales"), href: "/console/enterprise" },
-    },
-    faq: {
-      title: t("common.faq"),
-      items: [
-        {
-          question: t("home.faq.q1"),
-          answer: [t("home.faq.a1.body")],
-        },
-        {
-          question: t("home.faq.q2"),
-          answer: [`${t("home.faq.a2.before")} `, { text: t("home.faq.a2.link"), href: docs("/") }, "."],
-        },
-        {
-          question: t("home.faq.q3"),
-          copy: "home.faq.a3",
-          answer: rich(
-            `${t("home.faq.a3.p1")} ${t("home.faq.a3.p4.beforeLocal")} ${t("home.faq.a3.providers")} ${t("home.faq.a3.models.after")}`,
-            { local: docs("/models/#local"), models: "https://opencode.ai/console/models" },
-          ),
-        },
-        {
-          question: t("home.faq.q4"),
-          copy: "home.faq.a4",
-          answer: [`${t("home.faq.a4.p1")} `, { text: t("common.learnMore"), href: docs("/providers/") }, "."],
-        },
-        {
-          question: t("home.faq.q5"),
-          answer: rich(t("home.faq.a5.body"), {
-            desktop: route("/desktop"),
-            mobile: route("/mobile"),
-            sdk: route("/sdk"),
-          }),
-        },
-        { question: t("home.faq.q6"), copy: "home.faq.a6", answer: [t("home.faq.a6")] },
-        {
-          question: t("home.faq.q7"),
-          copy: "home.faq.a7",
-          answer: [
-            `${t("home.faq.a7.p1")} ${t("home.faq.a7.p2.beforeModels")} `,
-            { text: t("home.faq.a7.p2.modelsLink"), href: docs("/console/models/#privacy") },
-            ".",
-          ],
-        },
-        {
-          question: t("home.faq.q8"),
-          answer: [
-            `${t("home.faq.a8.p1")} `,
-            { text: t("nav.github"), href: config.github.repoUrl, external: true },
-            ` ${t("home.faq.a8.p2")} `,
-            {
-              text: t("home.faq.a8.mitLicense"),
-              href: `${config.github.repoUrl}?tab=MIT-1-ov-file#readme`,
-              external: true,
-            },
-            t("home.faq.a8.p3"),
-          ],
-        },
-      ] satisfies { question: string; copy?: string; answer: RichText }[],
     },
   }
 }

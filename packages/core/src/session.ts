@@ -232,11 +232,11 @@ export interface Interface {
   readonly prompt: (
     input: Parameters<Session.Handle["prompt"]>[0] & { sessionID: SessionSchema.ID },
   ) => ReturnType<Session.Handle["prompt"]>
-  /** Generates text from current Session context without admitting input or mutating history. */
+  /** Generates text from current Session context without admitting input or mutating history. Its usage counts toward the Session's totals. */
   readonly generate: (input: {
     sessionID: SessionSchema.ID
     prompt: string
-  }) => Effect.Effect<string, NotFoundError | SessionGenerate.Error>
+  }) => Effect.Effect<SessionGenerate.Result, NotFoundError | SessionGenerate.Error>
   readonly command: (input: {
     sessionID: SessionSchema.ID
     command: string
@@ -287,7 +287,7 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const app = yield* App.Metadata
+    const app = yield* App.Service
     const database = yield* Database.Service
     const db = database.db
     const bus = yield* Bus.Service
@@ -302,7 +302,7 @@ const layer = Layer.effect(
     const environments = yield* SessionEnvironment.Service
     const locations = yield* LocationServiceMap.Service
     const sessions = yield* Session.make()
-    const mediaBlob = (session: SessionSchema.Info) => SessionBlob.enabledFor(instances, app, session)
+    const mediaBlob = (session: SessionSchema.Info) => SessionBlob.enabledFor(instances, session)
     const isDurableSessionEvent = (item: Bus.LogItem): item is SessionEvent.DurableEvent =>
       Object.hasOwn(SessionEvent.Durable.cases, item.type)
 
@@ -550,7 +550,10 @@ const layer = Layer.effect(
           .where(eq(SessionTable.task_parent_id, sessionID))
           .all()
           .pipe(Effect.orDie)
-        yield* Effect.forEach(tasks, (task) => result.remove(task.id), { concurrency: 1, discard: true })
+        yield* Effect.forEach(tasks, (task) => bus.publish(SessionEvent.TaskDetached, { sessionID: task.id }), {
+          concurrency: 1,
+          discard: true,
+        })
         yield* environments.clear(sessionID)
         yield* bus.publish(SessionEvent.Deleted, { sessionID })
         yield* bus.remove(sessionID)
@@ -640,6 +643,7 @@ const layer = Layer.effect(
           Effect.provideService(Instance.Service, instances),
           Effect.provideService(Database.Service, database),
           Effect.provideService(LLMClient.Service, llm),
+          Effect.provideService(Bus.Service, bus),
         )
       }),
       command: Effect.fn("Session.command")(function* (input) {

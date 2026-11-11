@@ -64,6 +64,7 @@ const storyComposerModel = {
 } satisfies NonNullable<ReturnType<ModelSelection["current"]>>
 
 const modelSelection = {
+  sessionID: () => undefined,
   ready: modelReady,
   key: () => ({ providerID: storyComposerModel.provider.id, modelID: storyComposerModel.id }),
   current: () => storyComposerModel,

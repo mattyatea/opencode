@@ -490,6 +490,45 @@ test("preserves a live session rename across concurrent session and family reads
   }
 })
 
+test("refreshes a detached task into the session list", async () => {
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
+  const child = { ...session(0), experimental: { taskParentID: "ses_parent" } }
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async () => Response.json({ data: { ...child, experimental: undefined } }),
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
+    }),
+    dispose,
+  }))
+
+  try {
+    setup.data.session.remember(child)
+    const event: OpenCodeEvent = {
+      id: "evt_detached",
+      created: 1,
+      type: "session.task.detached",
+      durable: { aggregateID: child.id, seq: 1, version: 1 },
+      data: { sessionID: child.id },
+    }
+    listeners.forEach((listener) => listener({ name: event.type, details: event }))
+    await wait(() => setup.data.session.get(child.id)?.experimental?.taskParentID === undefined)
+    expect(setup.data.session.list().find((item) => item.id === child.id)?.experimental?.taskParentID).toBeUndefined()
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("updates authoritative cached project metadata from live events", async () => {
   const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
   const original: Project = {

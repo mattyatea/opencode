@@ -135,22 +135,17 @@ export const Plugin = {
       .transform((editor) =>
         editor.add({
           name,
-          options: { codemode: false },
+          options: { codemode: false, readOnly: true },
           description,
           input: Input,
           output: Output,
           execute: (input, context) =>
             Effect.gen(function* () {
-              // Rules are matched against the URL that is requested, so `HTTPS://EVIL.COM` meets a rule for
-              // `https://evil.com/*`.
-              const url = yield* Effect.try({
-                try: () => {
-                  const parsed = new URL(input.url)
-                  assertHttpUrl(parsed)
-                  // The fragment is never sent, and would keep a rule for the exact URL from matching.
-                  parsed.hash = ""
-                  return parsed.href
-                },
+              // Rules match the URL as written. The fragment is never sent, and would keep a rule for the exact
+              // URL from matching.
+              const url = input.url.split("#")[0]
+              yield* Effect.try({
+                try: () => assertHttpUrl(new URL(url)),
                 catch: (error) => error,
               })
 

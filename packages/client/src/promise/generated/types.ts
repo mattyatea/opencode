@@ -33,6 +33,8 @@ export type ProviderEncoding = "zstd" | "gzip" | "none"
 
 export type AgentColor = string
 
+export type AgentParallelToolCalls = boolean | "auto"
+
 export type PermissionEffect = "allow" | "deny" | "ask"
 
 export type PluginID = string
@@ -95,8 +97,6 @@ export type SessionInboxDelivery = "steer" | "queue"
 
 export type SessionInboxSyntheticPayload = { text: string; description?: string; metadata?: { [x: string]: JsonValue } }
 
-export type SessionInboxCompactionPayload = {}
-
 export type ShellID = string
 
 export type SessionMessageNative = { [x: string]: JsonValue }
@@ -120,8 +120,6 @@ export type SessionStructuredError = {
   response?: { body: string }
   retryAfterMs?: number
 }
-
-export type SessionGenerateResponse = { data: { text: string } }
 
 export type SessionInterruptResponse = { interrupted: boolean }
 
@@ -153,6 +151,8 @@ export type SessionStatsToolUsage = {
 }
 
 export type SessionStatsActivity = { date: string; steps: number }
+
+export type SessionStatsSkillUsage = { id: string; calls: number }
 
 export type InstructionEntryKey = string
 
@@ -188,7 +188,7 @@ export type ModelCacheFormat = "anthropic" | "alibaba"
 
 export type ModelMediaInput = "assets" | "state" | "root"
 
-export type ModelCapabilities = { tools: boolean; input: Array<string>; output: Array<string>; temperature?: boolean }
+export type ToolFreeformFormat = "text" | "regex" | "lark"
 
 export type MoneyUSDPerMillionTokens = number
 
@@ -465,6 +465,17 @@ export type SessionTaskMessage = {
 
 export type UsageLimitsBudgetModel = { providerID: ProviderID; modelID: string; name: string; spent?: MoneyUSD }
 
+export type SessionGenerateResponse = { data: { text: string; tokens: TokenUsageInfo; cost: MoneyUSD } }
+
+export type SessionStatsSessionUsage = {
+  sessionID: SessionID
+  title: string
+  parentID?: SessionID
+  steps: number
+  tokens: TokenUsageInfo
+  cost: MoneyUSD
+}
+
 export type FileSystemEntry = { path: RelativePath; type: "file" | "directory" }
 
 export type SessionRevert = {
@@ -514,15 +525,6 @@ export type SessionInboxSynthetic = {
   time: { created: number }
   type: "synthetic"
   payload: SessionInboxSyntheticPayload
-  delivery: SessionInboxDelivery
-}
-
-export type SessionInboxCompaction = {
-  id: SessionMessageID
-  sessionID: SessionID
-  time: { created: number }
-  type: "compaction"
-  payload: SessionInboxCompactionPayload
   delivery: SessionInboxDelivery
 }
 
@@ -720,6 +722,14 @@ export type ProviderCompatibility = {
   streamUsage?: boolean
   cacheFormat?: ModelCacheFormat
   mediaInput?: ModelMediaInput
+}
+
+export type ModelCapabilities = {
+  tools: boolean
+  freeform?: Array<ToolFreeformFormat>
+  input: Array<string>
+  output: Array<string>
+  temperature?: boolean
 }
 
 export type ModelCost = {
@@ -992,6 +1002,7 @@ export type UsageLimitsGo = { rolling: UsageLimitsMeter; weekly: UsageLimitsMete
 
 export type ConfigModelCapabilities = {
   tools?: boolean
+  freeform?: Array<ToolFreeformFormat>
   input?: Array<string>
   output?: Array<string>
   temperature?: boolean
@@ -1056,6 +1067,8 @@ export type SessionMessageCompactionCompleted = {
 }
 
 export type SessionStatsModelUsage = { model: ModelRef; steps: number; tokens: TokenUsageInfo; cost: MoneyUSD }
+
+export type SessionInboxCompactionPayload = { experimental?: { switchModel?: ModelRef } }
 
 export type ProviderSettings = {
   timeout?: number | false
@@ -1211,6 +1224,16 @@ export type SessionRenamed = {
   durable: { aggregateID: string; seq: EventSeq; version: 1 }
   location?: LocationRef
   data: { sessionID: SessionID; title: string }
+}
+
+export type SessionTaskDetached = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "session.task.detached"
+  durable: { aggregateID: string; seq: EventSeq; version: 1 }
+  location?: LocationRef
+  data: { sessionID: SessionID }
 }
 
 export type SessionMetadataUpdated = {
@@ -1660,7 +1683,7 @@ export type SessionUsageRecorded = {
   type: "session.usage.recorded"
   durable: { aggregateID: string; seq: EventSeq; version: 1 }
   location?: LocationRef
-  data: { sessionID: SessionID; source: "title" | "compaction"; cost: MoneyUSD; tokens: TokenUsageInfo }
+  data: { sessionID: SessionID; source: "title" | "compaction" | "generate"; cost: MoneyUSD; tokens: TokenUsageInfo }
 }
 
 export type LocationShutdown = {
@@ -1687,7 +1710,7 @@ export type CredentialUpdated = {
   metadata?: { [x: string]: any }
   type: "credential.updated"
   location?: LocationRef
-  data: {}
+  data: { integrationID: IntegrationID; credentialID: CredentialID }
 }
 
 export type CredentialSwitched = {
@@ -2278,6 +2301,17 @@ export type SessionStatsInfo = {
   streak: number
   activity: Array<SessionStatsActivity>
   models: Array<SessionStatsModelUsage>
+  sessionUsage?: Array<SessionStatsSessionUsage>
+  skills?: Array<SessionStatsSkillUsage>
+}
+
+export type SessionInboxCompaction = {
+  id: SessionMessageID
+  sessionID: SessionID
+  time: { created: number }
+  type: "compaction"
+  payload: SessionInboxCompactionPayload
+  delivery: SessionInboxDelivery
 }
 
 export type ProviderRequest = {
@@ -2413,6 +2447,7 @@ export type ConfigEntry =
             hidden?: boolean
             color?: string
             steps?: number
+            parallel_tool_calls?: AgentParallelToolCalls
             disabled?: boolean
             permissions?: PermissionRuleset
           }
@@ -2446,6 +2481,7 @@ export type ConfigEntry =
           image?: { auto_resize?: boolean; max_width?: number; max_height?: number; max_base64_bytes?: number }
         }
         tool_output?: { max_lines?: number; max_bytes?: number }
+        tool_calls?: { parallel?: AgentParallelToolCalls }
         mcp?: {
           timeout?: { startup?: number; catalog?: number; execution?: number }
           servers?: {
@@ -2555,6 +2591,9 @@ export type ConfigEntry =
           }
         }
         experimental?: {
+          json_read?: boolean
+          codemode_tools?: boolean
+          paste_files?: boolean
           portable_shell_scanner?: boolean
           all_flags?: boolean
           todo?: boolean
@@ -2562,6 +2601,9 @@ export type ConfigEntry =
           media_blob?: boolean
           schedules?: boolean
           artifacts?: boolean
+          codemode_vm?: boolean
+          shell_timeout_background?: boolean
+          console_watches?: boolean
           part_rows?: boolean
           image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           subagent_depth?: number
@@ -2685,6 +2727,7 @@ export type AgentInfo = {
   hidden: boolean
   color?: AgentColor
   steps?: number
+  parallel_tool_calls?: AgentParallelToolCalls
   permissions: PermissionRuleset
 }
 
@@ -2809,6 +2852,7 @@ export type SessionEventDurable =
   | SessionModelSelected
   | SessionMoved
   | SessionRenamed
+  | SessionTaskDetached
   | SessionMetadataUpdated
   | SessionPermissions
   | SessionViewed
@@ -2866,6 +2910,7 @@ export type V2Event =
   | SessionModelSelected
   | SessionMoved
   | SessionRenamed
+  | SessionTaskDetached
   | SessionMetadataUpdated
   | SessionPermissions
   | SessionViewed
@@ -3479,8 +3524,11 @@ export type SessionShellOutput = void
 
 export type SessionCompactInput = {
   readonly sessionID: string
-  readonly id?: string | undefined
-  readonly delivery?: ("steer" | "queue") | undefined
+  readonly id?: string | null | undefined
+  readonly delivery?: ("steer" | "queue") | null | undefined
+  readonly experimental?:
+    | { readonly switchModel?: { readonly id: string; readonly providerID: string; readonly variant?: string } }
+    | undefined
 }
 
 export type SessionCompactOutput = { data: SessionInboxCompaction }["data"]
@@ -3989,7 +4037,12 @@ export type ExperimentalGenerateDecisionsInput = {
     | { readonly type: "file"; readonly data: string; readonly mime: string; readonly name?: string }
   >
   readonly questions: ReadonlyArray<
-    | { readonly type: "predicate"; readonly name: string; readonly instructions: string }
+    | {
+        readonly type: "predicate"
+        readonly name: string
+        readonly instructions: string
+        readonly criteria?: { readonly true?: string; readonly false?: string }
+      }
     | {
         readonly type: "choice"
         readonly name: string
@@ -4384,6 +4437,7 @@ export type EventSubscribeInput = {
         | "session.model.selected"
         | "session.moved"
         | "session.renamed"
+        | "session.task.detached"
         | "session.metadata.updated"
         | "session.permissions"
         | "session.viewed"

@@ -14,7 +14,6 @@ import type { Workspace } from "@opencode/schema/workspace"
 import { Timestamps } from "../database/schema.sql.js"
 import type { Instruction } from "@opencode/schema/instruction"
 import type { Session } from "@opencode/schema/session"
-import type { CompactionPayload, MovePayload, SyntheticPayload } from "@opencode/schema/session-inbox"
 import type { RevertV1 } from "@opencode/schema/session-revert"
 import type { Schema } from "effect"
 
@@ -139,7 +138,12 @@ export const SessionInboxTable = sqliteTable(
       .references(() => SessionTable.id, { onDelete: "cascade" }),
     type: text().$type<SessionInbox.Info["type"]>().notNull(),
     payload: text({ mode: "json" })
-      .$type<SessionStored.UserPayload | SyntheticPayload | CompactionPayload | MovePayload>()
+      .$type<
+        | (typeof SessionStored.UserPayload)["Encoded"]
+        | (typeof SessionInbox.SyntheticPayload)["Encoded"]
+        | (typeof SessionInbox.CompactionPayload)["Encoded"]
+        | (typeof SessionInbox.MovePayload)["Encoded"]
+      >()
       .notNull(),
     delivery: text().$type<SessionInbox.Delivery>().notNull(),
     enqueued_seq: integer().notNull(),

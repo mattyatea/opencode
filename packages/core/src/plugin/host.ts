@@ -51,7 +51,7 @@ const isRpcEvent = (event: Event.Payload): event is RpcEvent => isRpcType(event.
 const isPublicEvent = (event: Event.Payload): event is EventManifest.ServerEvent | RpcEvent =>
   EventManifest.isServer(event) || isRpcEvent(event)
 export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interface, "list">, pluginID: string) {
-  const app = yield* App.Metadata
+  const app = yield* App.Service
   const agents = yield* Agent.Service
   const artifacts = yield* Artifact.Service
   const aisdk = yield* AISDK.Service
@@ -268,7 +268,9 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
     event: {
       // The bus only delivers the requested types, which TypeScript cannot follow through the generic signature.
       subscribe: ((input?: { readonly types?: ReadonlyArray<string> }) => {
-        if (!input?.types?.length) return bus.subscribe().pipe(Stream.filter(isPublicEvent))
+        // The bus routes by the Location in context, which activation strips from a config plugin's fibers.
+        const local = Stream.provideService(Location.Service, location)
+        if (!input?.types?.length) return bus.subscribe().pipe(Stream.filter(isPublicEvent), local)
         const unknown = new Array<string>()
         const [first, ...rest] = input.types.flatMap((type) => {
           if (isRpcType(type)) return [Rpc.eventDefinition(type)]
@@ -276,7 +278,7 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
           if (!definition) unknown.push(type)
           return definition ? [definition] : []
         })
-        const events = first ? bus.subscribe([first, ...rest]) : Stream.never
+        const events = first ? bus.subscribe([first, ...rest]).pipe(local) : Stream.never
         if (unknown.length === 0) return events
         return Stream.unwrap(
           Effect.logWarning("ignoring unknown event types", { pluginID, types: unknown }).pipe(Effect.as(events)),
@@ -588,7 +590,7 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
       switchAgent: sessions.switchAgent,
       switchModel: sessions.switchModel,
       prompt: sessions.prompt,
-      generate: (input) => sessions.generate(input).pipe(Effect.map((text) => ({ text }))),
+      generate: sessions.generate,
       command: (input) => sessions.command({ ...input, command: input.name }),
       compact: sessions.compact,
       update: Effect.fn(function* (input) {

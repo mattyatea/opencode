@@ -3,8 +3,10 @@ import type { ConfigEntry, OpenCodeEvent, SessionMessageInfo, WorktreeDirectory 
 import { NO_PROVIDER, REMOTE_SERVER, SERVER, holdRoute, project, seed, session } from "../utils/app"
 import { mockMissingLocation, mockOpenCodeServer } from "../utils/mock-server"
 import { mockRemoteServer, mockWorkspace, openSession, openSettings, type WorkspaceInput } from "../utils/workspace"
+import { CONSOLE_URL, consoleGateway, consoleSignIn } from "../utils/console"
 import { recordNotifications } from "../utils/notifications"
 import { installSseTransport } from "../utils/sse-transport"
+import { emptyUsageStats, usageLimits, usageStats } from "../utils/usage"
 
 const directory = "C:/Projects/settings-demo"
 
@@ -55,6 +57,103 @@ const patched = (page: Page) =>
   page.waitForRequest(
     (request) => request.method() === "PATCH" && new URL(request.url()).pathname === `/api/project/${projectID}`,
   )
+
+test("usage settings show recorded activity and switch reporting periods", async ({ page }) => {
+  const { settings } = await open(page, {
+    sessionStats: usageStats,
+  })
+  await settings.getByRole("tab", { name: "Usage", exact: true }).click()
+  await expect(page).toHaveURL("/settings?tab=usage")
+  await expect(
+    settings.getByRole("row", { name: "usage-model openai 3 1,200 300 100 400 0 $0.42", exact: true }),
+  ).toBeVisible()
+  await expect(settings.getByRole("row", { name: "Weekly work 3 2,000 $0.42", exact: true })).toBeVisible()
+  await expect(settings.getByRole("row", { name: "effect 5", exact: true })).toBeVisible()
+  await expect(settings.getByRole("meter")).toHaveCount(0)
+  await settings.getByRole("button", { name: "30 days", exact: true }).click()
+  await expect(settings.getByRole("row", { name: "Monthly work 3 2,000 $0.42", exact: true })).toBeVisible()
+  await expect(settings.getByText("Weekly work", { exact: true })).toHaveCount(0)
+  await settings.getByRole("button", { name: "Refresh", exact: true }).click()
+  await expect(settings.getByRole("row", { name: "Monthly work 3 2,000 $0.42", exact: true })).toBeVisible()
+})
+
+test("usage settings can retry a failed read without leaving settings", async ({ page }) => {
+  let failed = true
+  const { settings } = await open(page, {
+    sessionStats: (from, to) => (failed ? undefined : emptyUsageStats(from, to)),
+  })
+  await settings.getByRole("tab", { name: "Usage", exact: true }).click()
+  await expect(settings.getByRole("alert")).toContainText("Usage statistics couldn't be loaded.")
+  await expect(settings.getByRole("button", { name: "Back to app", exact: true })).toBeVisible()
+  failed = false
+  await settings.getByRole("button", { name: "Try again", exact: true }).click()
+  await expect(settings.getByRole("table", { name: "Models", exact: true })).toBeVisible()
+  await expect(settings.getByRole("region", { name: "Skills", exact: true })).toContainText(
+    "No recorded activity in this period.",
+  )
+  await expect(settings.getByRole("alert")).toHaveCount(0)
+})
+
+test("usage settings use Japanese labels without loading provider limits", async ({ page }) => {
+  const requests: string[] = []
+  page.on("request", (request) => requests.push(new URL(request.url()).pathname))
+  await mockWorkspace(page, {
+    name: "Usage settings",
+    directory,
+    sessionStats: usageStats,
+    usageLimits: usageLimits(),
+    seed: { locale: "ja", tabs: [] },
+  })
+  await page.goto("/settings?tab=usage")
+  const settings = page.getByTestId("settings-screen")
+  await expect(settings.getByRole("heading", { name: "使用量", exact: true })).toBeVisible()
+  await expect(settings.getByRole("button", { name: "7日間", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(settings.getByRole("button", { name: "更新", exact: true })).toBeEnabled()
+  await expect(settings.getByRole("table", { name: "モデル別", exact: true })).toContainText("usage-model")
+  await expect(settings.getByRole("table", { name: "スキル別", exact: true })).toContainText("effect")
+  await expect(settings.getByRole("meter")).toHaveCount(0)
+  expect(requests).not.toContain("/api/experimental/usage/limits")
+})
+
+test("usage settings keep the selected period and data through health reconnects", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-11-09T12:00:00Z") })
+  await mockRemoteServer(page, { name: "Other server" })
+  let failed = false
+  let reads = 0
+  const { settings } = await open(page, {
+    hostname: "usage-host",
+    infoFailures: () => failed,
+    sessionStats: (from, to) => {
+      reads++
+      return usageStats(from, to)
+    },
+  })
+  await settings.getByRole("tab", { name: "Usage", exact: true }).click()
+  await expect(settings.getByText("Weekly work", { exact: true })).toBeVisible()
+  await settings.getByRole("button", { name: "30 days", exact: true }).click()
+  await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
+
+  failed = true
+  const offline = page.waitForResponse((response) => response.url() === `${SERVER}/api/info` && response.status() === 500)
+  await page.clock.fastForward(10_000)
+  await offline
+  const switcher = settings.locator('[data-action="settings-server-select"]:visible')
+  await switcher.click()
+  await expect(page.getByRole("menuitemradio", { name: /usage-host/ })).toContainText("Unreachable")
+  await page.keyboard.press("Escape")
+  await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
+  await expect(settings.getByRole("button", { name: "30 days", exact: true })).toHaveAttribute("aria-pressed", "true")
+
+  failed = false
+  const online = page.waitForResponse((response) => response.url() === `${SERVER}/api/info` && response.status() === 200)
+  await page.clock.fastForward(10_000)
+  await online
+  await switcher.click()
+  await expect(page.getByRole("menuitemradio", { name: /usage-host/ })).not.toContainText("Unreachable")
+  await page.keyboard.press("Escape")
+  await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
+  expect(reads).toBe(2)
+})
 
 test("settings has its own route and returns through app history", async ({ page }) => {
   const { settings } = await open(page)
@@ -783,6 +882,97 @@ test("a project plugin list that fails to load offers Retry instead of an empty 
   await expect(panel.getByRole("status")).toHaveCount(0)
 })
 
+test("project extensions link Console MCPs and skills and offer sign-in as the server-wide page does", async ({
+  page,
+  context,
+}) => {
+  const consoleUrl = CONSOLE_URL
+  await context.route("https://opencode.ai/console/**", (route) => route.fulfill({ body: "Console" }))
+
+  const { settings } = await open(page, {
+    configEntries: [
+      {
+        type: "document",
+        info: {
+          mcp: {
+            servers: {
+              slack: consoleGateway("slack"),
+              github: consoleGateway("github", { protocol: "2026-07-28" }),
+            },
+          },
+        },
+      },
+    ],
+    mcp: [
+      ...["figma", "github", "slack"].map((name) => ({ name, status: { status: "connected" } })),
+      { name: "stripe", integrationID: "stripe-oauth", status: { status: "needs_auth", error: "Sign in required" } },
+    ],
+    integrations: [
+      consoleSignIn,
+      {
+        id: "stripe-oauth",
+        name: "Stripe",
+        methods: [{ id: "oauth", type: "oauth" }],
+        connections: [],
+        metadata: { source: "mcp" },
+      },
+    ],
+    skills: [
+      { id: "review", name: "Code review", path: "/home/test/.config/opencode/skills/review/SKILL.md", content: "x" },
+      { id: "funnel", name: "Funnel analytics", path: "skill://funnel/SKILL.md", content: "x" },
+    ],
+  })
+
+  await openProject(page)
+  await settings.getByRole("tab", { name: "Extensions", exact: true }).click()
+
+  // Console's servers are shared with every project, so they list under Shared.
+  const mcps = settings.getByRole("tabpanel", { name: "MCPs", exact: true })
+  await mcps.getByRole("button", { name: /^Shared/ }).click()
+  await expect(mcps.getByRole("switch", { name: "figma", exact: true })).toBeVisible()
+  // As on the server-wide page, a dot shows each status and the words stay for assistive technology.
+  await expect(mcps.getByRole("switch", { name: "slack", exact: true })).toHaveAccessibleDescription("Connected")
+  await expect(mcps.getByRole("switch", { name: "github", exact: true })).toHaveCount(0)
+  await expect(mcps.getByRole("button", { name: "Manage figma in Console", exact: true })).toHaveCount(0)
+  // A server that needs a sign-in asks for it in the switch's place, as on the server-wide page.
+  await expect(mcps.getByRole("button", { name: "Sign in to stripe", exact: true })).toHaveText("Sign in")
+  await expect(mcps.getByRole("switch", { name: "stripe", exact: true })).toHaveCount(0)
+
+  const connection = page.waitForEvent("popup")
+  await mcps.getByRole("button", { name: "Connect github in Console", exact: true }).click()
+  await expect(await connection).toHaveURL(`${consoleUrl}/org_acme/extensions?connect=github`)
+
+  const manage = page.waitForEvent("popup")
+  await mcps.getByRole("button", { name: "Manage slack in Console", exact: true }).click()
+  await expect(await manage).toHaveURL(`${consoleUrl}/org_acme/extensions/mcp/slack`)
+
+  await settings.getByRole("tab", { name: "Skills", exact: true }).click()
+  const skills = settings.getByRole("tabpanel", { name: "Skills", exact: true })
+  await skills.getByRole("button", { name: /^Shared/ }).click()
+  await expect(skills.getByText("Code review", { exact: true })).toBeVisible()
+  await expect(skills.getByRole("button", { name: "Manage Code review in Console", exact: true })).toHaveCount(0)
+
+  const skill = page.waitForEvent("popup")
+  await skills.getByRole("button", { name: "Manage Funnel analytics in Console", exact: true }).click()
+  await expect(await skill).toHaveURL(`${consoleUrl}/org_acme/extensions?kind=skills&search=funnel`)
+})
+
+test("a Console skill links to Console's home when no Console MCP names the workspace", async ({ page, context }) => {
+  await context.route(`${CONSOLE_URL}**`, (route) => route.fulfill({ body: "Console" }))
+
+  const { settings } = await open(page, {
+    integrations: [consoleSignIn],
+    skills: [{ id: "funnel", name: "Funnel analytics", path: "skill://funnel/SKILL.md", content: "x" }],
+  })
+
+  await settings.getByRole("tab", { name: "Extensions", exact: true }).click()
+  await settings.getByRole("tab", { name: "Skills", exact: true }).click()
+
+  const skill = page.waitForEvent("popup")
+  await settings.getByRole("button", { name: "Manage Funnel analytics in Console", exact: true }).click()
+  await expect(await skill).toHaveURL(CONSOLE_URL)
+})
+
 for (const field of [
   {
     name: "color",
@@ -1050,7 +1240,14 @@ test.describe("pages open before slow data", () => {
   })
 
   test("extensions", async ({ page }) => {
-    const { settings } = await open(page, { mcp: [{ name: "demo-mcp", status: { status: "connected" } }] })
+    const { settings } = await open(page, {
+      mcp: [{ name: "demo-mcp", status: { status: "connected" } }],
+      skills: [
+        { id: "opencode", name: "OpenCode", path: "skill://opencode/SKILL.md", content: "OpenCode help" },
+        { id: "plugin-skill", name: "Plugin skill", path: "skill://plugin-skill/SKILL.md", content: "Plugin help" },
+      ],
+    })
+
     const mcp = await holdRoute(page, (url) => url.pathname === "/api/mcp")
     await settings.getByRole("tab", { name: "Extensions", exact: true }).click()
     await mcp.arrived
@@ -1059,6 +1256,11 @@ test.describe("pages open before slow data", () => {
     mcp.release()
     await settings.getByRole("tab", { name: "MCPs", exact: true }).click()
     await expect(settings.getByRole("switch", { name: "demo-mcp" })).toBeChecked()
+    // Without a Console sign-in, a virtual skill is never linked to Console.
+    await settings.getByRole("tab", { name: "Skills", exact: true }).click()
+    await expect(settings.getByText("OpenCode", { exact: true })).toBeVisible()
+    await expect(settings.getByText("Plugin skill", { exact: true })).toBeVisible()
+    await expect(settings.getByRole("button", { name: /in Console$/ })).toHaveCount(0)
   })
 
   test("extensions show MCP status dots with sign-in, error, and switch controls", async ({ page, context }) => {
@@ -1113,6 +1315,100 @@ test.describe("pages open before slow data", () => {
     const details = page.getByRole("dialog", { name: "blender", exact: true })
     await expect(details).toHaveAccessibleDescription("Connection failed")
     await expect(details.getByText(error, { exact: true })).toBeVisible()
+  })
+
+  test("extensions list Console MCPs and skills with local ones", async ({ page, context }) => {
+    await context.route("https://opencode.ai/console/**", (route) => route.fulfill({ body: "Console" }))
+    const consoleUrl = CONSOLE_URL
+
+    const actions: string[] = []
+
+    const { settings, push } = await open(page, {
+      configEntries: [
+        {
+          type: "document",
+          info: {
+            mcp: {
+              servers: {
+                linear: consoleGateway("linear"),
+                github: consoleGateway("github", { protocol: "2026-07-28" }),
+                clickhouse: consoleGateway("clickhouse"),
+              },
+            },
+          },
+        },
+        {
+          type: "document",
+          path: "/home/test/.config/opencode/opencode.json",
+          info: { mcp: { servers: { linear: { type: "remote", url: "https://mcp.linear.app/mcp" } } } },
+        },
+      ],
+      integrations: [consoleSignIn],
+      mcp: ["figma", "linear", "github", "clickhouse"].map((name) => ({ name, status: { status: "connected" } })),
+      skills: [
+        {
+          id: "review",
+          name: "Code review",
+          path: "/home/test/.config/opencode/skills/review/SKILL.md",
+          content: "Review code",
+        },
+        { id: "opencode", name: "OpenCode", path: "skill://opencode/SKILL.md", content: "OpenCode help" },
+        { id: "report", name: "Report", path: "skill://report/SKILL.md", content: "Report bugs" },
+        { id: "browser", name: "Browser", path: "skill://browser/SKILL.md", content: "Browser help" },
+        { id: "funnel", name: "Funnel analytics", path: "skill://funnel/SKILL.md", content: "Analyze the funnel" },
+      ],
+      onMcpAction: (input) => {
+        actions.push(`${input.server}:${input.action}`)
+      },
+    })
+
+    await settings.getByRole("tab", { name: "Extensions", exact: true }).click()
+
+    // One list: a name both configs define is one row, the user's server, with Console's link kept. A Console server
+    // whose account isn't connected asks for the connection in the switch's place.
+    await expect(settings.getByRole("switch")).toHaveCount(3)
+    await expect(settings.getByRole("switch", { name: "linear", exact: true })).toBeChecked()
+    await expect(settings.getByRole("switch", { name: "figma", exact: true })).toBeChecked()
+    await expect(settings.getByRole("switch", { name: "github", exact: true })).toHaveCount(0)
+    await expect(settings.getByRole("button", { name: "Manage linear in Console" })).toHaveText(
+      "Replaces OpenCode Console",
+    )
+    await expect(settings.getByRole("button", { name: "Manage github in Console" })).toHaveText("github")
+    await expect(settings.getByRole("button", { name: "Manage clickhouse in Console" })).toHaveText("clickhouse")
+    await expect(settings.getByText("OpenCode Console", { exact: true })).toHaveCount(0)
+    await expect(settings.getByRole("button", { name: "Manage figma in Console" })).toHaveCount(0)
+
+    const connection = page.waitForEvent("popup")
+    await settings.getByRole("button", { name: "Connect github in Console" }).click()
+    await expect(await connection).toHaveURL(`${consoleUrl}/org_acme/extensions?connect=github`)
+
+    const manage = page.waitForEvent("popup")
+    await settings.getByRole("button", { name: "Manage linear in Console" }).click()
+    await expect(await manage).toHaveURL(`${consoleUrl}/org_acme/extensions/mcp/linear`)
+
+    const toggle = settings.getByRole("switch", { name: "clickhouse", exact: true })
+    await toggle.press("Space")
+    await expect(toggle).not.toBeChecked()
+    expect(actions).toEqual(["clickhouse:disconnect"])
+    const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/config")
+    await push([{ id: "evt_config_extensions", created: 1, type: "config.updated", data: {} }])
+    await refreshed
+    await expect(toggle).not.toBeChecked()
+
+    // One sorted list: only a skill Console delivers links to Console, filtered to that skill.
+    await settings.getByRole("tab", { name: "Skills", exact: true }).click()
+    await expect(settings.locator(".settings-extension-name")).toHaveText([
+      "Browser",
+      "Code review",
+      "Funnel analytics",
+      "OpenCode",
+      "Report",
+    ])
+    await expect(settings.getByRole("button", { name: /in Console$/ })).toHaveCount(1)
+
+    const skill = page.waitForEvent("popup")
+    await settings.getByRole("button", { name: "Manage Funnel analytics in Console", exact: true }).click()
+    await expect(await skill).toHaveURL(`${consoleUrl}/org_acme/extensions?kind=skills&search=funnel`)
   })
 
   for (const fails of [false, true]) {

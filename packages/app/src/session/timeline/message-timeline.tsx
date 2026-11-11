@@ -38,6 +38,7 @@ import {
 import { SessionHeaderSpacer } from "@/session/header/session-header"
 import { SessionHeaderGap } from "@/session/header/drag-area"
 import { SessionWorkingIndicator } from "@/session/header/session-working-indicator"
+import { TaskFamilyMenu } from "@/session/task-family-menu"
 
 type BlockingTask = { type: "shell" | "subagent"; partID: string; id?: string; label?: string }
 
@@ -579,6 +580,9 @@ function MessageTimelineView(
                     onBlur={props.title.submit}
                   />
                 </Show>
+              </Show>
+              <Show when={!parentID() && sessionID()} keyed>
+                {(id) => <TaskFamilyMenu sessionID={id} active={props.active !== false} />}
               </Show>
               <Show when={!parentID() && sessionID()} keyed>
                 {(id) => (

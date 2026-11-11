@@ -87,7 +87,7 @@ describe("public event manifest", () => {
       expect(EventManifest.Durable.has(definition.type)).toBe(false)
     }
 
-    expect(Credential.Event.Updated.data.make({})).toEqual({})
+    expect(Credential.Event.Updated.data.make({ integrationID, credentialID })).toEqual({ integrationID, credentialID })
     expect(Credential.Event.Switched.data.make({ integrationID, credentialID })).toEqual({
       integrationID,
       credentialID,
@@ -112,6 +112,7 @@ describe("public event manifest", () => {
         "session.model.selected.1",
         "session.moved.1",
         "session.renamed.1",
+        "session.task.detached.1",
         "session.metadata.updated.1",
         "session.permissions.1",
         "session.viewed.1",

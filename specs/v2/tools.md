@@ -153,6 +153,18 @@ After tool execution, the registry bounds the model content sent to the provider
 
 `execute.after` hooks receive the canonical bounded outcome and its internal managed paths. Hooks may deliberately transform that outcome; changed content is normalized and bounded again before publication.
 
+## Parallel Tool Calls
+
+The calls of one model step run concurrently. As each `tool-call` event arrives from the provider stream, the runner forks an independent fiber, so later calls never wait for earlier ones; results still settle per call and are durable in call order. Interruption, declines, and the step's `cancel` apply to every call in flight, not only the newest.
+
+`tool_calls.parallel` selects the policy and `agents.<name>.parallel_tool_calls` overrides it for one agent:
+
+- `"auto"` (default) runs independent calls concurrently and leaves the provider request unchanged. Results are still merged in call order.
+- `true` additionally asks the provider to enable parallel tool calling, by sending `parallel_tool_calls: true` on Chat and Responses routes or `disable_parallel_tool_use: false` on Anthropic Messages. This matters for models that only batch when asked.
+- `false` asks the provider not to batch calls and serializes local execution through a single permit, so callbacks, permission prompts, and file effects observe one call at a time. The stream keeps reading while a call is in flight.
+
+Only tool calls execute concurrently; a step still ends before the next model request. Provider-hosted calls (`providerExecuted`) never create a local fiber.
+
 ## Failures Preserve Interruptions
 
 Outcomes remain distinct:

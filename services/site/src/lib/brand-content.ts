@@ -1,7 +1,7 @@
 import type { Translate } from "~/i18n"
 import { pressEmail } from "~/lib/contact"
 import { absoluteUrl, blocks, link, type MarkdownContext } from "~/lib/markdown"
-import { mediaUrl } from "~/lib/media"
+import { brandAssets, mediaUrl } from "~/lib/media"
 // Brand files at stable public URLs (public/brand/files), so links in /brand.md and the page never
 // change between builds. The sources stay in src/asset/brand.
 const logoLightPng = "/brand/files/opencode-logo-light.png"
@@ -35,8 +35,6 @@ const wordmarkSolidDarkSvg = "/brand/files/opencode-wordmark-solid-dark.svg"
 const avatarDark1024Png = "/brand/files/opencode-avatar-dark-1024.png"
 const avatarLight1024Png = "/brand/files/opencode-avatar-light-1024.png"
 
-/** Every logo and wordmark in one zip. */
-export const brandAssets = mediaUrl("/opencode-brand-assets.zip")
 
 /** The brand page copy, shared by the page and its Markdown version. */
 export function brandContent(t: Translate) {
@@ -377,12 +375,12 @@ export function colorFormats(hex: string) {
 export type BadgeFont = "sans" | "mono" | "mono caps"
 const fontSuffix = (font: BadgeFont) => (font === "sans" ? "" : `-${font.replace(" ", "-")}`)
 
-/** A badge file at its stable URL in public/brand/badges. */
+/** A badge file at its stable URL in public/brand/badges (the size may be a template's "{{size}}"). */
 export function badgeFile(
   label: string,
   style: string,
   theme: string,
-  size: number,
+  size: number | string,
   extension: "svg" | "png",
   font: BadgeFont = "sans",
 ) {
@@ -404,7 +402,7 @@ export function badgeMarkdown(
   label: string,
   alt: string,
   style: string,
-  size: number,
+  size: number | string,
   font: BadgeFont = "sans",
   theme = "light",
 ) {

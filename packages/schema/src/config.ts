@@ -18,6 +18,7 @@ import { ConfigPolicy } from "./config/policy.js"
 import { ConfigProvider } from "./config/provider.js"
 import { ConfigReference } from "./config/reference.js"
 import { ConfigWebSearch } from "./config/websearch.js"
+import { ConfigToolCalls } from "./config/tool-calls.js"
 import { ConfigToolOutput } from "./config/tool-output.js"
 import { ConfigWatcher } from "./config/watcher.js"
 import { ConfigWarming } from "./config/warming.js"
@@ -81,6 +82,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   }),
   tool_output: ConfigToolOutput.Info.pipe(optional).annotate({
     description: "Tool output truncation thresholds",
+  }),
+  tool_calls: ConfigToolCalls.Info.pipe(optional).annotate({
+    description: "Tool call execution behavior",
   }),
   mcp: ConfigMCP.Info.pipe(optional).annotate({
     description: "MCP server configuration",

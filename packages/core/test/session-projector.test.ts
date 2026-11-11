@@ -26,7 +26,7 @@ import { SessionInbox } from "@opencode/core/session/inbox"
 import { SessionStore } from "@opencode/core/session/store"
 import { SessionStored } from "@opencode/core/session/stored"
 import { SessionBlob } from "@opencode/core/session/blob"
-import { Config } from "@opencode/core/config"
+import { Flag } from "@opencode/core/flag"
 import { Document, Info } from "@opencode/schema/config"
 import { ConfigExperimental } from "@opencode/schema/config/experimental"
 import { SessionHistory } from "@opencode/core/session/history"
@@ -69,7 +69,7 @@ const model = { id: Model.ID.make("model"), providerID: Provider.ID.make("provid
 const previousModel = { ...model, variant: Model.VariantID.make("medium") }
 const encodeMessage = Schema.encodeSync(SessionMessage.Info)
 const experimental = (flags: ConstructorParameters<typeof ConfigExperimental.Info>[0]) =>
-  Config.testLayer([
+  Flag.testLayer([
     new Document({ type: "document", info: new Info({ experimental: new ConfigExperimental.Info(flags) }) }),
   ])
 const mediaBlob = experimental({ media_blob: true })
@@ -1479,7 +1479,7 @@ describe("SessionProjector", () => {
       const refs = [
         { mime: "image/png", source: { type: "inline" }, name: "shot.png", uri },
         { mime: "image/png", source: { type: "inline" }, name: "copy.png", uri },
-      ]
+      ] satisfies SessionStored.UserPayload["files"]
 
       yield* inbox.admit({ id, sessionID, item: { type: "user", payload: { text: "look", files }, delivery: "steer" } })
       const queued = yield* db
@@ -1972,8 +1972,8 @@ describe("SessionProjector", () => {
           status: "completed",
           input: {},
           content: [{ type: "file", uri: `data:image/png;base64,${png.toString("base64")}`, mime: "image/png" }],
-          time: { created: 1, completed: 2 },
         },
+        time: { created: 1, completed: 2 },
       })
       expect(split.moved).toBe(true)
       expect(split.hashes).toEqual(new Set([hash]))

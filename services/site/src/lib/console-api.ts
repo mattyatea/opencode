@@ -6,35 +6,51 @@ import { detectPlatform } from "~/lib/platform"
 import { modules, type Letter } from "~/lib/font-content"
 import { freeModels } from "~/lib/get-started"
 import { sdkInstalls } from "~/lib/install-commands"
+import { liteQuitKey } from "~/lib/console-stub"
 
-// window.opencode: a small console API for developers who open DevTools on the site. Site loads
-// this module once the page is idle (Settings › Other › Console API). opencode.try() and
-// opencode.install.pick() load Text.js console apps from /textjs/ (packages/console/textjs) on
-// demand, so React and Text.js never enter the site's own bundles.
+// window.opencode: a small console API for developers who open DevTools on the site. The page's
+// stub (console-stub.ts, Settings › Other › Console API) loads this module when someone types
+// `opencode`. opencode.try() and opencode.install.pick() load Text.js console apps from /textjs/
+// (services/site/textjs) on demand, so React and Text.js never enter the site's own bundles.
+//
+// OpenCode Lite also starts on its own once a visitor shows they want the console: DevTools docks,
+// they press a DevTools shortcut on the page, or it already started in this tab. Text.js's
+// onConsoleIntent (in the stub) watches for that; its ~2 kB chunk is all a desktop visitor
+// downloads until then, and touch screens skip it. Quitting Lite turns this off for the browser
+// until opencode.try().
 
 const brand = {
   light: { open: "#626262", code: "#1f1f1f", inner: "#d2d2d2", text: "#333333", dim: "#737373", link: "#3b5cf6" },
-  dark: { open: "#aeaeae", code: "#eeeeee", inner: "#4b4b4b", text: "#c8c8c8", dim: "#8a8a8a", link: "#4f8bff" },
+  dark: { open: "#aeaeae", code: "#eeeeee", inner: "#4b4b4b", text: "#c8c8c8", dim: "#8a8a8a", link: "#6b8fff" },
 }
 const mono = "font-family: ui-monospace, Menlo, Consolas, monospace;"
 const buildLabels: Record<string, string> = {
   "darwin-aarch64-dmg": "macOS (Apple Silicon)",
   "darwin-x64-dmg": "macOS (Intel)",
   "windows-x64-nsis": "Windows (x64)",
-  "linux-x64-deb": "Linux (.deb)",
-  "linux-x64-rpm": "Linux (.rpm)",
+  "windows-aarch64-nsis": "Windows (ARM64)",
+  "linux-x64-deb": "Linux (.deb, x64)",
+  "linux-aarch64-deb": "Linux (.deb, ARM64)",
+  "linux-x64-rpm": "Linux (.rpm, x64)",
+  "linux-aarch64-rpm": "Linux (.rpm, ARM64)",
+  "linux-x64-appimage": "Linux (AppImage, x64)",
+  "linux-aarch64-appimage": "Linux (AppImage, ARM64)",
 }
 const buildIds: Record<string, string> = {
   "darwin-aarch64-dmg": "mac-arm",
   "darwin-x64-dmg": "mac-intel",
   "windows-x64-nsis": "windows",
+  "windows-aarch64-nsis": "windows-arm",
   "linux-x64-deb": "deb",
+  "linux-aarch64-deb": "deb-arm",
   "linux-x64-rpm": "rpm",
+  "linux-aarch64-rpm": "rpm-arm",
+  "linux-x64-appimage": "appimage",
+  "linux-aarch64-appimage": "appimage-arm",
 }
 const docsTopics = [...docsPages, ...docsConfigure, ...docsProducts.filter((item) => item.label !== "V1")]
 
 export function install() {
-  if (Object.hasOwn(window, "opencode")) return
   const colors = matchMedia("(prefers-color-scheme: dark)").matches ? brand.dark : brand.light
   const say = (...parts: [string, string?][]) =>
     console.log(
@@ -95,7 +111,44 @@ export function install() {
     return command(forThisComputer[0])
   }
 
+  // One OpenCode Lite at a time. Quitting it brings the greeting back, and stops it from starting on
+  // its own in this browser (people who debug the site open DevTools all day) until opencode.try().
+  let lite: Promise<{ stop: () => void }> | undefined
+  const startLite = (reason?: string) => {
+    if (lite) return lite
+    // Lite takes a moment to download, and the visitor may click back into the page from DevTools
+    // meanwhile. Its keyboard needs to know that focus left the page (see src/lite.tsx). A DevTools
+    // shortcut counts at once, since DevTools takes focus as it opens.
+    let away = reason === "shortcut" || !document.hasFocus()
+    const blur = () => (away = true)
+    window.addEventListener("blur", blur)
+    lite = textjs<{
+      start: (options: { away: () => boolean; onExit: () => void }) => Promise<{ stop: () => void }>
+    }>("lite").then((app) =>
+      app.start({
+        away: () => away,
+        onExit: () => {
+          lite = undefined
+          localStorage.setItem(liteQuitKey, "1")
+          void import("@textjs/core/experimental").then((textjs) =>
+            sessionStorage.removeItem(textjs.CONSOLE_INTENT_KEY),
+          )
+          greet(colors, say)
+          say([
+            "OpenCode Lite won't start on its own in this browser again. Type opencode.try() to bring it back.",
+            dim,
+          ])
+        },
+      }),
+    )
+    lite.finally(() => window.removeEventListener("blur", blur)).catch(() => (lite = undefined))
+    return lite
+  }
+
   const pick = async () => {
+    // Two apps can't share the console: the picker takes it from OpenCode Lite.
+    await lite?.then((app) => app.stop()).catch(() => undefined)
+    lite = undefined
     say(["Click an empty part of the page, then use ↑ ↓ and Enter: keys reach the console app through the page.", dim])
     const options = [
       ...installs.map((item) => ({ value: item.command, label: item.id, description: item.command })),
@@ -220,25 +273,27 @@ export function install() {
     },
     manifest,
     async try() {
+      localStorage.removeItem(liteQuitKey)
+      if (lite) return say(["OpenCode Lite is already running. Click an empty part of the page, then type.", dim])
       say(["Click an empty part of the page, then type: keys reach the console app through the page.", dim])
       if (["ios", "android"].includes(detectPlatform() ?? ""))
         return say(["OpenCode Lite needs a desktop browser with DevTools. Try https://textjs.org/opencode", dim])
       if (/^((?!chrome|android).)*safari/i.test(navigator.userAgent))
         say(["In Safari, turn on Settings › Advanced › Show features for web developers.", dim])
-      const lite = await textjs<{ start: () => Promise<unknown> }>("lite").catch(() => undefined)
-      if (!lite)
+      const started = await startLite().then(
+        () => true,
+        () => false,
+      )
+      if (!started)
         return say([
           "OpenCode Lite couldn't load here. Try it at https://textjs.org/opencode, or install OpenCode: opencode.install()",
           dim,
         ])
-      await lite.start()
     },
     toString: () => "opencode: type opencode.help()",
   }
   Object.defineProperty(window, "opencode", { value: api, configurable: true, writable: true })
-  if (sessionStorage.getItem("opencode-console-greeted")) return
-  sessionStorage.setItem("opencode-console-greeted", "1")
-  greet(colors, say)
+  return { api, startLite, greet: () => greet(colors, say) }
 }
 
 type ModelsDev = Record<

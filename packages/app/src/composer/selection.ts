@@ -198,6 +198,7 @@ export function createComposerModelSelection(input: {
   )
 
   const selection = {
+    sessionID: () => undefined,
     trackSessionCommit: local.model.trackSessionCommit,
     remembered: (): AgentChoices =>
       Object.fromEntries(

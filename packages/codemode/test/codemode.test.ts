@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Effect, Schema } from "effect"
-import { CodeMode, Extension, Tool, toolError } from "../src/index.js"
+import { CodeMode, Extension, Tool, toolError } from "./lib/index.js"
 
 const run = (tool: Tool.Tool<never>) =>
   Effect.runPromise(CodeMode.make({ tools: { host: { call: tool } } }).execute("return await tools.host.call({})"))
@@ -167,7 +167,8 @@ describe("CodeMode call hooks", () => {
   }
   // Every hook logs its event, so the order across tools and extensions is visible.
   const observe = (events: Array<string>): CodeMode.Hooks => ({
-    "tool.before": (call) => Effect.sync(() => void events.push(`tool.before ${JSON.stringify(call)}`)),
+    "tool.before": (call) =>
+      Effect.sync(() => void events.push(`tool.before ${JSON.stringify({ name: call.name, input: call.input })}`)),
     "tool.after": (call, result) => Effect.sync(() => void events.push(`tool.after ${call.name} ${ended(result)}`)),
     "extension.before": (call) => Effect.sync(() => void events.push(`extension.before ${JSON.stringify(call)}`)),
     "extension.after": (call, result) =>
@@ -788,6 +789,34 @@ describe("CodeMode public contract", () => {
     }
   })
 
+  test("a freeform tool takes its one string field directly and still accepts the object", async () => {
+    const input = Schema.Struct({ url: Schema.String.annotate({ description: "Page URL" }) })
+    const fetchPage = Tool.make({
+      description: "Fetch a page",
+      input,
+      freeform: true,
+      output: Schema.String,
+      execute: ({ url }) => Effect.succeed(url),
+    })
+    const plain = Tool.make({
+      description: "Fetch a page",
+      input,
+      output: Schema.String,
+      execute: ({ url }) => Effect.succeed(url),
+    })
+    const runtime = CodeMode.make({ tools: { fetchPage, plain } })
+    expect(runtime.catalog.map((tool) => tool.signature)).toEqual([
+      "tools.fetchPage(/** Page URL */ url: string): Promise<string>",
+      "tools.plain({\n  /** Page URL */\n  url: string,\n}): Promise<string>",
+    ])
+    expect(
+      await Effect.runPromise(
+        runtime.execute('return [await tools.fetchPage("a"), await tools.fetchPage({ url: "b" })]'),
+      ),
+    ).toMatchObject({ ok: true, value: ["a", "b"] })
+    expect(await Effect.runPromise(runtime.execute('return await tools.plain("a")'))).toMatchObject({ ok: false })
+  })
+
   test("renders equivalent catalogs identically regardless of tool insertion order", () => {
     const alpha = Tool.make({
       description: "Alpha tool",
@@ -928,7 +957,7 @@ describe("CodeMode public contract", () => {
     const result = await Effect.runPromise(limited.execute(`search({}); return search({})`))
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.kind).toBe("ToolCallLimitExceeded")
-    expect(observed).toEqual([{ name: "search", input: {} }])
+    expect(observed).toEqual([{ name: "search", input: {}, key: expect.any(String) }])
   })
 
   test("search is an opaque, shadowable global like other built-ins", async () => {
@@ -987,6 +1016,90 @@ describe("CodeMode public contract", () => {
         })
       }
     }
+  })
+
+  test("search preserves Unicode terms instead of treating them as an empty browse", async () => {
+    const tool = (description: string) =>
+      Tool.make({
+        description,
+        input: Schema.Struct({}),
+        output: Schema.String,
+        execute: () => Effect.succeed("ok"),
+      })
+    const runtime = CodeMode.make({
+      tools: {
+        notes: {
+          automation: tool("Create an automation"),
+          meeting: tool("会議の議事録を検索"),
+          cafe: tool("Find café notes"),
+        },
+      },
+    })
+    for (const query of ["議事録", "会議", "不存在", "!!!", "café", "cafe\u0301"]) {
+      const result = await Effect.runPromise(runtime.execute(`return search({ query: ${JSON.stringify(query)} })`))
+      expect(result.ok).toBe(true)
+      if (!result.ok) continue
+      const expected =
+        query === "議事録" || query === "会議"
+          ? ["tools.notes.meeting"]
+          : query.normalize("NFC") === "café"
+            ? ["tools.notes.cafe"]
+            : []
+      expect(result.value).toMatchObject({ items: expected.map((path) => ({ path })), remaining: 0, next: null })
+    }
+    const browse = await Effect.runPromise(runtime.execute(`return search({ query: "*" }).items.length`))
+    expect(browse).toMatchObject({ ok: true, value: 3 })
+    const mixed = await Effect.runPromise(
+      runtime.execute(`return search({ query: "議事録 nonexistentzzzz" }).items.map(x => x.path)`),
+    )
+    expect(mixed).toMatchObject({ ok: true, value: ["tools.notes.meeting"] })
+  })
+
+  test("summary discovery preserves complete descriptions and paging without signatures", async () => {
+    const description = "Read only. ".repeat(30) + "Never send without explicit approval."
+    const tool = Tool.make({
+      description,
+      input: Schema.Struct({ id: Schema.String }),
+      output: Schema.String,
+      execute: () => Effect.succeed("ok"),
+    })
+    const runtime = CodeMode.make({ tools: { notes: { first: tool, second: tool } } })
+    const summary = await Effect.runPromise(
+      runtime.execute(`return search({ namespace: "notes", detail: "summary", limit: 1 })`),
+    )
+    expect(summary).toMatchObject({
+      ok: true,
+      value: {
+        items: [{ path: "tools.notes.first", description }],
+        remaining: 1,
+        next: { offset: 1 },
+      },
+    })
+    if (summary.ok)
+      expect(summary.value).toStrictEqual({
+        items: [{ path: "tools.notes.first", description }],
+        remaining: 1,
+        next: { offset: 1 },
+      })
+    const full = await Effect.runPromise(
+      runtime.execute(`return search({ query: "tools.notes.first", detail: "full" })`),
+    )
+    expect(full).toMatchObject({
+      ok: true,
+      value: {
+        items: [
+          {
+            path: "tools.notes.first",
+            description,
+            signature: "tools.notes.first({\n  id: string,\n}): Promise<string>",
+          },
+        ],
+        remaining: 0,
+        next: null,
+      },
+    })
+    const invalid = await Effect.runPromise(runtime.execute(`return search({ detail: "short" })`))
+    expect(invalid.ok).toBe(false)
   })
 
   test("scopes search to one namespace and browses it alphabetically", async () => {

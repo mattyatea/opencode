@@ -11,6 +11,8 @@ import {
 } from "@opentui/core"
 import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, Switch, Match, For } from "solid-js"
 import path from "path"
+import { largePaste } from "@opencode/util/paste"
+import { uuid } from "@opencode/util/uuid"
 import { useLocal } from "../../context/local"
 import { useTheme, useThemes } from "../../context/theme"
 import { tint } from "../../theme/color"
@@ -1096,6 +1098,7 @@ export function Prompt(props: PromptProps) {
   })
 
   let submitting = false
+  const pasteUploads = new Set<Promise<void>>()
   async function submit(delivery: SessionInbox.Delivery = "steer") {
     if (disabled()) return false
     // Prevent overlapping invocations (e.g. a double-pressed Enter, or the
@@ -1107,6 +1110,8 @@ export function Prompt(props: PromptProps) {
     if (submitting) return false
     submitting = true
     try {
+      await Promise.all(pasteUploads)
+      if (disposed || input.isDestroyed) return false
       return await submitInner(delivery)
     } finally {
       submitting = false
@@ -1429,6 +1434,7 @@ export function Prompt(props: PromptProps) {
         draft.extmarkToPart.set(extmarkId, { type: "pasted", index })
       }),
     )
+    return extmarkId
   }
 
   function expandPastedText(extmarkId: number) {
@@ -1457,6 +1463,33 @@ export function Prompt(props: PromptProps) {
         }
         pasteAttachment(attachment)
       })
+      return
+    }
+
+    if (store.mode !== "shell" && config.experimental?.["paste-files"] && largePaste(normalizedText)) {
+      // Keep the original in the draft until upload succeeds, including on failure or unmount.
+      const id = pasteText(normalizedText, "[paste.txt]")
+      const location = currentLocation.ref ?? data.location.default()
+      const upload = client.api.server
+        .info()
+        .then((info) =>
+          client.api.experimental.file.write({
+            location,
+            path: `${info.paths.tmp}/uploads/${uuid()}/paste.txt`,
+            payload: new TextEncoder().encode(normalizedText),
+          }),
+        )
+        .then((result) => {
+          if (disposed || input.isDestroyed || !input.extmarks.get(id)) return
+          const ref = store.extmarkToPart.get(id)
+          if (ref?.type !== "pasted" || store.prompt.pasted[ref.index]?.text !== normalizedText) return
+          setStore("prompt", "pasted", ref.index, "text", `Attached file: \`${result.data.path}\``)
+        })
+        .catch((error: unknown) => {
+          toast.show({ title: "Failed to upload paste.txt", message: errorMessage(error), variant: "error" })
+        })
+        .finally(() => pasteUploads.delete(upload))
+      pasteUploads.add(upload)
       return
     }
 

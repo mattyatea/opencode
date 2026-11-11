@@ -22,7 +22,11 @@ import { useI18n } from "@opencode/ui/context/i18n"
 import { Markdown } from "../components/markdown"
 import { linkSegments } from "../components/link-segments"
 import { LinkedText } from "../components/linked-text"
-import { sessionReferenceText, setupSessionLinks } from "../components/markdown-session-links"
+import {
+  sessionReferenceClipboardText,
+  sessionReferenceText,
+  setupSessionLinks,
+} from "../components/markdown-session-links"
 import { useMarkdown } from "../context/markdown"
 import { useSources } from "../context/sources"
 import { SourcesChip } from "../sources/sources-chip"
@@ -54,11 +58,9 @@ import type {
   SessionMessageUser,
 } from "@opencode/client/promise"
 import type { SessionUserActions, SessionUserAttachmentReference, SessionUserComment } from "../actions"
-import { writeClipboard } from "@opencode/ui/clipboard"
 import { agentLabel } from "./agent-label"
 import { isInterruptedError } from "../timeline/turn-phase-machine"
 import { attached, imageAttachmentPlaceholderStyle, typeLabel } from "../components/message-file"
-export { writeClipboard } from "@opencode/ui/clipboard"
 import {
   DISPOSED_ATTACHMENT_MEDIA_EVENT,
   INITIAL_ATTACHMENT_MEDIA_STATE,
@@ -91,7 +93,9 @@ import {
   transitionPacedText,
   type PacedTextEvent,
 } from "./paced-text-machine"
-import { createCopyFeedback } from "../components/copy"
+import { createCopyFeedback, writeClipboard } from "../components/copy"
+
+export { writeClipboard } from "../components/copy"
 
 type MetaItem = { label: string; variant?: boolean }
 
@@ -682,7 +686,12 @@ export function CurrentUserMessageDisplay(props: {
               </Tooltip>
             </div>
           </Show>
-          <div data-slot="user-message-text" dir="auto" data-comments={comments().length > 0 ? "true" : undefined}>
+          <div
+            data-slot="user-message-text"
+            dir="auto"
+            data-comments={comments().length > 0 ? "true" : undefined}
+            onCopy={copySessionReferences}
+          >
             <Show
               when={props.fold}
               fallback={<CurrentHighlightedText text={props.text} files={inlineFiles()} agents={agents()} />}
@@ -888,11 +897,31 @@ function CurrentHighlightedText(props: { text: string; files: PromptAttachment[]
 
 type HighlightSegment = { text: string; type?: "file" | "agent" | "link" }
 
+function copySessionReferences(event: ClipboardEvent & { currentTarget: HTMLDivElement }) {
+  const selection = window.getSelection()
+
+  if (event.defaultPrevented || !event.clipboardData || !selection || selection.isCollapsed) return
+  const ranges = Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index))
+
+  if (!ranges.every((range) => event.currentTarget.contains(range.commonAncestorContainer))) return
+  const text = sessionReferenceClipboardText(event.currentTarget, ranges)
+
+  if (text === undefined) return
+  event.preventDefault()
+  event.clipboardData.setData("text/plain", text)
+}
+
 function SessionReferenceText(props: { text: string }) {
   const markdown = useMarkdown()
   const root = document.createElement("span")
   createEffect(() => root.replaceChildren(sessionReferenceText(props.text, (id) => markdown?.sessionTitle?.(id))))
-  onCleanup(setupSessionLinks(root, () => markdown?.openSession))
+  onCleanup(
+    setupSessionLinks(
+      root,
+      () => markdown?.openSession,
+      () => markdown?.sessionMenu,
+    ),
+  )
 
   return root
 }
@@ -1215,7 +1244,11 @@ export function AssistantTextContent(props: {
 
   function copyFooter() {
     return (
-      <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted() ? "" : undefined}>
+      <div
+        data-slot="text-part-copy-wrapper"
+        data-interrupted={interrupted() ? "" : undefined}
+        data-copy-always-visible={data.copyAlwaysVisible ? "" : undefined}
+      >
         <MessageActionButton
           icon={copy.copied() ? "check" : "copy"}
           size="small"

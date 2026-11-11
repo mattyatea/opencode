@@ -7,7 +7,7 @@
       {
         "id": "privacy-policy-table-of-contents",
         "title": "Privacy Policy Table of Contents",
-        "body": " What this Privacy Policy CoversPersonal DataCategories of Personal Data We CollectOur Commercial or Business Purposes for Collecting Personal DataOther Permitted Purposes for Processing Personal DataCategories of Sources of Personal DataHow We Disclose Your Personal DataTracking Tools and Opt-OutProduct Analytics on opencode.ai/consoleData SecurityPersonal Data of ChildrenCalifornia Resident Rights (\"CCPA\")Colorado Resident Rights (\"CPA\")Connecticut Resident Rights (\"CTDPA\")Delaware Resident Rights (\"DPDPA\")Iowa Resident Rights (\"ICDPA\")Montana Resident Rights (\"MCDPA\")Nebraska Resident Right",
+        "body": " What this Privacy Policy CoversPersonal DataCategories of Personal Data We CollectOur Commercial or Business Purposes for Collecting Personal DataOther Permitted Purposes for Processing Personal DataCategories of Sources of Personal DataHow We Disclose Your Personal DataIntegrations with Third-Party ServicesTracking Tools and Opt-OutProduct Analytics on opencode.aiData SecurityPersonal Data of ChildrenCalifornia Resident Rights (\"CCPA\")Colorado Resident Rights (\"CPA\")Connecticut Resident Rights (\"CTDPA\")Delaware Resident Rights (\"DPDPA\")Iowa Resident Rights (\"ICDPA\")Montana Resident Rights (\"",
         "path": "/legal/privacy-policy",
         "document": "Privacy Policy"
       },
@@ -103,6 +103,13 @@
         "document": "Privacy Policy"
       },
       {
+        "id": "integrations",
+        "title": "Integrations with Third-Party Services",
+        "body": " OpenCode Console lets a workspace connect third-party services (\"Connected Services\"), such as Slack, Zoom, HubSpot, GitHub, Google Workspace and Microsoft 365, so that its members' OpenCode agents can use them. This section explains how we handle data from Connected Services. It supplements the rest of this Privacy Policy and controls where they conflict. What we receive and store. To connect a Connected Service, you sign in with that service and authorize OpenCode Console, or you or a workspace administrator enter an API key. We encrypt and store the access and refresh tokens or API keys, a",
+        "path": "/legal/privacy-policy",
+        "document": "Privacy Policy"
+      },
+      {
         "id": "tracking-tools",
         "title": "Tracking Tools and Opt-Out",
         "body": " The Services use cookies and similar technologies such as pixel tags, web beacons, clear GIFs and JavaScript (collectively, \"Cookies\") to enable our servers to recognize your web browser, tell us how and when you visit and use our Services, analyze trends, learn about our user base and operate and improve our Services. Cookies are small pieces of data– usually text files – placed on your computer, tablet, phone or similar device when you use that device to access our Services. We may also supplement the information we collect from you with information received from third parties, including th",
@@ -111,8 +118,8 @@
       },
       {
         "id": "product-analytics",
-        "title": "Product Analytics on opencode.ai/console",
-        "body": " When you visit pages under opencode.ai/console, including the sign-in pages, we record the pages you view, how long each page is visible, how long you're active on it and how far you scroll, the links and buttons you click, and the type of any sign-in error. In the Console we record the pages you open and the controls you use in its navigation, plan, billing and onboarding screens. We also record account and workspace events: when you sign up, sign in, verify your email, approve a device, create or delete a workspace, invite or remove members, create API keys, connect providers or clients, an",
+        "title": "Product Analytics on opencode.ai",
+        "body": " When you visit opencode.ai, including the docs and the Console, we record the pages you view, how long each page is visible, how long you're active on it, how far you scroll and how quickly it loads. We also record the links and buttons you click, when you download an app or copy a command, when you search (but not what you search for), and the type of any sign-in error. We record each click under a fixed name we give that link or button, so text you or your team entered, such as workspace names or email addresses, isn't recorded even when it appears on the page. We record account and workspa",
         "path": "/legal/privacy-policy",
         "document": "Privacy Policy"
       },

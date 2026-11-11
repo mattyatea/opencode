@@ -1,7 +1,9 @@
 import type { Page } from "@playwright/test"
-import type { OpenCodeEvent, SessionMessageInfo } from "@opencode/client/promise"
+import type { OpenCodeEvent, SessionMessageInfo, SessionStatsInfo, UsageLimitsInfo } from "@opencode/client/promise"
 import { Permission } from "@opencode/schema/permission"
+import { artifactKind, artifactMime } from "@opencode/util/artifact"
 import { Model } from "@opencode/schema/model"
+import { SessionInbox } from "@opencode/schema/session-inbox"
 import { Worktree } from "@opencode/schema/worktree"
 import { Effect, Layer, Option, Predicate, Schema } from "effect"
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http"
@@ -49,6 +51,8 @@ export interface MockServerConfig {
   server?: string
   // The machine name `/api/info` reports; omitted like a server that predates it.
   hostname?: string
+  // Fail health probes while a scenario simulates a temporarily disconnected server.
+  infoFailures?: () => boolean
   provider: Resolvable<MockProviderCatalog>
   integrations?: Resolvable<unknown[]>
   // Runs on POST /api/credential/:id/activate; the fixture swaps its integrations and catalog to the new account.
@@ -78,6 +82,8 @@ export interface MockServerConfig {
   // directory it resolves.
   onLocationGet?: (directory: string) => void
   sessions: MockSession[]
+  sessionStats?: (from: number, to: number) => SessionStatsInfo | undefined
+  usageLimits?: UsageLimitsInfo
   pageMessages: (
     sessionId: string,
     limit: number,
@@ -86,7 +92,7 @@ export interface MockServerConfig {
     items: SessionMessageInfo[]
     cursor?: string
   }
-  vcs?: { current: string; default: string } | ((directory: string) => { current: string; default: string })
+  vcs?: { current?: string; default: string } | ((directory: string) => { current?: string; default: string })
   branches?: (input: { directory: string; search?: string; limit?: number }) => string[] | Promise<string[]>
   // Initializes the mock project's VCS; without a handler this mutation answers 501.
   onVcsInit?: (input: { directory: string; provider?: string }) => void
@@ -100,6 +106,7 @@ export interface MockServerConfig {
   onMessage?: (input: { sessionID: string; messageID: string }) => void
   onRevertStage?: (input: { sessionID: string; messageID: string }) => void
   onSession?: (sessionID: string) => void
+  taskMessages?: Array<{ id: string; from: string; to: string; text: string; time: number; state: string }>
   events?: () => OpenCodeEvent[]
   eventRetry?: number
   // Idle event streams send a comment every 15 s like the real server. Set false only to test the client's stall watchdog.
@@ -621,7 +628,7 @@ function mockHandlers(
     attempts: Map<string, number>
   },
 ) {
-  const taskMessages: Array<{ id: string; from: string; to: string; text: string; time: number; state: string }> = []
+  const taskMessages = config.taskMessages ?? []
   const noContent = Effect.succeed(HttpApiSchema.NoContent.make())
   const configEntries = config.configEntries ?? []
 
@@ -692,13 +699,26 @@ function mockHandlers(
           const path = decodeURIComponent(new URL(ctx.request.url, "http://localhost").pathname.slice(13))
           const value = yield* Effect.promise(() => Promise.resolve(config.fileContent?.(path)))
 
-          if (Predicate.isString(value)) return HttpServerResponse.uint8Array(new TextEncoder().encode(value))
+          // Like the server, every read is a sandboxed download; media keeps its type so elements can play it.
+          const options = {
+            contentType: ["image", "audio", "video"].includes(artifactKind(path))
+              ? artifactMime(path)
+              : "application/octet-stream",
+            headers: {
+              "content-disposition": "attachment",
+              "content-security-policy": "default-src 'none'; img-src 'self'; media-src 'self'; sandbox",
+              "x-content-type-options": "nosniff",
+            },
+          }
+
+          if (Predicate.isString(value)) return HttpServerResponse.uint8Array(new TextEncoder().encode(value), options)
 
           // Like the server, stream base64 content as the bytes it encodes.
           return HttpServerResponse.uint8Array(
             value?.encoding === "base64"
               ? Buffer.from(value.content, "base64")
               : new TextEncoder().encode(value?.content ?? ""),
+            options,
           )
         }),
       )
@@ -834,7 +854,9 @@ function mockHandlers(
             }
           }),
         info: () =>
-          Effect.succeed({
+          config.infoFailures?.()
+            ? Effect.fail(new MockInternal({ message: "Server temporarily unavailable" }))
+            : Effect.succeed({
             version: "2.0.0",
             pid: 1,
             hostname: config.hostname,
@@ -989,8 +1011,12 @@ function mockHandlers(
         configUpdate: () => noContent,
         websearchProviders: () =>
           Effect.sync(() => ({ location: location(config), data: resolve(config.websearchProviders ?? []) })),
-        // No scenario signs in to an OpenCode Console workspace, so none has usage limits.
-        usageLimits: () => Effect.succeed({ location: location(config), data: null }),
+        usageLimits: () => Effect.succeed({ location: location(config), data: config.usageLimits ?? null }),
+        sessionStats: (ctx) => {
+          const query = new URL(ctx.request.url, config.server ?? SERVER).searchParams
+          const stats = config.sessionStats?.(Number(query.get("from")), Number(query.get("to")))
+          return stats ? Effect.succeed({ data: stats }) : unsupported("session statistics", "sessionStats")
+        },
         worktreeList: () =>
           Effect.sync(() => {
             if (config.worktrees) return resolve(config.worktrees)
@@ -1307,7 +1333,25 @@ function mockHandlers(
           }),
         sessionRemove: () => noContent,
         sessionShell: () => noContent,
-        sessionView: () => noContent,
+        sessionView: (ctx) =>
+          Effect.sync(() => {
+            const session = config.sessions.find((item) => item.id === ctx.params.sessionID)
+
+            if (!session) return
+            const time = currentSession(session, config.directory).time
+
+            session.time = { ...time, viewed: Math.max(time.viewed ?? 0, ctx.payload.idle) }
+            state.emit([
+              {
+                id: `evt_viewed_${session.id}_${ctx.payload.idle}`,
+                created: Date.now(),
+                type: "session.viewed",
+                durable: { aggregateID: session.id, seq: 1, version: 1 },
+                location: { directory: requestDirectory(config, ctx.request) },
+                data: { sessionID: session.id, idle: ctx.payload.idle },
+              },
+            ])
+          }).pipe(Effect.andThen(noContent)),
         sessionForm: (ctx) =>
           Effect.succeed({
             data: resolve(config.forms ?? []).filter(
@@ -1357,7 +1401,7 @@ function mockHandlers(
                 sessionID: ctx.params.sessionID,
                 time: { created: Date.now() },
                 type: "compaction",
-                payload: {},
+                payload: Schema.decodeUnknownSync(SessionInbox.CompactionPayload)(body),
                 delivery: "steer",
               },
             }

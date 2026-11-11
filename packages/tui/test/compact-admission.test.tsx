@@ -5,6 +5,121 @@ import { Effect, FileSystem } from "effect"
 import { Global } from "@opencode/util/global"
 import { createEventStream, createFetch, directory, json } from "./fixture/tui-client"
 import { tmpdir } from "./fixture/fixture"
+import { createAppFixture } from "./fixture/app"
+
+test.each([70, 120])("provider switching waits for portable compaction at %i columns", async (width) => {
+  const sessionID = "ses_provider_handoff"
+  const location = { directory, project: { id: "project", directory, canonical: directory } }
+  const compacted = Promise.withResolvers<{
+    id: string
+    experimental: { switchModel: { providerID: string; id: string } }
+  }>()
+  const switched: unknown[] = []
+  await using setup = await createAppFixture({
+    width,
+    height: 30,
+    config: { animations: false, keybinds: { "model.list": "f8" } },
+    args: { sessionID },
+    fetch: async (url, request) => {
+      if (url.pathname === `/api/session/${sessionID}`)
+        return json({
+          data: {
+            id: sessionID,
+            projectID: "project",
+            agent: "build",
+            title: "Provider handoff fixture",
+            model: { providerID: "demo", id: "old" },
+            location: { directory },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            time: { created: 0, updated: 0 },
+          },
+        })
+      if (url.pathname === `/api/session/${sessionID}/message`)
+        return json({
+          data: [{ id: "msg_history", type: "user", text: "Continue this work", time: { created: 0 } }],
+          cursor: {},
+        })
+      if (url.pathname === `/api/session/${sessionID}/inbox` || url.pathname === `/api/session/${sessionID}/permission`)
+        return json({ data: [] })
+      if (url.pathname === "/api/agent")
+        return json({ location, data: [{ id: "build", mode: "primary", hidden: false, permissions: [] }] })
+      if (url.pathname === "/api/provider")
+        return json({
+          location,
+          data: [
+            { id: "demo", name: "Demo" },
+            { id: "other", name: "Other" },
+          ],
+        })
+      if (url.pathname === "/api/model")
+        return json({
+          location,
+          data: [
+            { id: "old", providerID: "demo", name: "Old model", variants: [], cost: [], time: { released: 0 } },
+            { id: "new", providerID: "other", name: "New model", variants: [], cost: [], time: { released: 0 } },
+          ],
+        })
+      if (url.pathname === `/api/session/${sessionID}/compact`) {
+        const body = await request.json()
+        compacted.resolve(body)
+        return json({
+          data: {
+            id: body.id,
+            sessionID,
+            type: "compaction",
+            time: { created: 10 },
+            payload: { experimental: body.experimental },
+            delivery: "steer",
+          },
+        })
+      }
+      if (url.pathname === `/api/session/${sessionID}/model`) {
+        switched.push(await request.json())
+        return new Response(null, { status: 204 })
+      }
+    },
+  })
+  await setup.ready
+  await setup.waitForFrame((frame) => frame.includes("Old model") && frame.includes("Continue this work"))
+  setup.mockInput.pressKey("F8")
+  await setup.waitForFrame(
+    (frame) => frame.includes("Select model") && setup.renderer.currentFocusedRenderable instanceof InputRenderable,
+  )
+  await setup.mockInput.typeText("New model")
+  await setup.renderOnce()
+  setup.mockInput.pressEnter()
+  await setup.waitForFrame((frame) => frame.includes("Switch provider"))
+  setup.mockInput.pressArrow("down")
+  setup.mockInput.pressEnter()
+  const body = await compacted.promise
+  expect(body.experimental).toEqual({ switchModel: { providerID: "other", id: "new" } })
+  await setup.waitForFrame((frame) => frame.includes("Compacting before switching"))
+  expect(switched).toEqual([])
+  setup.events.emit({
+    id: "evt_started",
+    durable: { aggregateID: sessionID, seq: 1, version: 1 },
+    created: 10,
+    type: "session.compaction.started",
+    data: { sessionID, inputID: body.id, reason: "manual" },
+  })
+  setup.events.emit({
+    id: "evt_ended",
+    durable: { aggregateID: sessionID, seq: 2, version: 1 },
+    created: 11,
+    type: "session.compaction.ended",
+    data: { sessionID, reason: "manual", model: { providerID: "demo", id: "old" }, text: "Summary" },
+  })
+  await setup.waitForFrame(
+    (frame) =>
+      frame.includes("New model") &&
+      !frame.includes("Switch provider") &&
+      !frame.includes("Compacting before switching"),
+  )
+  setup.mockInput.pressEnter()
+  await setup.waitFor(() => switched.length === 1)
+  expect(switched).toEqual([{ model: { providerID: "other", id: "new" } }])
+})
 
 test.each([70, 120])(
   "/compact renders before model setup, suppresses repeat gestures, and toasts rollback at %i columns",

@@ -4,6 +4,8 @@ import { SessionTask } from "@opencode/schema/session-task"
 import { PromptInput } from "@opencode/schema/prompt-input"
 import { Session } from "@opencode/schema/session"
 import { SessionStats } from "@opencode/schema/session-stats"
+import { TokenUsage } from "@opencode/schema/token-usage"
+import { Money } from "@opencode/schema/money"
 import { InstructionEntry } from "@opencode/schema/instruction-entry"
 import { Project } from "@opencode/schema/project"
 import { DateTimeUtcFromMillis, NonNegativeInt, PositiveInt } from "@opencode/schema/schema"
@@ -442,6 +444,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
         payload: Schema.Struct({
           id: SessionMessage.ID.pipe(Schema.optional),
           delivery: SessionInbox.Delivery.pipe(Schema.optional),
+          experimental: SessionInbox.CompactionPayload.fields.experimental,
         }),
         success: Schema.Struct({ data: SessionInbox.Compaction }),
         error: [ConflictError, SessionNotFoundError],
@@ -698,7 +701,8 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
         params: { sessionID: Session.ID },
         payload: Schema.Struct({ prompt: Schema.String }),
         success: Schema.Struct({
-          data: Schema.Struct({ text: Schema.String }),
+          // Same `tokens` and `cost` an assistant message reports for a step.
+          data: Schema.Struct({ text: Schema.String, tokens: TokenUsage.Info, cost: Money.USD }),
         }).annotate({ identifier: "SessionGenerateResponse" }),
         error: [SessionNotFoundError, ServiceUnavailableError],
       })
@@ -707,7 +711,8 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           OpenApi.annotations({
             identifier: "session.generate",
             summary: "Generate text from session context",
-            description: "Generate transient text from the current session context without mutating session history.",
+            description:
+              "Generate transient text from the current session context without mutating session history. Its tokens and cost count toward the session's totals.",
           }),
         ),
     )
