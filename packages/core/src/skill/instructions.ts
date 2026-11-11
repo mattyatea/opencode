@@ -68,6 +68,7 @@ const layer = Layer.effect(
           .toSorted((a, b) => a.id.localeCompare(b.id))
         return Instructions.make<ReadonlyArray<Summary>>({
           key: Instructions.Key.make("core/skill-guidance"),
+          category: "skills",
           codec: Schema.toCodecJson(Schema.Array(Summary)),
           read: Effect.succeed(available.length === 0 ? Instructions.removed : available),
           render: {

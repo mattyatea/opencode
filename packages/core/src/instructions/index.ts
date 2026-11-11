@@ -24,6 +24,9 @@ export type Unavailable = typeof unavailable
 export const removed = NonValue.Removed()
 export type Removed = typeof removed
 
+/** The part of the prompt an instruction source belongs to, for context accounting. */
+export type Category = "system" | "tools" | "mcp" | "skills" | "instructions" | "references" | "session"
+
 /**
  * One composable instruction source over canonical JSON — the same
  * representation that is hashed, stored, and replayed. `make` builds one from
@@ -32,6 +35,7 @@ export type Removed = typeof removed
  */
 export interface Source {
   readonly key: Key
+  readonly category: Category
   readonly read: Effect.Effect<Schema.Json | Unavailable | Removed>
   readonly initial: (value: Schema.Json) => string | undefined
   readonly changed: (previous: Schema.Json, current: Schema.Json) => string | undefined
@@ -42,6 +46,8 @@ export declare namespace Source {
   /** The typed definition supplied when constructing a source. */
   export interface Definition<A> {
     readonly key: Key
+    /** Which part of the prompt this source's text belongs to. Defaults to instructions. */
+    readonly category?: Category
     readonly codec: Schema.Codec<A, Schema.Json>
     readonly read: Effect.Effect<A | Unavailable | Removed>
     readonly render: {
@@ -93,6 +99,7 @@ export function make<A>(source: Source.Definition<A>): List {
   return [
     {
       key: source.key,
+      category: source.category ?? "instructions",
       read: source.read.pipe(
         Effect.map((value) => {
           if (isUnavailable(value)) return unavailable
@@ -159,9 +166,11 @@ export function diff(observed: ReadResult, previous?: Values): Effect.Effect<Adm
   return Effect.succeed({ delta, blobs })
 }
 
-/** One source's rendered text, keyed so consumers can tell the sources apart. */
+/** One source's rendered text, keyed and categorized so consumers can tell the sources apart. */
 export interface Rendered {
   readonly key: Key
+  /** Which part of the prompt the text belongs to; rendered values without one count as instructions. */
+  readonly category?: Category
   readonly text: string
 }
 
@@ -169,7 +178,7 @@ export function renderInitial(value: List, values: Readonly<Record<string, Schem
   return value.flatMap((source) => {
     if (!Object.hasOwn(values, source.key)) return []
     const text = source.initial(values[source.key])
-    return text === undefined ? [] : [{ key: source.key, text }]
+    return text === undefined ? [] : [{ key: source.key, category: source.category, text }]
   })
 }
 

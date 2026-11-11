@@ -157,6 +157,7 @@ export const make = (inventory?: CodeModeCatalog.Inventory): Instructions.List =
   const catalog = inventory === undefined ? Instructions.removed : CodeModeCatalog.summarize(inventory)
   return Instructions.make({
     key,
+    category: "tools",
     codec,
     read: Effect.succeed(catalog),
     render: {

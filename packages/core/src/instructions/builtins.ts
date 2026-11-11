@@ -23,6 +23,7 @@ const layer = Layer.effect(
           Instructions.combine([
             Instructions.make({
               key: Instructions.Key.make("core/date"),
+              category: "system",
               codec: Schema.toCodecJson(Schema.String),
               read: DateTime.nowAsDate.pipe(Effect.map((date) => date.toDateString())),
               render: {
@@ -32,6 +33,7 @@ const layer = Layer.effect(
             }),
             Instructions.make({
               key: Instructions.Key.make("core/environment"),
+              category: "system",
               codec: Schema.toCodecJson(Schema.String),
               read: Effect.sync(() =>
                 [

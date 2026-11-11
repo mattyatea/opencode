@@ -80,6 +80,7 @@ export const layer = (options?: Options) =>
       const source = (value: ReadonlyArray<File> | Instructions.Unavailable | Instructions.Removed) =>
         Instructions.make<ReadonlyArray<File>>({
           key,
+          category: "instructions",
           codec: Schema.toCodecJson(Files),
           read: Effect.succeed(value),
           render: {

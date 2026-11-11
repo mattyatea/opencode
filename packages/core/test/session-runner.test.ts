@@ -2221,8 +2221,8 @@ describe("SessionRunnerLLM", () => {
     expect(s.requests[0]?.system.at(-1)?.metadata?.experimental).toEqual({
       instructions: [
         expect.objectContaining({ key: "core/codemode" }),
-        { key: "test/context", text: "Initial context" },
-        { key: "api/deploy-target", text: '<context key="deploy-target">\nproduction\n</context>' },
+        { key: "test/context", category: "instructions", text: "Initial context" },
+        { key: "api/deploy-target", category: "session", text: '<context key="deploy-target">\nproduction\n</context>' },
       ],
     })
 
