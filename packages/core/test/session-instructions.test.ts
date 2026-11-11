@@ -42,6 +42,7 @@ const readToolNode = makeLocationNode({
   name: "test/read-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(ReadTool.Plugin)),
   deps: [
+    Config.node,
     Tool.node,
     ReadToolFileSystem.node,
     FileAccess.node,
