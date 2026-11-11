@@ -32,6 +32,7 @@ The provider is called "Claude Agent", with the ID `claude-agent`. The SDK's [br
 ### Tools
 
 - Claude Code's built-in tools are off. Claude gets opencode's tools instead.
+- Read-only tools, such as read, grep, glob and web search, are advertised with `readOnlyHint`, so Claude may call several of them in one turn and run them at the same time. Editing, shell and other state-changing tools stay serial. opencode executes the calls concurrently by default, and `tool_calls.parallel` can still serialize them.
 - When Claude calls a tool, the plugin holds the call. opencode runs it like any other model's tool call, including permission prompts, then sends the result back to Claude.
 - Why: the history looks the same whichever model wrote it, so switching between Claude and other models works. There is also only one permission system.
 - If opencode's tools cannot be given to Claude, the request fails. It never falls back to Claude Code's tools.
@@ -64,7 +65,7 @@ We also clear three variables a user might have set in their shell. `CLAUDE_CODE
 - The system prompt described above
 - opencode's tools, as the only tools Claude may use. Anything else is refused without asking.
 - Two hooks that Claude Code runs around each tool call:
-  - Before the call: gives us Claude's ID for the call. Our tool handler can't see this ID, and opencode needs it to send back the right result. Because we only remember one ID at a time, tools must run one at a time, so we never mark them as safe to run in parallel.
+  - Before the call: gives us Claude's ID for the call along with its input. Our tool handler can't see this ID, so it matches its own call by name and input. Read-only tools are marked as such, so Claude may run several of them at once.
   - After the call: adds PDFs and linked images from opencode's result, which a normal MCP tool result can't carry.
 - Thinking with summaries, so opencode has reasoning text to show
 - Messages sent exactly as given. opencode already expands `/commands` and adds `@file` contents before sending, so Claude Code does not process them again. It also skips the context Claude Code normally adds at the start of each turn, such as nested CLAUDE.md files, skill lists and reminders. This needs Claude Code 2.1.248 or later.

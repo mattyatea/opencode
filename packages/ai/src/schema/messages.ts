@@ -379,6 +379,8 @@ const toolDefinitionFields = {
   outputSchema: Schema.optional(JsonSchema),
   freeform: Schema.optional(Freeform),
   cache: Schema.optional(CacheHint),
+  /** The tool only reads state, so a provider may run it alongside other read-only calls. */
+  readOnly: Schema.optional(Schema.Boolean),
   native: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 }
 

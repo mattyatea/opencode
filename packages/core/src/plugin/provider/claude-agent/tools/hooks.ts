@@ -5,7 +5,8 @@ import type { PendingTools } from "./pending.js"
 
 export function make(pending: PendingTools.Interface): Options["hooks"] {
   const before: HookCallback = async (input) => {
-    if (input.hook_event_name === "PreToolUse") pending.before(input.tool_use_id, input.tool_name)
+    if (input.hook_event_name === "PreToolUse")
+      pending.before(input.tool_use_id, input.tool_name, input.tool_input)
     return {}
   }
 
