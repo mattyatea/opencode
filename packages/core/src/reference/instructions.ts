@@ -65,6 +65,7 @@ const layer = Layer.effect(
           .toSorted((a, b) => a.name.localeCompare(b.name))
         return Instructions.make<ReadonlyArray<typeof Summary.Type>>({
           key: Instructions.Key.make("core/reference-guidance"),
+          category: "references",
           codec: Schema.toCodecJson(Schema.Array(Summary)),
           read: Effect.succeed(available.length === 0 ? Instructions.removed : available),
           render: {

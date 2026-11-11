@@ -467,6 +467,9 @@ export interface SessionApi<E = never> {
   /** @deprecated Use `client.experimental.session.wait`. Removed in the next minor. */
   readonly wait: ExperimentalSessionWaitOperation<E>
 
+  /** @deprecated Use `client.experimental.session.contextBreakdown`. Removed in the next minor. */
+  readonly contextBreakdown: ExperimentalSessionContextBreakdownOperation<E>
+
   /** @deprecated Use `client.experimental.session.instructions`. Removed in the next minor. */
   readonly instructions: {
     /** @deprecated Use `client.experimental.session.instructions.entry`. Removed in the next minor. */
@@ -618,6 +621,24 @@ export type ExperimentalSessionWaitOutput = void
 export type ExperimentalSessionWaitOperation<E = never> = (
   input: ExperimentalSessionWaitInput,
 ) => Effect.Effect<ExperimentalSessionWaitOutput, E>
+
+export type ExperimentalSessionContextBreakdownInput = { readonly sessionID: Session.ID }
+export type ExperimentalSessionContextBreakdownOutput = {
+  readonly limit: number
+  readonly inputLimit: number
+  readonly measured: number
+  readonly estimated: number
+  readonly used: number
+  readonly free: number
+  readonly parts: ReadonlyArray<{
+    readonly id: string
+    readonly tokens: number
+    readonly entries: ReadonlyArray<{ readonly id: string; readonly tokens: number }>
+  }>
+}
+export type ExperimentalSessionContextBreakdownOperation<E = never> = (
+  input: ExperimentalSessionContextBreakdownInput,
+) => Effect.Effect<ExperimentalSessionContextBreakdownOutput, E>
 
 export type ExperimentalSessionInstructionsEntryListInput = { readonly sessionID: Session.ID }
 export type ExperimentalSessionInstructionsEntryListOutput = ReadonlyArray<InstructionEntry.Info>
@@ -1519,6 +1540,7 @@ export interface ExperimentalSessionApi<E = never> {
   readonly export: ExperimentalSessionExportOperation<E>
   readonly skill: ExperimentalSessionSkillOperation<E>
   readonly wait: ExperimentalSessionWaitOperation<E>
+  readonly contextBreakdown: ExperimentalSessionContextBreakdownOperation<E>
   readonly instructions: {
     readonly entry: {
       readonly list: ExperimentalSessionInstructionsEntryListOperation<E>
@@ -2939,6 +2961,15 @@ export type SessionWaitOutput = ExperimentalSessionWaitOutput
 
 /** @deprecated Use `ExperimentalSessionWaitOperation`. Removed in the next minor. */
 export type SessionWaitOperation<E = never> = ExperimentalSessionWaitOperation<E>
+
+/** @deprecated Use `ExperimentalSessionContextBreakdownInput`. Removed in the next minor. */
+export type SessionContextBreakdownInput = ExperimentalSessionContextBreakdownInput
+
+/** @deprecated Use `ExperimentalSessionContextBreakdownOutput`. Removed in the next minor. */
+export type SessionContextBreakdownOutput = ExperimentalSessionContextBreakdownOutput
+
+/** @deprecated Use `ExperimentalSessionContextBreakdownOperation`. Removed in the next minor. */
+export type SessionContextBreakdownOperation<E = never> = ExperimentalSessionContextBreakdownOperation<E>
 
 /** @deprecated Use `ExperimentalSessionInstructionsEntryListInput`. Removed in the next minor. */
 export type SessionInstructionsEntryListInput = ExperimentalSessionInstructionsEntryListInput

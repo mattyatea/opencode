@@ -99,6 +99,7 @@ const renderBlock = (key: Key, value: Schema.Json) =>
 const source = (entry: Info & { readonly removed: boolean }) =>
   Instructions.make<Schema.Json>({
     key: Instructions.Key.make(`api/${entry.key}`),
+    category: "session",
     codec: Schema.toCodecJson(Schema.Json),
     read: Effect.succeed(entry.removed ? Instructions.removed : entry.value),
     render: {

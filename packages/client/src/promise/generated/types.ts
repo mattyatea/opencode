@@ -154,6 +154,8 @@ export type SessionStatsActivity = { date: string; steps: number }
 
 export type SessionStatsSkillUsage = { id: string; calls: number }
 
+export type SessionContextBreakdownEntry = { id: string; tokens: number }
+
 export type InstructionEntryKey = string
 
 export type EventID = string
@@ -679,6 +681,8 @@ export type SessionStatsTools =
   | { mode: "summary"; totals: SessionStatsToolTotals }
   | { mode: "detail"; totals: SessionStatsToolTotals; usage: Array<SessionStatsToolUsage> }
 
+export type SessionContextBreakdownPart = { id: string; tokens: number; entries: Array<SessionContextBreakdownEntry> }
+
 export type InstructionEntryInfo = { key: InstructionEntryKey; value: JsonValue }
 
 export type InstructionEntrySnapshot = Array<{ key: InstructionEntryKey; value: JsonValue; removed: boolean }>
@@ -1185,6 +1189,16 @@ export type FormState =
   | { status: "pending" }
   | { status: "answered"; answer: FormAnswer }
   | { status: "cancelled"; message?: string }
+
+export type SessionContextBreakdown = {
+  limit: number
+  inputLimit: number
+  measured: number
+  estimated: number
+  used: number
+  free: number
+  parts: Array<SessionContextBreakdownPart>
+}
 
 export type SessionAgentSelected = {
   id: EventID
@@ -3929,6 +3943,10 @@ export type ExperimentalSessionWaitInput = { readonly sessionID: string }
 
 export type ExperimentalSessionWaitOutput = void
 
+export type ExperimentalSessionContextBreakdownInput = { readonly sessionID: string }
+
+export type ExperimentalSessionContextBreakdownOutput = { data: SessionContextBreakdown }["data"]
+
 export type ExperimentalSessionInstructionsEntryListInput = { readonly sessionID: string }
 
 export type ExperimentalSessionInstructionsEntryListOutput = { data: Array<InstructionEntryInfo> }["data"]
@@ -4976,6 +4994,12 @@ export type SessionWaitInput = ExperimentalSessionWaitInput
 
 /** @deprecated Use `ExperimentalSessionWaitOutput`. Removed in the next minor. */
 export type SessionWaitOutput = ExperimentalSessionWaitOutput
+
+/** @deprecated Use `ExperimentalSessionContextBreakdownInput`. Removed in the next minor. */
+export type SessionContextBreakdownInput = ExperimentalSessionContextBreakdownInput
+
+/** @deprecated Use `ExperimentalSessionContextBreakdownOutput`. Removed in the next minor. */
+export type SessionContextBreakdownOutput = ExperimentalSessionContextBreakdownOutput
 
 /** @deprecated Use `ExperimentalSessionInstructionsEntryListInput`. Removed in the next minor. */
 export type SessionInstructionsEntryListInput = ExperimentalSessionInstructionsEntryListInput

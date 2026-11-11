@@ -15,6 +15,7 @@ import type { SessionMessageInfo } from "@opencode/client/promise"
 import { lastAssistantWithUsage } from "@opencode/client/solid"
 import { createKeyed, usePlugin, type MountedSession } from "@opencode/plugin/gui"
 import { catalogModel, syncCatalog } from "./catalog"
+import { ContextWindow } from "./breakdown"
 import { fetchSessionExport, sessionExportFilename } from "./export"
 import { createSessionContextFormatter } from "./format"
 import {
@@ -49,9 +50,7 @@ function RawMessageContent(props: { message: SessionMessageInfo; onRendered: () 
     }
   })
 
-  return (
-    <File mode="text" file={file()} overflow="wrap" class="select-text" onRendered={props.onRendered} />
-  )
+  return <File mode="text" file={file()} overflow="wrap" class="select-text" onRendered={props.onRendered} />
 }
 
 function RawMessage(props: {
@@ -367,10 +366,7 @@ export default function SessionContextTab(props: { session: MountedSession }) {
   )
 
   // New messages grow the content, so a restore clamped by shorter content can now reach its offset.
-  createKeyed(
-    createMemo(on(messages, (list) => list, { defer: true })),
-    () => dispatchScroll(contentChanged),
-  )
+  createKeyed(createMemo(on(messages, (list) => list, { defer: true })), () => dispatchScroll(contentChanged))
 
   // Writes the offset the save frame has not stored yet.
   onCleanup(() => dispatchScroll({ type: "disposed" }))
@@ -395,6 +391,8 @@ export default function SessionContextTab(props: { session: MountedSession }) {
       }
     >
       <div data-slot="session-usage-content" class="px-4 pt-4 pb-6 flex flex-col gap-6 md:px-6 md:pb-10 md:gap-10">
+        <ContextWindow session={props.session} />
+
         <div class="grid grid-cols-1 @[32rem]:grid-cols-2 gap-4">
           <For each={stats}>{(stat) => <Stat label={ctx.t(stat.label)} value={stat.value()} />}</For>
         </div>
@@ -429,7 +427,11 @@ export default function SessionContextTab(props: { session: MountedSession }) {
           <Accordion multiple>
             <For each={messages()}>
               {(message) => (
-                <RawMessage message={message} onRendered={() => dispatchScroll(contentChanged)} time={formatter().time} />
+                <RawMessage
+                  message={message}
+                  onRendered={() => dispatchScroll(contentChanged)}
+                  time={formatter().time}
+                />
               )}
             </For>
           </Accordion>

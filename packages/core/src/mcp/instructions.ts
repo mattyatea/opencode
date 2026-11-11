@@ -59,6 +59,7 @@ export const layer = Layer.effect(
         const source = (value: ReadonlyArray<Summary> | Instructions.Removed) =>
           Instructions.make<ReadonlyArray<Summary>>({
             key: Instructions.Key.make("core/mcp-guidance"),
+            category: "mcp",
             codec: Schema.toCodecJson(Schema.Array(Summary)),
             read: Effect.succeed(value),
             render: {
@@ -79,8 +80,7 @@ export const layer = Layer.effect(
             const codemode = canExecute && owned[0]?.codemode !== false
             if (
               !owned.some(
-                (tool) =>
-                  Permission.evaluate(McpTool.name(tool.server, tool.name), "*", permissions).effect !== "deny",
+                (tool) => Permission.evaluate(McpTool.name(tool.server, tool.name), "*", permissions).effect !== "deny",
               )
             )
               return []

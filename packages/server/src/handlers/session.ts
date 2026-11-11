@@ -1,5 +1,6 @@
 import { Instance } from "@opencode/core/instance/service"
 import { Session } from "@opencode/core/session"
+import { SessionContext } from "@opencode/core/session/context"
 import { SessionStats } from "@opencode/core/session/stats"
 import { SessionTitle } from "@opencode/core/session/title"
 import { SessionTransfer } from "@opencode/core/session/transfer"
@@ -25,9 +26,10 @@ import {
   ServiceUnavailableError,
   SessionBusyError,
   SkillNotFoundError,
+  UnknownError,
 } from "@opencode/protocol/errors"
 import { AbsolutePath } from "@opencode/core/schema"
-import { locationErrors } from "../location"
+import { awaitPlugins, locationErrors } from "../location"
 import { failedMessageDecode, failedSnapshot, missingMessage, missingSession } from "./session-error"
 
 function missingForm(id: Form.ID) {
@@ -559,6 +561,18 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 Effect.catchTag("Session.MessageDecodeError", failedMessageDecode),
               ),
           }
+        }),
+      )
+      .handle(
+        "session.contextBreakdown",
+        Effect.fn(function* (ctx) {
+          yield* requireSession(ctx.params.sessionID)
+          yield* awaitPlugins
+          const context = yield* SessionContext.Service
+          const data = yield* context
+            .breakdown(ctx.params.sessionID)
+            .pipe(Effect.mapError((error) => new UnknownError({ message: error.message })))
+          return { data }
         }),
       )
       .handle(

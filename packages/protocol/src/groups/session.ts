@@ -72,6 +72,27 @@ const PublicInboxInfo = Schema.Union([
   PublicMove,
 ]).annotate({ identifier: "Session.Inbox.Info" })
 
+const SessionContextBreakdownEntry = Schema.Struct({
+  id: Schema.String,
+  tokens: Schema.Number,
+}).annotate({ identifier: "Session.ContextBreakdownEntry" })
+
+const SessionContextBreakdownPart = Schema.Struct({
+  id: Schema.String,
+  tokens: Schema.Number,
+  entries: Schema.Array(SessionContextBreakdownEntry),
+}).annotate({ identifier: "Session.ContextBreakdownPart" })
+
+const SessionContextBreakdown = Schema.Struct({
+  limit: Schema.Number,
+  inputLimit: Schema.Number,
+  measured: Schema.Number,
+  estimated: Schema.Number,
+  used: Schema.Number,
+  free: Schema.Number,
+  parts: Schema.Array(SessionContextBreakdownPart),
+}).annotate({ identifier: "Session.ContextBreakdown" })
+
 /** Experimental: the `session.inbox.list` response for clients that opt into `experimental-media-uri`. */
 export const SessionMediaInboxResponse = Schema.Struct({
   data: Schema.Array(
@@ -514,6 +535,22 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           description: "Retrieve the active context messages for a session (all messages after the last compaction).",
         }),
       ),
+    )
+    .add(
+      HttpApiEndpoint.get("session.contextBreakdown", "/api/experimental/session/:sessionID/context-breakdown", {
+        params: { sessionID: Session.ID },
+        success: Schema.Struct({ data: SessionContextBreakdown }),
+        error: [SessionNotFoundError, ServiceUnavailableError, UnknownError],
+      })
+        .middleware(sessionLocationMiddleware)
+        .annotateMerge(
+          OpenApi.annotations({
+            identifier: "experimental.session.contextBreakdown",
+            summary: "Get context window breakdown",
+            description:
+              "Experimental: estimate what the next request spends the model's context window on, split into the system prompt, system tools, MCP tools and instructions, skills, instructions, references, session context, and messages. The last provider-reported prompt anchors the estimate.",
+          }),
+        ),
     )
     .add(
       HttpApiEndpoint.get("session.diff", "/api/session/:sessionID/diff", {
