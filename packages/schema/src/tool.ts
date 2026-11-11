@@ -44,6 +44,8 @@ export interface Namespace {
 interface BaseOptions {
   readonly namespace?: string
   readonly permission?: string
+  /** The tool only reads state, so a provider may run it alongside other read-only calls. */
+  readonly readOnly?: boolean
 }
 
 export type Options = BaseOptions &

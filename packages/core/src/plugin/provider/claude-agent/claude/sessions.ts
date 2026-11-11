@@ -257,14 +257,14 @@ export function registry() {
             const name = ToolNames.original(part.name, request.tools)
             if (!name && part.name.startsWith(ToolNames.PREFIX)) {
               // A tool removed after this process started is still on its tool server; answer here so the turn goes on.
-              live.pending.expect(part.id, part.name)
+              live.pending.expect(part.id, part.name, part.input)
               live.pending.resolve(part.id, {
                 mcp: { isError: true, content: [{ type: "text", text: "This tool is no longer available." }] },
                 replacement: undefined,
               })
             }
             if (!name) continue
-            live.pending.expect(part.id, part.name)
+            live.pending.expect(part.id, part.name, part.input)
             waiting.push(part.id)
             reply.push({ type: "tool-call", toolCallId: part.id, toolName: name, input: part.input })
           }

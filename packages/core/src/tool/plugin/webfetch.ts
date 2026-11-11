@@ -135,7 +135,7 @@ export const Plugin = {
       .transform((editor) =>
         editor.add({
           name,
-          options: { codemode: false },
+          options: { codemode: false, readOnly: true },
           description,
           input: Input,
           output: Output,
