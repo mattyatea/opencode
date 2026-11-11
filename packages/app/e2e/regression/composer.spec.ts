@@ -13,6 +13,7 @@ test("provider switching compacts with the old model and keeps it selected on fa
 
   const view = await openSession(page, {
     name: "ProviderHandoff",
+    seed: { locale: "ja", theme: { id: "oc-2", scheme: "dark" } },
     sessions: [{ id: sessionID, agent: "build", model }],
     provider: {
       all: [
@@ -31,12 +32,39 @@ test("provider switching compacts with the old model and keeps it selected on fa
   const control = page.locator('[data-action="composer-model"]')
   await expect(control).toHaveText("Old model")
   await control.click()
-  const picker = page.getByRole("dialog", { name: "Select model", exact: true })
-  await picker.getByRole("combobox", { name: "Search models", exact: true }).fill("Next model")
+  const picker = page.getByRole("dialog", { name: "モデルを選択", exact: true })
+  await picker.getByRole("combobox", { name: "モデルを検索", exact: true }).fill("Next model")
   await picker.getByRole("option", { name: /Next model/ }).click()
-  const confirmation = page.getByRole("dialog", { name: "Switch provider", exact: true })
-  await confirmation.getByRole("button", { name: "Compact and switch", exact: true }).click()
-  await expect(confirmation.getByRole("button", { name: "Compacting before switching…", exact: true })).toBeDisabled()
+  const confirmation = page.getByRole("dialog", { name: "プロバイダーを切り替え", exact: true })
+  await expect(confirmation).toHaveAccessibleDescription(
+    "プロバイダー間ではプロンプトキャッシュを共有できません。 切り替える前に、現在のモデルで会話を要約できます。 要約すると細かい情報が失われることがあります。",
+  )
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 })
+    await expect
+      .poll(() =>
+        confirmation.evaluate((element) => {
+          const bounds = element.getBoundingClientRect()
+          const buttons = Array.from(element.querySelectorAll("button"))
+
+          return {
+            fits:
+              bounds.left >= 12 && bounds.right <= window.innerWidth - 12 && element.scrollWidth <= element.clientWidth,
+            compact: bounds.bottom - Math.max(...buttons.map((button) => button.getBoundingClientRect().bottom)) <= 24,
+          }
+        }),
+      )
+      .toEqual({ fits: true, compact: true })
+    await expect(confirmation.getByRole("button", { name: "そのまま切り替え", exact: true })).toBeInViewport({
+      ratio: 1,
+    })
+    await expect(confirmation.getByRole("button", { name: "要約して切り替え", exact: true })).toBeInViewport({
+      ratio: 1,
+    })
+  }
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await confirmation.getByRole("button", { name: "要約して切り替え", exact: true }).click()
+  await expect(confirmation.getByRole("button", { name: "切り替える前に要約中…", exact: true })).toBeDisabled()
   await expect.poll(() => admissions.length).toBe(1)
   expect(admissions[0].experimental).toEqual({ switchModel: { providerID: "other", id: "next" } })
   // Admission alone must not commit the target model.
@@ -57,7 +85,7 @@ test("provider switching compacts with the old model and keeps it selected on fa
   ])
   await expect(confirmation.getByRole("alert")).toHaveText("Summary unavailable")
   await expect(control).toHaveText("Old model")
-  await confirmation.getByRole("button", { name: "Compact and switch", exact: true }).click()
+  await confirmation.getByRole("button", { name: "要約して切り替え", exact: true }).click()
   await expect.poll(() => admissions.length).toBe(2)
   await view.push([
     {
