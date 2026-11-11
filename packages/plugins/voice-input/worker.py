@@ -1,0 +1,135 @@
+"""Local MLX speech-to-text worker for the OpenCode voice input plugin.
+
+Reads one JSON request per line on stdin and writes one JSON reply per line on stdout:
+
+  {"id": 1, "op": "load"}                                        -> {"id": 1, "model": "..."}
+  {"id": 2, "op": "transcribe", "session": "s", "audio": "<b64>", "final": false} -> {"id": 2, "text": "..."}
+  {"id": 3, "op": "cancel", "session": "s"}                       -> {"id": 3}
+
+`audio` is little-endian 16-bit mono PCM at 16 kHz, appended to the session's buffer. Each transcribe returns the
+transcript of everything the session has heard so far; `final` ends the session. Failures reply {"id", "error"}.
+Libraries may print to stdout, so replies go to the original stdout and everything else to stderr.
+"""
+
+import base64
+import json
+import os
+import re
+import sys
+import traceback
+
+import numpy as np
+
+RATE = 16000
+FRAME = RATE * 30 // 1000
+# A segment longer than this is committed at its quietest point, so a long dictation never re-decodes minutes of audio.
+SEGMENT_MAX = RATE * 20
+SEGMENT_SEARCH = RATE * 6
+# Frames quieter than this (about -44 dBFS) count as silence. A segment without a louder frame is never decoded,
+# which stops the model from inventing text on silence.
+VOICE_RMS = 0.006
+# Partial passes wait for this much audio; a fraction of a word decodes into guesses that flicker in the prompt.
+PARTIAL_MIN = RATE
+
+replies = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
+# Native code writes to fd 1 directly; point it at stderr so only replies reach the plugin.
+os.dup2(2, 1)
+sys.stdout = sys.stderr
+
+MODEL = os.environ.get("OPENCODE_VOICE_MODEL", "mlx-community/Qwen3-ASR-0.6B-8bit")
+LANGUAGE = os.environ.get("OPENCODE_VOICE_LANGUAGE") or None
+HOTWORDS = [word for word in os.environ.get("OPENCODE_VOICE_HOTWORDS", "").split("\n") if word.strip()]
+
+model = None
+sessions = {}
+
+
+def load():
+    global model
+    if model is None:
+        from mlx_audio.stt import load as load_model
+
+        model = load_model(MODEL)
+        # The first decode compiles kernels; pay for it here rather than on the user's first word.
+        model.generate(np.zeros(RATE // 2, dtype=np.float32), language=LANGUAGE)
+    return model
+
+
+def frames_rms(audio):
+    count = len(audio) // FRAME
+    if count == 0:
+        return np.zeros(0, dtype=np.float32)
+    framed = audio[: count * FRAME].reshape(count, FRAME)
+    return np.sqrt(np.mean(framed * framed, axis=1))
+
+
+def echoes_hotwords(text):
+    # On very little speech the model can answer with the hotword list it was prompted with.
+    words = [word for word in re.split(r"[\s,、，。.]+", text) if word]
+    hotwords = {word.lower() for word in HOTWORDS}
+    return bool(words) and all(word.lower() in hotwords for word in words) and len(words) > 1
+
+
+def decode(audio):
+    rms = frames_rms(audio)
+    if len(rms) == 0 or rms.max() < VOICE_RMS:
+        return ""
+    text = load().generate(audio, language=LANGUAGE, hotwords=HOTWORDS or None, temperature=0.0).text.strip()
+    return "" if echoes_hotwords(text) else text
+
+
+def join(parts):
+    text = ""
+    for part in (part for part in parts if part):
+        # Japanese runs together; a space separates only Latin text on both sides.
+        gap = " " if text and text[-1].isascii() and part[0].isascii() and not text[-1].isspace() else ""
+        text += gap + part
+    return text
+
+
+def split_point(audio):
+    # The quietest frame in the last few seconds, so a word is rarely cut in half.
+    start = max(0, len(audio) - SEGMENT_SEARCH)
+    rms = frames_rms(audio[start:])
+    return start + int(np.argmin(rms)) * FRAME if len(rms) else len(audio)
+
+
+def transcribe(request):
+    session = sessions.setdefault(request["session"], {"committed": [], "segment": np.zeros(0, dtype=np.float32)})
+    pcm = np.frombuffer(base64.b64decode(request.get("audio") or ""), dtype="<i2").astype(np.float32) / 32768.0
+    session["segment"] = np.concatenate([session["segment"], pcm])
+    if not request.get("final") and len(session["segment"]) > SEGMENT_MAX:
+        cut = split_point(session["segment"])
+        session["committed"].append(decode(session["segment"][:cut]))
+        session["segment"] = session["segment"][cut:]
+    final = request.get("final")
+    pending = "" if not final and len(session["segment"]) < PARTIAL_MIN else decode(session["segment"])
+    text = join([*session["committed"], pending])
+    if final:
+        sessions.pop(request["session"], None)
+    return {"text": text}
+
+
+def handle(request):
+    op = request.get("op")
+    if op == "load":
+        load()
+        return {"model": MODEL}
+    if op == "transcribe":
+        return transcribe(request)
+    if op == "cancel":
+        sessions.pop(request.get("session"), None)
+        return {}
+    raise ValueError(f"unknown op: {op}")
+
+
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    request = json.loads(line)
+    try:
+        reply = {"id": request.get("id"), **handle(request)}
+    except Exception as error:  # noqa: BLE001 - every failure must reach the caller as a reply
+        traceback.print_exc()
+        reply = {"id": request.get("id"), "error": f"{type(error).__name__}: {error}"}
+    replies.write(json.dumps(reply, ensure_ascii=False) + "\n")

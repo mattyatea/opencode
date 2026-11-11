@@ -90,6 +90,8 @@ export type ComposerEditorProps = {
   class?: string
   modelControl?: JSX.Element
   modelControlsVisible?: boolean
+  /** Controls before the send button, such as plugin contributions. */
+  actions?: JSX.Element
   attachKeybind?: string[]
   attachShortcut?: string
   alternateKeybind?: string[]
@@ -536,6 +538,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
                   </span>
                 </Button>
               </Show>
+              {props.actions}
               <ComposerEditorSubmitButton
                 mode={mode()}
                 stopping={view.submit.stopping()}

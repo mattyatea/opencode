@@ -1,0 +1,84 @@
+.oc-voice-input {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-inline-end: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--v2-icon-icon-muted);
+  cursor: pointer;
+}
+
+.oc-voice-input:hover:not(:disabled) {
+  background: var(--v2-background-bg-layer-02);
+  color: var(--v2-icon-icon-base);
+}
+
+.oc-voice-input:focus-visible {
+  outline: 1px solid var(--v2-border-border-focus);
+}
+
+.oc-voice-input:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.oc-voice-input svg {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+.oc-voice-input .oc-voice-input-stop {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* The ring grows with the microphone level while listening. */
+.oc-voice-input-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--v2-background-bg-accent);
+  opacity: 0;
+  transform: scale(calc(0.85 + var(--oc-voice-level, 0) * 0.35));
+  transition: transform 80ms linear;
+}
+
+.oc-voice-input[data-phase="listening"] {
+  color: var(--v2-icon-icon-inverse);
+}
+
+.oc-voice-input[data-phase="listening"] .oc-voice-input-ring {
+  opacity: 1;
+}
+
+.oc-voice-input[data-phase="preparing"] .oc-voice-input-ring,
+.oc-voice-input[data-phase="finishing"] .oc-voice-input-ring {
+  opacity: 0.35;
+  animation: oc-voice-input-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes oc-voice-input-pulse {
+  from {
+    transform: scale(0.8);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-voice-input-ring {
+    transition: none;
+    animation: none !important;
+  }
+}

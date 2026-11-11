@@ -116,6 +116,8 @@ equal<SlotMap["session.header"]["screen"], SessionScreen>(true)
 
 equal<SlotMap["session.panel.end"]["screen"], SessionScreen>(true)
 
+equal<SlotMap["session.composer.actions"]["screen"], SessionScreen>(true)
+
 equal<SlotMap["window.bottom"]["screen"], never>(true)
 
 equal<PanelTab["fallback"], boolean | undefined>(true)

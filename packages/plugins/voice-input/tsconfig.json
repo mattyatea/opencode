@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig.json",
+  "extends": "@tsconfig/bun/tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun", "vite/client"],
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "noUncheckedIndexedAccess": false,
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "noEmit": true,
+    "strict": true
+  },
+  "include": ["index.ts", "rpc.ts", "worker.ts", "i18n", "src", "test", "vite.config.ts"]
+}
