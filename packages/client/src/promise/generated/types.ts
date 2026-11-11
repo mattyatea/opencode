@@ -119,8 +119,6 @@ export type SessionStructuredError = {
   retryAfterMs?: number
 }
 
-export type SessionGenerateResponse = { data: { text: string } }
-
 export type SessionInterruptResponse = { interrupted: boolean }
 
 export type FormID = string
@@ -188,7 +186,7 @@ export type ModelCacheFormat = "anthropic" | "alibaba"
 
 export type ModelMediaInput = "assets" | "state" | "root"
 
-export type ModelCapabilities = { tools: boolean; input: Array<string>; output: Array<string>; temperature?: boolean }
+export type ToolFreeformFormat = "text" | "regex" | "lark"
 
 export type MoneyUSDPerMillionTokens = number
 
@@ -465,6 +463,8 @@ export type SessionTaskMessage = {
 
 export type UsageLimitsBudgetModel = { providerID: ProviderID; modelID: string; name: string; spent?: MoneyUSD }
 
+export type SessionGenerateResponse = { data: { text: string; tokens: TokenUsageInfo; cost: MoneyUSD } }
+
 export type SessionStatsSessionUsage = {
   sessionID: SessionID
   title: string
@@ -722,6 +722,14 @@ export type ProviderCompatibility = {
   mediaInput?: ModelMediaInput
 }
 
+export type ModelCapabilities = {
+  tools: boolean
+  freeform?: Array<ToolFreeformFormat>
+  input: Array<string>
+  output: Array<string>
+  temperature?: boolean
+}
+
 export type ModelCost = {
   tier?: { type: "context"; size: number }
   input: MoneyUSDPerMillionTokens
@@ -778,6 +786,7 @@ export type IntegrationAttempt = {
   url: string
   instructions: string
   mode: "auto" | "code"
+  paste?: true
   time: { created: number; expires: number }
 }
 
@@ -991,6 +1000,7 @@ export type UsageLimitsGo = { rolling: UsageLimitsMeter; weekly: UsageLimitsMete
 
 export type ConfigModelCapabilities = {
   tools?: boolean
+  freeform?: Array<ToolFreeformFormat>
   input?: Array<string>
   output?: Array<string>
   temperature?: boolean
@@ -1671,7 +1681,7 @@ export type SessionUsageRecorded = {
   type: "session.usage.recorded"
   durable: { aggregateID: string; seq: EventSeq; version: 1 }
   location?: LocationRef
-  data: { sessionID: SessionID; source: "title" | "compaction"; cost: MoneyUSD; tokens: TokenUsageInfo }
+  data: { sessionID: SessionID; source: "title" | "compaction" | "generate"; cost: MoneyUSD; tokens: TokenUsageInfo }
 }
 
 export type LocationShutdown = {
@@ -1698,7 +1708,7 @@ export type CredentialUpdated = {
   metadata?: { [x: string]: any }
   type: "credential.updated"
   location?: LocationRef
-  data: {}
+  data: { integrationID: IntegrationID; credentialID: CredentialID }
 }
 
 export type CredentialSwitched = {
@@ -2421,6 +2431,7 @@ export type ConfigEntry =
             | "mcp.use"
             | "skill.use"
             | "plugin.use"
+            | "websearch.use"
           resource: string
           effect: "allow" | "deny"
         }>
@@ -2480,6 +2491,7 @@ export type ConfigEntry =
                   codemode?: boolean
                   timeout?: { startup?: number; catalog?: number; execution?: number }
                   protocol?: McpProtocol
+                  pool?: boolean
                 }
               | {
                   type: "remote"
@@ -2499,6 +2511,7 @@ export type ConfigEntry =
                   codemode?: boolean
                   timeout?: { startup?: number; catalog?: number; execution?: number }
                   protocol?: McpProtocol
+                  pool?: boolean
                 }
           }
         }
@@ -2577,12 +2590,17 @@ export type ConfigEntry =
           codemode_tools?: boolean
           paste_files?: boolean
           portable_shell_scanner?: boolean
+          all_flags?: boolean
           todo?: boolean
           background_compaction?: boolean
           media_blob?: boolean
-          image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           schedules?: boolean
           artifacts?: boolean
+          codemode_vm?: boolean
+          shell_timeout_background?: boolean
+          console_watches?: boolean
+          part_rows?: boolean
+          image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           subagent_depth?: number
           location_idle_timeout?: string | false
           policies?: Array<{
@@ -2594,6 +2612,7 @@ export type ConfigEntry =
               | "mcp.use"
               | "skill.use"
               | "plugin.use"
+              | "websearch.use"
             resource: string
             effect: "allow" | "deny"
           }>
@@ -4012,7 +4031,12 @@ export type ExperimentalGenerateDecisionsInput = {
     | { readonly type: "file"; readonly data: string; readonly mime: string; readonly name?: string }
   >
   readonly questions: ReadonlyArray<
-    | { readonly type: "predicate"; readonly name: string; readonly instructions: string }
+    | {
+        readonly type: "predicate"
+        readonly name: string
+        readonly instructions: string
+        readonly criteria?: { readonly true?: string; readonly false?: string }
+      }
     | {
         readonly type: "choice"
         readonly name: string
@@ -4172,6 +4196,7 @@ export type ExperimentalMcpAddInput = {
         readonly codemode?: boolean
         readonly timeout?: { readonly startup?: number; readonly catalog?: number; readonly execution?: number }
         readonly protocol?: "legacy" | "auto" | "2026-07-28"
+        readonly pool?: boolean
       }
     | {
         readonly type: "remote"
@@ -4191,6 +4216,7 @@ export type ExperimentalMcpAddInput = {
         readonly codemode?: boolean
         readonly timeout?: { readonly startup?: number; readonly catalog?: number; readonly execution?: number }
         readonly protocol?: "legacy" | "auto" | "2026-07-28"
+        readonly pool?: boolean
       }
 }
 

@@ -58,10 +58,10 @@ export function ProjectSidebar() {
     target: undefined as string | undefined,
   })
   const connections = createMemo(() =>
-    servers.visible.map((conn) => ({
-      conn,
-      ctx: global.ensureServerCtx(conn),
-    })),
+    servers.visible.flatMap((conn) => {
+      const ctx = global.serverCtx(ServerConnection.key(conn))
+      return ctx ? [{ conn, ctx }] : []
+    }),
   )
 
   const queries = useQueries(() => ({

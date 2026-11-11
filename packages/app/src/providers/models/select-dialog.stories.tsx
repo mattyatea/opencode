@@ -79,7 +79,6 @@ function SelectorStory(props: { favorite?: boolean }) {
     setVisibility() {},
     variant: {
       configured: () => undefined,
-      selected: () => store.variant,
       current: () => store.variant,
       list: () => [],
       set: (variant: string | undefined) => setStore("variant", variant),
