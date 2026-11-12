@@ -12,7 +12,7 @@ import "./dictation.css"
 
 /**
  * How often a new partial transcript is requested. A tick while a pass runs is skipped, so a slow pass, such as one that
- * commits a phrase with the main model (about 0.3–0.6 s), delays only the next tick. Draft passes take about 30 ms.
+ * rewrites a phrase with a registered term (about 0.3–0.7 s), delays only the next tick. Passes take about 30 ms.
  */
 const PARTIAL_MS = 150
 
