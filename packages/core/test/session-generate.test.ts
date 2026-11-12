@@ -106,7 +106,7 @@ const models = Layer.mock(SessionRunnerModel.Service)({
             cache: { read: Money.USDPerMillionTokens.make(0.1), write: Money.USDPerMillionTokens.make(0.5) },
           },
         ],
-        limit: { context: 200_000, output: 32_000 },
+        limit: { context: 200_000, input: 150_000, output: 32_000 },
       }),
     ),
 })
@@ -536,17 +536,22 @@ it.effect("sizes the next request by context part", () =>
       assistantMessageID: assistant,
       finish: "stop",
       cost: Money.USD.make(0),
-      tokens: { input: 1_000, output: 20, reasoning: 0, cache: { read: 200, write: 0 } },
+      tokens: { input: 1_000, output: 4_000, reasoning: 1_000, cache: { read: 200, write: 0 } },
     })
 
     const breakdown = yield* context.breakdown(sessionID)
 
     expect(breakdown.limit).toBe(200_000)
-    expect(breakdown.measured).toBe(1_220)
-    expect(breakdown.used).toBeGreaterThanOrEqual(breakdown.measured)
-    expect(breakdown.parts.map((part) => part.id)).toContain("messages")
+    expect(breakdown.inputLimit).toBe(150_000)
+    expect(breakdown.measured).toBe(6_200)
+    expect(breakdown.used).toBe(6_200)
     expect(breakdown.parts.map((part) => part.id)).toContain("system-prompt")
     expect(breakdown.parts.reduce((sum, part) => sum + part.tokens, 0)).toBe(breakdown.used)
-    expect(breakdown.free).toBe(200_000 - breakdown.used)
+    // The anchor's reply goes to the conversation; only its prompt is spread over the prompt's parts.
+    const messages = breakdown.parts.find((part) => part.id === "messages")
+    expect(messages?.entries.find((entry) => entry.id === "assistant")?.tokens).toBe(5_000)
+    expect(messages?.entries.filter((entry) => entry.id === "assistant")).toHaveLength(1)
+    // The prompt can only fill the input limit, which is below the context window.
+    expect(breakdown.free).toBe(150_000 - breakdown.used)
   }),
 )
