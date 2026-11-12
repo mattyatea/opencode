@@ -27,24 +27,44 @@ const withStore = <A, E, R>(
   })
 
 describe("ToolOutput", () => {
-  it.live("writes oversized text and returns a bounded preview", () =>
+  it.live("writes oversized text and returns its head and tail around a marker", () =>
     withStore(
       (service, fs) =>
         Effect.gen(function* () {
           const output = { items: [1, 2, 3] }
-          const result = yield* service.truncate({ output, content: [{ type: "text", text: "one\ntwo\nthree" }] })
+          const text = "one\ntwo\nthree\nfour\nfive"
+          const result = yield* service.truncate({ output, content: [{ type: "text", text }] })
           expect(result.output).toBe(output)
           expect(result.metadata).toMatchObject({ truncated: true })
           const outputPath = result.metadata?.outputPath
           expect(typeof outputPath).toBe("string")
           if (typeof outputPath !== "string") return
-          expect(yield* fs.readFileString(outputPath)).toBe("one\ntwo\nthree")
+          expect(yield* fs.readFileString(outputPath)).toBe(text)
           expect(result.content).toEqual([
             { type: "text", text: "one\ntwo" },
-            { type: "text", text: `[showing lines 1-2 of 3; full output saved to ${outputPath}]` },
+            { type: "text", text: `[showing lines 1-2 and 5-5 of 5; full output saved to ${outputPath}]` },
+            { type: "text", text: "five" },
           ])
         }),
-      { maxLines: 2, maxBytes: 1_000 },
+      { maxLines: 3, maxBytes: 1_000 },
+    ),
+  )
+
+  it.live("keeps the end of a log whose head alone would fill the byte limit", () =>
+    withStore(
+      (output) =>
+        Effect.gen(function* () {
+          const lines = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`)
+          const result = yield* output.truncate({
+            content: [{ type: "text", text: [...lines, "", "Error: build failed", "exit 1"].join("\n") }],
+          })
+          const shown = result.content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n")
+          expect(shown).toStartWith("line 1\n")
+          expect(shown).toEndWith("Error: build failed\nexit 1")
+          expect(shown).toContain("[showing lines 1-")
+          expect(Buffer.byteLength(shown.replace(/\n?\[showing [^\]]+\]\n?/, ""))).toBeLessThanOrEqual(200)
+        }),
+      { maxLines: 2_000, maxBytes: 200 },
     ),
   )
 
@@ -54,11 +74,11 @@ describe("ToolOutput", () => {
         Effect.gen(function* () {
           const result = yield* output.truncate({ content: [{ type: "text", text: "one\ntwo" }] })
           expect(result.content).toEqual([
-            { type: "text", text: "one" },
             {
               type: "text",
-              text: expect.stringMatching(/^\[showing lines 1-1 of 2; full output saved to .+\]$/),
+              text: expect.stringMatching(/^\[showing lines 2-2 of 2; full output saved to .+\]$/),
             },
+            { type: "text", text: "two" },
           ])
         }),
       { maxLines: 100, maxBytes: 5 },
@@ -71,13 +91,13 @@ describe("ToolOutput", () => {
         Effect.gen(function* () {
           const file = { type: "file" as const, uri: "file:///image.png", mime: "image/png" }
           const result = yield* output.truncate({
-            content: [{ type: "text", text: "before" }, file, { type: "text", text: "after\nomitted" }],
+            content: [{ type: "text", text: "before" }, file, { type: "text", text: "omitted\nafter" }],
           })
           expect(result.content).toEqual([
             { type: "text", text: "before" },
             file,
+            { type: "text", text: expect.stringMatching(/^\[showing lines 1-1 and 3-3 of 3; full output saved to /) },
             { type: "text", text: "after" },
-            { type: "text", text: expect.stringMatching(/^\[showing lines 1-2 of 3; full output saved to /) },
           ])
         }),
       { maxLines: 2, maxBytes: 1_000 },
