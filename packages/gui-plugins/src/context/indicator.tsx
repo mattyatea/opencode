@@ -7,6 +7,7 @@ import { useI18n } from "@opencode/ui/context/i18n"
 import { lastAssistantWithUsage } from "@opencode/client/solid"
 import { usePlugin, type MountedSession } from "@opencode/plugin/gui"
 import { catalogModel, syncCatalog } from "./catalog"
+import { ContextBreakdown } from "./breakdown"
 
 export function SessionContextUsage(props: {
   session: MountedSession
@@ -58,9 +59,17 @@ export function SessionContextUsage(props: {
       message.tokens.cache.write
 
     return {
+      message,
+      limit: model?.limit.context,
       total,
       usage: model?.limit.context ? Math.round((total / model.limit.context) * 100) : null,
     }
+  })
+
+  const previousContext = createMemo(() => {
+    const index = messages().findIndex((message) => message.id === context()?.message.id)
+
+    return index > 0 ? lastAssistantWithUsage(messages().slice(0, index)) : undefined
   })
 
   const tokens = createMemo(() =>
@@ -139,10 +148,16 @@ export function SessionContextUsage(props: {
         </Menu.Trigger>
       </Tooltip>
       <Menu.Portal>
-        <Menu.Content class="w-[200px] max-w-[calc(100vw-16px)]" aria-label={ctx.t("usage.view")}>
+        <Menu.Content
+          class="w-[340px] max-w-[calc(100vw-16px)] max-h-[75vh] overflow-y-auto"
+          aria-label={ctx.t("usage.view")}
+        >
           {menuRow(ctx.t("usage.tokens"), context()?.total.toLocaleString(i18n.locale()) ?? "0")}
           <Show when={showCost()}>{menuRow(ctx.t("usage.cost"), cost())}</Show>
           {menuRow(ctx.t("usage.usage"), `${context()?.usage ?? 0}%`)}
+          <div class="p-3">
+            <ContextBreakdown message={context()?.message} previous={previousContext()} limit={context()?.limit} />
+          </div>
           <Menu.Separator />
           <Menu.Item onSelect={viewContext}>{ctx.t("usage.view")}</Menu.Item>
         </Menu.Content>

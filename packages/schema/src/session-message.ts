@@ -17,6 +17,7 @@ import { Skill as SkillSchema } from "./skill.js"
 import { Money } from "./money.js"
 import { Snapshot } from "./snapshot.js"
 import { TokenUsage } from "./token-usage.js"
+import { ContextUsage } from "./context-usage.js"
 
 export const ID = Schema.String.check(Schema.isStartingWith("msg_")).pipe(
   Schema.brand("Session.Message.ID"),
@@ -235,6 +236,7 @@ export const Assistant = Schema.Struct({
   native: Native.pipe(optional),
   cost: Money.USD.pipe(optional),
   tokens: TokenUsage.Info.pipe(optional),
+  experimental: Schema.Struct({ context: ContextUsage.Info.pipe(optional) }).pipe(optional),
   error: SessionError.Error.pipe(optional),
   retry: AssistantRetry.pipe(optional),
   time: Schema.Struct({

@@ -223,6 +223,7 @@ export function update(adapter: Adapter, event: SessionEvent.DurableEvent) {
               produce(existing, (draft) => {
                 draft.agent = event.data.agent
                 draft.model = castDraft(event.data.model)
+                draft.experimental = castDraft(event.data.experimental)
                 draft.retry = undefined
                 draft.error = undefined
                 draft.finish = undefined
@@ -253,6 +254,7 @@ export function update(adapter: Adapter, event: SessionEvent.DurableEvent) {
               model: event.data.model,
               metadata: event.metadata,
               time: { created: DateTime.makeUnsafe(event.data.started) },
+              experimental: event.data.experimental,
               content: [],
               snapshot: event.data.snapshot ? { start: event.data.snapshot } : undefined,
             }),

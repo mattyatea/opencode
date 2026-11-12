@@ -99,10 +99,7 @@ export const layer = (options?: Options) =>
         return true
       })
 
-      const restartMessage = (
-        background: Job.Background,
-        recovery: Exclude<Job.Recovery, { kind: "subagent" }>,
-      ) => {
+      const restartMessage = (background: Job.Background, recovery: Exclude<Job.Recovery, { kind: "subagent" }>) => {
         const state = background.status === "running" ? "cancelled" : background.status
         if (recovery.kind === "shell") {
           const text =
@@ -118,7 +115,7 @@ export const layer = (options?: Options) =>
             ...ShellResult.notification({
               jobID: background.id,
               shellID: recovery.shellID,
-              command: recovery.command,
+              command: ShellResult.commandLabel(recovery.command),
               state,
               text,
             }),

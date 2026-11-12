@@ -1,4 +1,5 @@
 export * as SessionEvent from "./session-event.js"
+import { ContextUsage } from "./context-usage.js"
 
 import { Schema } from "effect"
 import { optional } from "./schema.js"
@@ -350,6 +351,7 @@ export namespace Step {
       snapshot: Snapshot.ID.pipe(optional),
       /** Request dispatch time, before waiting for provider output. */
       started: NonNegativeInt,
+      experimental: Schema.Struct({ context: ContextUsage.Info.pipe(optional) }).pipe(optional),
     },
   })
   export type Started = typeof Started.Type

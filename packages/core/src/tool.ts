@@ -24,17 +24,19 @@ export class RegistrationError extends Schema.TaggedError<RegistrationError>()("
   message: Schema.String,
 }) {}
 
+type Registration = Tool.Info & { readonly source?: "mcp" }
+
 export interface Editor {
   readonly list: () => readonly (Tool.Info & { readonly id: string })[]
   readonly get: (id: string) => (Tool.Info & { readonly id: string }) | undefined
   readonly namespace: (namespace: Tool.Namespace) => void
-  readonly add: (tool: Tool.Info) => void
+  readonly add: (tool: Registration) => void
   readonly update: (id: string, update: (tool: Types.Mutable<Tool.Info>) => void) => void
   readonly remove: (id: string) => void
 }
 
 type Data = {
-  tools: Map<string, Tool.Info & { readonly id: string }>
+  tools: Map<string, Registration & { readonly id: string }>
   // Converted once at registration; schemas cannot change without re-registering the tool.
   definitions: Map<string, ToolDefinition>
   namespaces: Map<string, Tool.Namespace>
@@ -68,6 +70,8 @@ export interface NormalizedResult extends Tool.Result {
 export interface Snapshot {
   readonly definitions: ReadonlyArray<ToolDefinition>
   readonly codeModeCatalog?: CodeModeCatalog.Inventory
+  /** Effective MCP tool names, including tools deferred to Code Mode. */
+  readonly mcpTools?: ReadonlySet<string>
   readonly execute: (input: {
     readonly sessionID: SessionSchema.ID
     readonly agent: Agent.ID
@@ -251,7 +255,7 @@ const layer = Layer.effect(
       snapshot: Effect.fn("Tool.snapshot")((permissions) =>
         Effect.sync(() => {
           const data = state.get()
-          const active = new Map<string, Tool.Info>()
+          const active = new Map<string, Registration>()
           const rules = permissions ?? []
           for (const [name, tool] of data.tools) {
             if (whollyDisabled(tool.options?.permission ?? name, rules)) continue
@@ -289,6 +293,7 @@ const layer = Layer.effect(
               definition: codeModeDefinition,
             }
           return {
+            mcpTools: new Set(Array.from(active).flatMap(([name, tool]) => (tool.source === "mcp" ? [name] : []))),
             ...(codeModeCatalog === undefined ? {} : { codeModeCatalog }),
             definitions: [
               ...Array.from(direct)
@@ -361,7 +366,7 @@ const layer = Layer.effect(
 )
 
 /** Store a valid tool under its effective name, or record why it was skipped. */
-function commit(editor: Data, id: string, tool: Tool.Info & { readonly id: string }) {
+function commit(editor: Data, id: string, tool: Registration & { readonly id: string }) {
   const registered = register(tool)
   if (Result.isFailure(registered)) {
     editor.errors.push({

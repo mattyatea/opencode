@@ -121,6 +121,13 @@ export type SessionStructuredError = {
   retryAfterMs?: number
 }
 
+export type ContextUsageInfo = {
+  estimates: { messages: number; system: number; tools: number; mcp: number; skills: number; instructions: number }
+  deferredTools: number
+  autoCompactLimit?: number
+  fingerprints: { system: string; tools: string; history: string; routing: string }
+}
+
 export type SessionGenerateResponse = { data: { text: string } }
 
 export type SessionInterruptResponse = { interrupted: boolean }
@@ -1428,6 +1435,7 @@ export type SessionStepStarted = {
     model: ModelRef
     snapshot?: SnapshotID
     started: number
+    experimental?: { context?: ContextUsageInfo }
   }
 }
 
@@ -2713,6 +2721,7 @@ export type SessionMessageAssistant = {
   native?: SessionMessageNative
   cost?: MoneyUSD
   tokens?: TokenUsageInfo
+  experimental?: { context?: ContextUsageInfo }
   error?: SessionStructuredError
   retry?: SessionMessageAssistantRetry
 }

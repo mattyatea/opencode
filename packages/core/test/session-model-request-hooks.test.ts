@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test"
-import { ToolDefinition } from "@opencode/ai/effect"
+import { LLMEvent, Message, SystemPart, ToolDefinition } from "@opencode/ai/effect"
 import { OpenAIChat } from "@opencode/ai/protocols"
+import { compileRequest } from "@opencode/ai/testing"
 import { Agent } from "@opencode/schema/agent"
 import { Money } from "@opencode/schema/money"
 import { Session } from "@opencode/schema/session"
@@ -11,6 +12,8 @@ import { Project } from "@opencode/core/project"
 import { AbsolutePath } from "@opencode/core/schema"
 import { SessionModelRequest } from "@opencode/core/session/model-request"
 import { SessionModelTransport } from "@opencode/core/session/model-transport"
+import { SessionMessage } from "@opencode/core/session/message"
+import { SessionContextUsage } from "@opencode/core/session/context-usage"
 import { SessionRunnerModel } from "@opencode/core/session/runner/model"
 import { DateTime, Effect, Stream } from "effect"
 import { HttpClientRequest, HttpClientResponse } from "effect/http"
@@ -41,6 +44,84 @@ const transport = SessionModelTransport.Service.of({
 })
 
 describe("SessionModelRequest HTTP hooks", () => {
+  it.effect("fingerprints cache affinity after model hooks without changing the model body", () =>
+    Effect.gen(function* () {
+      const hooks = yield* PluginHooks.Service
+      let affinity = "hook-affinity-first"
+      yield* hooks.register("session", "model.request", (event) =>
+        Effect.sync(() => {
+          event.headers["Session-Id"] = affinity
+        }),
+      )
+      const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
+      const input = {
+        session,
+        agent: Agent.ID.make("build"),
+        model,
+        system: [],
+        messages: [Message.user("fixed input")],
+      }
+      const first = yield* requests.primary(input)
+      affinity = "hook-affinity-second"
+      const second = yield* requests.primary(input)
+
+      expect(first.request.headers?.["Session-Id"]).toBe("hook-affinity-first")
+      expect(second.request.headers?.["Session-Id"]).toBe("hook-affinity-second")
+      expect(second.context?.fingerprints.routing).not.toBe(first.context?.fingerprints.routing)
+      expect(second.context?.fingerprints.system).toBe(first.context?.fingerprints.system)
+      expect(second.context?.fingerprints.tools).toBe(first.context?.fingerprints.tools)
+      expect(second.context?.fingerprints.history).toBe(first.context?.fingerprints.history)
+      expect(JSON.stringify(first.context)).not.toContain("hook-affinity-first")
+      expect(JSON.stringify(second.context)).not.toContain("hook-affinity-second")
+      const before = yield* compileRequest(first.request)
+      const after = yield* compileRequest(second.request)
+      expect(after.body).toEqual(before.body)
+    }).pipe(Effect.provideService(SessionModelTransport.Service, transport)),
+  )
+
+  it.effect("uses final hooked context for diagnostics and skill reuse, including renamed tools", () =>
+    Effect.gen(function* () {
+      const hooks = yield* PluginHooks.Service
+      const body = '<skill_content name="demo">' + "Use the actual implementation.\n".repeat(50) + "</skill_content>"
+      let removed = false
+      yield* hooks.register("session", "context", (event) =>
+        Effect.sync(() => {
+          event.system = [SystemPart.make("Final hooked system")]
+          event.tools.load_skill = event.tools.skill!
+          delete event.tools.skill
+          if (removed) event.messages = []
+        }),
+      )
+      const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
+      const result = { content: [{ type: "text" as const, text: body }] }
+      const prepare = () =>
+        requests.primary({
+          session,
+          agent: Agent.ID.make("build"),
+          model,
+          system: [],
+          messages: [Message.user(body)],
+          tools: {
+            definitions: [new ToolDefinition({ name: "skill", description: "Load skill", inputSchema: {} })],
+            execute: () => Effect.succeed(result),
+          },
+        })
+      const call = {
+        sessionID: session.id,
+        agent: Agent.ID.make("build"),
+        messageID: SessionMessage.ID.create(),
+        call: LLMEvent.toolCall({ id: "skill_call", name: "load_skill", input: { id: "demo" } }),
+      }
+      const first = yield* prepare()
+      expect(first.context).toEqual(SessionContextUsage.measure(first.request))
+      expect(yield* first.executeTool(call)).toMatchObject({ metadata: { reused: true } })
+      removed = true
+      const second = yield* prepare()
+      expect(yield* second.executeTool(call)).toBe(result)
+      expect(second.context?.fingerprints.history).not.toBe(first.context?.fingerprints.history)
+    }).pipe(Effect.provideService(SessionModelTransport.Service, transport)),
+  )
+
   it.effect("tags every Session request kind on http.request and http.response", () =>
     Effect.gen(function* () {
       const hooks = yield* PluginHooks.Service
@@ -146,14 +227,12 @@ describe("SessionModelRequest HTTP hooks", () => {
       }
 
       const required = yield* Effect.forEach([1, 2], () =>
-        requests
-          .primary({ session, agent: Agent.ID.make("build"), model, system: [], messages: [], tools })
-          .pipe(
-            Effect.map((prepared) => {
-              const tool = prepared.request.tools[0]
-              return tool?.type === "tool" ? tool.inputSchema.required : undefined
-            }),
-          ),
+        requests.primary({ session, agent: Agent.ID.make("build"), model, system: [], messages: [], tools }).pipe(
+          Effect.map((prepared) => {
+            const tool = prepared.request.tools[0]
+            return tool?.type === "tool" ? tool.inputSchema.required : undefined
+          }),
+        ),
       )
 
       expect(required).toEqual([

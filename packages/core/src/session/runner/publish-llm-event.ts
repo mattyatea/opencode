@@ -16,6 +16,7 @@ import { Money } from "@opencode/schema/money"
 import { contentFilterError } from "../to-session-error.js"
 import type { Tool } from "../../tool.js"
 import { stringify } from "../../tool/runtime.js"
+import type { ContextUsage } from "@opencode/schema/context-usage"
 
 type Input = {
   readonly sessionID: SessionSchema.ID
@@ -26,6 +27,7 @@ type Input = {
   readonly pendingSnapshot?: Effect.Effect<Snapshot.ID | undefined>
   readonly started: number
   readonly assistantMessageID: SessionMessage.ID
+  readonly context?: ContextUsage.Info
 }
 
 const asRecord = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : { value })
@@ -131,6 +133,7 @@ export const createLLMEventPublisher = (bus: Pick<Bus.Interface, "publish">, inp
       assistantMessageID,
       snapshot,
       started: input.started,
+      experimental: input.context ? { context: input.context } : undefined,
     })
     return assistantMessageID
   })

@@ -86,6 +86,7 @@ export const make = Effect.gen(function* () {
       providerMetadataKey: input.model.model.route.providerMetadataKey ?? input.model.model.provider,
       pendingSnapshot: Fiber.join(pendingStartSnapshot),
       started,
+      context: input.prepared.context,
     })
     const toolRuns: Array<{
       readonly call: ToolCall
@@ -121,10 +122,26 @@ export const make = Effect.gen(function* () {
             call: event,
             fiber: yield* Effect.uninterruptibleMask((restore) =>
               restore(executeTool(event)).pipe(
-                Effect.flatMap(toolOutput.truncate),
+                Effect.flatMap((result) => toolOutput.truncate(result)),
                 Effect.flatMap((outcome) => publisher.toolExecution(event.id, event.name, outcome)),
                 Effect.catchTag("Tool.Error", (error) =>
-                  publisher.failTool(event.id, toSessionError(error), error.metadata).pipe(Effect.asVoid),
+                  Effect.gen(function* () {
+                    const failure = toSessionError(error)
+                    const bounded = yield* toolOutput.truncate(
+                      { content: [{ type: "text", text: failure.message }], metadata: error.metadata },
+                      "head-tail",
+                    )
+                    yield* publisher.failTool(
+                      event.id,
+                      {
+                        ...failure,
+                        message: bounded.content
+                          .flatMap((part) => (part.type === "text" ? [part.text] : []))
+                          .join("\n"),
+                      },
+                      bounded.metadata,
+                    )
+                  }),
                 ),
               ),
             ).pipe(Effect.forkScoped),

@@ -18,27 +18,32 @@ import { SessionStep } from "@opencode/core/session/runner/step"
 import { SessionMessageTable, SessionTable } from "@opencode/core/session/sql"
 import { Snapshot } from "@opencode/core/snapshot"
 import { ToolOutput } from "@opencode/core/tool-output"
+import { Tool } from "@opencode/core/tool"
+import { FSUtil } from "@opencode/util/fs-util"
+import { SessionContextUsage } from "@opencode/core/session/context-usage"
 import { Money } from "@opencode/schema/money"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { asc, eq } from "drizzle-orm"
-import { Effect, Exit, Layer } from "effect"
+import { Effect, Exit, Layer, Schema } from "effect"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(
   Layer.merge(
-    AppNodeBuilder.build(LayerNode.group([Database.node, Bus.node, SessionProjector.node, ToolOutput.node]), [
-      Bus.node.replace(Bus.configured({ persist: true })),
-    ]),
+    AppNodeBuilder.build(
+      LayerNode.group([Database.node, Bus.node, SessionProjector.node, ToolOutput.node, FSUtil.node]),
+      [Bus.node.replace(Bus.configured({ persist: true }))],
+    ),
     TestLLM.testLayer(),
   ),
 )
 
 for (const fixture of [
-  { finish: "stop", toolChoice: undefined },
-  { finish: "content-filter", toolChoice: undefined },
-  { finish: "stop", toolChoice: "none" },
+  { finish: "stop", toolChoice: undefined, failure: false },
+  { finish: "content-filter", toolChoice: undefined, failure: false },
+  { finish: "stop", toolChoice: "none", failure: false },
+  { finish: "stop", toolChoice: undefined, failure: true },
 ] as const) {
-  it.effect(`settles ${fixture.finish} with tool choice ${fixture.toolChoice ?? "default"}`, () =>
+  it.live(`settles ${fixture.finish}/${fixture.toolChoice ?? "tools"}/failed=${fixture.failure}`, () =>
     Effect.gen(function* () {
       const db = (yield* Database.Service).db
       const llm = yield* TestLLM.Test
@@ -47,6 +52,7 @@ for (const fixture of [
       const start = Snapshot.ID.make("before")
       const end = Snapshot.ID.make("after")
       const files = [RelativePath.make("changed.ts")]
+      const failure = "HEAD_ERROR\n" + "middle output\n".repeat(5000) + "TAIL_ERROR_ID=731"
       let captures = 0
       let executions = 0
       const steps = yield* SessionStep.make.pipe(
@@ -66,7 +72,13 @@ for (const fixture of [
         .run()
       yield* db
         .insert(SessionTable)
-        .values({ id: sessionID, project_id: Project.ID.global, slug: "step", directory: "/project", version: "test" })
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "step",
+          directory: "/project",
+          version: "test",
+        })
         .run()
       const model = SessionRunnerModel.resolved(
         LanguageModel.make({ id: "test-model", provider: "test", route: OpenAIChat.route }),
@@ -98,6 +110,11 @@ for (const fixture of [
           LLMEvent.toolCall({ id: "call-test", name: "test", input: {} }),
         ),
       )
+      const context = SessionContextUsage.measure(
+        ai.request({ model: model.model, prompt: "Run one tool" }),
+        undefined,
+        80_000,
+      )
       const result = yield* steps
         .attempt({
           isLocationClosed: () => false,
@@ -106,14 +123,16 @@ for (const fixture of [
           agent: Agent.defaultID,
           model,
           prepared: {
+            context,
             retry: () => Effect.void,
             request: ai.request({ model: model.model, prompt: "Run one tool", toolChoice: fixture.toolChoice }),
             options: {},
-            executeTool: () =>
-              Effect.sync(() => {
-                executions++
-                return { content: [{ type: "text", text: "Completed tool" }] }
-              }),
+            executeTool: () => {
+              executions++
+              return fixture.failure
+                ? new Tool.Error({ message: failure })
+                : Effect.succeed({ content: [{ type: "text", text: "Completed tool" }] })
+            },
           },
           retry: (_cause, _error, retry) =>
             Effect.succeed(retry ? { retry: true, attempt: 2, delay: 0 } : { retry: false }),
@@ -135,11 +154,33 @@ for (const fixture of [
         .where(eq(SessionMessageTable.id, assistantMessageID))
         .get()
       expect(message?.data).toMatchObject({
+        experimental: { context },
         finish: fixture.finish,
         tokens: { input: 10, output: 4, reasoning: 2, cache: { read: 3, write: 2 } },
         snapshot: { start, end, files },
-        content: [{ type: "tool", state: { status: fixture.toolChoice === "none" ? "error" : "completed" } }],
+        content: [
+          {
+            type: "tool",
+            state: { status: fixture.toolChoice === "none" || fixture.failure ? "error" : "completed" },
+          },
+        ],
       })
+      if (fixture.failure && message) {
+        const assistant = Schema.decodeUnknownSync(SessionMessage.Assistant)({
+          ...message.data,
+          id: assistantMessageID,
+          type: "assistant",
+        })
+        const tool = assistant.content.find((part) => part.type === "tool")
+        if (tool?.state.status !== "error") throw new Error("Expected failed tool")
+        expect(tool.state.error.message).toContain("HEAD_ERROR")
+        expect(tool.state.error.message).toContain("TAIL_ERROR_ID=731")
+        expect(tool.state.error.message.length).toBeLessThan(failure.length)
+        const outputPath = tool.state.metadata?.outputPath
+        if (typeof outputPath !== "string") throw new Error("Expected saved failure output")
+        const fs = yield* FSUtil.Service
+        expect(yield* fs.readFileString(outputPath)).toBe(failure)
+      }
       expect(message?.data).toHaveProperty("cost", expect.closeTo(0.0000233, 10))
       const events = yield* db
         .select({ type: EventTable.type })

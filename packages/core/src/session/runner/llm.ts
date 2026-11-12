@@ -271,6 +271,7 @@ const layer = Layer.effect(
             toolChoice: stepLimitReached ? "none" : undefined,
             webSocket: "session",
             inputTokens: estimate,
+            autoCompactLimit: compaction.ceiling(loaded.model.limit),
           })
           .pipe(
             // The hook event holds every message from before images are bounded, screenshots included, and is a separate
@@ -278,6 +279,7 @@ const layer = Layer.effect(
             // so they keep only what they use.
             Effect.map((prepared) => ({
               request: prepared.request,
+              context: prepared.context,
               options: prepared.options,
               retry: prepared.retry,
               executeTool: prepared.executeTool,

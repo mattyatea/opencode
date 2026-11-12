@@ -1283,6 +1283,40 @@ describe("ShellTool", () => {
     { timeout: 15_000 },
   )
 
+  it.live("bounds only successful output and retains the complete saved log", () =>
+    withTempDir((tmp) => {
+      reset()
+      return withSession(tmp.path, (registry) =>
+        Effect.gen(function* () {
+          const output = Array.from({ length: 600 }, (_, index) => `line ${index}: ${"x".repeat(30)}`).join("\n")
+          const script = path.join(tmp.path, "output.js")
+          yield* Effect.promise(() =>
+            Bun.write(script, `process.stdout.write(${JSON.stringify(output)}); process.exit(Number(process.argv[2]))`),
+          )
+          for (const exit of [0, 7]) {
+            const settled = yield* executeTool(
+              registry,
+              call({ command: `"${process.execPath}" "${script}" ${exit}` }, `call-cap-${exit}`),
+            )
+            const content = settled.content?.[0]
+            if (!content || content.type !== "text") throw new Error("Expected text content")
+            expect(settled.metadata).toMatchObject({ exit, truncated: exit === 0 })
+            if (exit !== 0) {
+              expect(content.text).toBe(output)
+              continue
+            }
+            expect(content.text.length).toBeLessThan(15_500)
+            expect(content.text).toStartWith("line 0:")
+            expect(content.text).toEndWith(`line 599: ${"x".repeat(30)}`)
+            const file = /full output saved to (.+)\]/.exec(content.text)?.[1]
+            if (!file) throw new Error("Missing saved output path")
+            expect(yield* Effect.promise(() => Bun.file(file).text())).toBe(output)
+          }
+        }),
+      )
+    }),
+  )
+
   it.live("uses configured line limits", () =>
     withTempDir((tmp) => {
       reset()

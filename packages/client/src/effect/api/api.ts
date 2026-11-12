@@ -1043,6 +1043,30 @@ export type ExperimentalSessionLogOutput =
             readonly model: Model.Ref
             readonly snapshot?: Snapshot.ID | undefined
             readonly started: number
+            readonly experimental?:
+              | {
+                  readonly context?:
+                    | {
+                        readonly estimates: {
+                          readonly messages: number
+                          readonly system: number
+                          readonly tools: number
+                          readonly mcp: number
+                          readonly skills: number
+                          readonly instructions: number
+                        }
+                        readonly deferredTools: number
+                        readonly autoCompactLimit?: number | undefined
+                        readonly fingerprints: {
+                          readonly system: string
+                          readonly tools: string
+                          readonly history: string
+                          readonly routing: string
+                        }
+                      }
+                    | undefined
+                }
+              | undefined
           }
         }
       | {

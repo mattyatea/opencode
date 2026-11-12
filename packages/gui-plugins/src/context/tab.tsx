@@ -15,6 +15,7 @@ import { createKeyed, usePlugin, type MountedSession } from "@opencode/plugin/gu
 import { catalogModel, syncCatalog } from "./catalog"
 import { fetchSessionExport, sessionExportFilename } from "./export"
 import { createSessionContextFormatter } from "./format"
+import { ContextBreakdown } from "./breakdown"
 
 function Stat(props: { label: string; value: JSX.Element }) {
   return (
@@ -135,6 +136,12 @@ export default function SessionContextTab(props: { session: MountedSession }) {
   })
 
   const formatter = createMemo(() => createSessionContextFormatter(i18n.locale()))
+
+  const previousContext = createMemo(() => {
+    const index = messages().findIndex((message) => message.id === context()?.message.id)
+
+    return index > 0 ? lastAssistantWithUsage(messages().slice(0, index)) : undefined
+  })
 
   // A root session's cost includes its subagent sessions, as in the TUI.
   const cost = createMemo(() => usd().format(props.session.id ? data().session.cost(props.session.id) : 0))
@@ -292,6 +299,7 @@ export default function SessionContextTab(props: { session: MountedSession }) {
       onScroll={handleScroll}
     >
       <div data-slot="session-usage-content" class="px-4 pt-4 pb-6 flex flex-col gap-6 md:px-6 md:pb-10 md:gap-10">
+        <ContextBreakdown message={context()?.message} previous={previousContext()} limit={context()?.limit} />
         <div class="grid grid-cols-1 @[32rem]:grid-cols-2 gap-4">
           <For each={stats}>{(stat) => <Stat label={ctx.t(stat.label)} value={stat.value()} />}</For>
         </div>

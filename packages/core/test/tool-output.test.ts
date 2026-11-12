@@ -27,6 +27,48 @@ const withStore = <A, E, R>(
   })
 
 describe("ToolOutput", () => {
+  it.live("keeps the beginning and the final error while retaining full output and media order", () =>
+    withStore(
+      (output, fs) =>
+        Effect.gen(function* () {
+          const image = { type: "file" as const, uri: "file:///image.png", mime: "image/png" }
+          const text = "HEAD\n" + "middle\n".repeat(10) + "TAIL_ERROR=7\n"
+          const result = yield* output.truncate({
+            content: [{ type: "text", text: "HEAD\n" }, image, { type: "text", text: text.slice(5) }],
+            metadata: { exit: 7 },
+          })
+          const preview = result.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+          expect(preview).toContain("HEAD")
+          expect(preview).toContain("TAIL_ERROR=7")
+          expect(preview).toContain("middle omitted")
+          expect(result.content[1]).toEqual(image)
+          expect(result.metadata?.exit).toBe(7)
+          expect(yield* fs.readFileString(result.metadata?.outputPath)).toBe("HEAD\n\n" + text.slice(5))
+        }),
+      { maxLines: 4, maxBytes: 40 },
+    ),
+  )
+
+  for (const ending of ["", "\n"])
+    it.live(
+      `bounds a single-line Unicode failure with ending ${JSON.stringify(ending)} without splitting code points`,
+      () =>
+        withStore(
+          (output, fs) =>
+            Effect.gen(function* () {
+              const text = "始🙂" + "あ🙂".repeat(100) + "末🙂" + ending
+              const result = yield* output.truncate({ content: [{ type: "text", text }] }, "head-tail")
+              const preview = result.content.flatMap((part) => (part.type === "text" ? [part.text] : []))
+              expect(preview[0]).toStartWith("始🙂")
+              expect(preview.at(-1)).toEndWith("末🙂" + ending)
+              expect(preview.join("")).not.toContain("�")
+              expect(Buffer.byteLength(preview[0]! + preview.at(-1)!)).toBeLessThanOrEqual(31)
+              expect(yield* fs.readFileString(result.metadata?.outputPath)).toBe(text)
+            }),
+          { maxLines: 4, maxBytes: 31 },
+        ),
+    )
+
   it.live("writes oversized text and returns a bounded preview", () =>
     withStore(
       (service, fs) =>

@@ -76,7 +76,7 @@ type Output = typeof Output.Type
 
 const resultMessages = (output: Output) => {
   const notice = output.status === "running" ? BACKGROUND_INSTRUCTION : ShellResult.notice(output)
-  return [...(output.output ? [output.output] : []), ...(notice ? [notice] : [])]
+  return [...(output.output ? [ShellResult.collapseRepeats(output.output)] : []), ...(notice ? [notice] : [])]
 }
 
 const toolResult = (output: Output) => {
@@ -164,7 +164,7 @@ export const Plugin = {
           ...ShellResult.notification({
             jobID: id,
             shellID,
-            command,
+            command: ShellResult.commandLabel(command),
             state: info.status,
             text,
             output,

@@ -53,6 +53,7 @@ export const layer = Layer.effect(
           yield* tools.transform((editor) => {
             for (const tool of discovered) {
               editor.add({
+                source: "mcp",
                 name: tool.name,
                 options: { namespace: namespace(tool.server), codemode: tool.codemode !== false },
                 description: tool.description ?? "",

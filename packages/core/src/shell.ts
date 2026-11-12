@@ -250,13 +250,14 @@ const layer = () =>
           const lines = page.output.split("\n")
           if (page.output.endsWith("\n")) lines.pop()
           const truncated = latest.size > maxBytes || lines.length > maxLines
-          const text = lines.length > maxLines ? lines.slice(-maxLines).join("\n") : page.output
+          const kept = lines.length > maxLines ? lines.slice(-maxLines).join("\n") : page.output
+          const text = info.exit === 0 ? ShellResult.boundSuccess(kept, info.file) : kept
           const total = (yield* require(info.id)).newlines + (page.output.endsWith("\n") ? 0 : 1)
           const shown = Math.min(lines.length, maxLines)
           const notice = truncated
             ? `\n\n[showing lines ${total - shown + 1}-${total} of ${total}; full output saved to ${info.file}]`
             : ""
-          return { output: `${text || "(no output)"}${notice}`, truncated }
+          return { output: `${text || "(no output)"}${notice}`, truncated: truncated || text !== kept }
         }).pipe(Effect.catchTag("Shell.NotFoundError", () => Effect.succeed(undefined)))
         return { info, capture }
       })

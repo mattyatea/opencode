@@ -69,6 +69,7 @@ export type Outcome =
   | { readonly status: "failed"; readonly error: SessionError.Error }
 
 export interface Interface extends State.Transformable<Editor> {
+  readonly ceiling: (limit: SessionContext.Loaded["model"]["limit"]) => number | undefined
   readonly compact: (trigger: Trigger) => Effect.Effect<Outcome>
   /**
    * Starts a background summary when the context nears the threshold. Never waits for it. Loads `context` only when
@@ -929,6 +930,8 @@ export const layer = Layer.effect(
     })
 
     return Service.of({
+      ceiling: (limit) =>
+        state.get().auto && limit.context > 0 ? calculateCeiling(limit, state.get().buffer) : undefined,
       transform: state.transform,
       reload: state.reload,
       // A manual compaction settles through its `/compact` inbox item, which the runner owns.

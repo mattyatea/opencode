@@ -45,6 +45,8 @@ import { SessionSchema } from "./schema.js"
 import { SessionSystemPrompt } from "./system-prompt.js"
 import { toLLMMessages } from "./runner/to-llm-message.js"
 import type { SessionMessage } from "./message.js"
+import type { ContextUsage } from "@opencode/schema/context-usage"
+import { SessionContextUsage } from "./context-usage.js"
 
 const IMAGE_BYTES_TRIGGER = 25 * 1024 * 1024 // 25 MiB
 const IMAGE_BYTES_TARGET = 15 * 1024 * 1024 // 15 MiB
@@ -71,6 +73,7 @@ export interface Prepared<Event = SessionRequest> {
   readonly event: Event
   readonly request: LLMRequest
   readonly options: StreamOptions
+  readonly context?: ContextUsage.Info
   readonly retry: (event: PluginHooks.Domains["session"]["retry"]) => Effect.Effect<void>
   /** Runs a tool call against the tools this request advertised. */
   readonly executeTool: (
@@ -90,6 +93,7 @@ export interface Input {
   readonly webSocket?: "session"
   /** Prompt size, measured by the provider or estimated. The default output limit leaves room for it. */
   readonly inputTokens?: { readonly measured: number; readonly estimated: number }
+  readonly autoCompactLimit?: number
 }
 
 /** The default output limit: the catalog limit, fitted to the room the prompt leaves in the context window. */
@@ -268,7 +272,7 @@ export const layer = Layer.effect(
       const session = input.session
       const model = input.model
       const scope = { sessionID: session.id, agent: input.agent, model: model.ref, kind }
-      const tools = input.tools ?? {
+      const tools: Tool.Snapshot = input.tools ?? {
         definitions: [],
         execute: () => new Tool.Error({ message: "Tools are not available for this request" }),
       }
@@ -413,6 +417,19 @@ export const layer = Layer.effect(
       return {
         event: shaped,
         request,
+        context:
+          kind === "primary"
+            ? SessionContextUsage.measure(
+                request,
+                {
+                  ...tools,
+                  mcpTools: new Set(
+                    Array.from(hooked).flatMap(([name, tool]) => (tools.mcpTools?.has(tool.name) ? [name] : [])),
+                  ),
+                },
+                input.autoCompactLimit,
+              )
+            : undefined,
         options: { ...(http ? { http } : {}), ...(webSocket ? { webSocket } : {}) },
         retry: (event: Parameters<Prepared["retry"]>[0]) =>
           hooks.trigger("session", "retry", event).pipe(Effect.asVoid),
@@ -422,6 +439,9 @@ export const layer = Layer.effect(
         // plugin tools do.
         executeTool: (call: Parameters<Prepared["executeTool"]>[0]) =>
           tools.execute({ ...call, definitions: hooked }).pipe(
+            Effect.map((result) =>
+              SessionContextUsage.reuseToolResult(hooked.get(call.call.name)?.name, result, request.messages),
+            ),
             Effect.catchCauseFilter(
               (cause) => {
                 const decline = cause.reasons

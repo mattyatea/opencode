@@ -1,12 +1,110 @@
 import type { SessionMessageInfo } from "@opencode/client/promise"
 import { expect, test, type Page } from "@playwright/test"
-import { REMOTE_SERVER, seed, sessionHref } from "../utils/app"
+import { REMOTE_SERVER, pageMessagesFrom, seed, sessionHref } from "../utils/app"
 import { fixture, mockStressTimeline } from "../utils/session-fixture"
 import { reviewTabs } from "../utils/side-panel"
 import { expectSessionTitle } from "../utils/waits"
 import { mockRemoteServer, mockWorkspace, openSession } from "../utils/workspace"
 
 const tabs = (page: Page) => page.locator('[data-slot="titlebar-tabs"] a')
+
+test("context usage distinguishes measured tokens, estimates, deferred tools and request changes", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.emulateMedia({ colorScheme: "dark" })
+
+  const assistant = {
+    id: "msg_context_current",
+    type: "assistant" as const,
+    time: { created: 1700000002000, completed: 1700000003000 },
+    agent: "build",
+    model: { id: "test", providerID: "opencode" },
+    content: [{ type: "text" as const, text: "Context example" }],
+    finish: "stop" as const,
+    tokens: { input: 500, output: 1000, reasoning: 0, cache: { read: 49500, write: 0 } },
+    experimental: {
+      context: {
+        estimates: { messages: 37000, system: 1000, tools: 1000, mcp: 2000, skills: 3000, instructions: 6000 },
+        deferredTools: 332,
+        autoCompactLimit: 170000,
+        fingerprints: { system: "same", tools: "new", history: "new", routing: "same" },
+      },
+    },
+  }
+
+  await openSession(page, {
+    name: "Context breakdown",
+    sessions: [
+      { id: "ses_context_breakdown", title: "Context breakdown" },
+      { id: "ses_legacy_context", title: "Legacy context" },
+    ],
+    pageMessages: pageMessagesFrom({
+      ses_context_breakdown: [
+        {
+          ...assistant,
+          id: "msg_context_previous",
+          time: { created: 1700000000000, completed: 1700000001000 },
+          experimental: {
+            context: {
+              ...assistant.experimental.context,
+              fingerprints: { system: "same", tools: "old", history: "old", routing: "same" },
+            },
+          },
+        },
+        assistant,
+      ],
+      ses_legacy_context: [
+        {
+          ...assistant,
+          id: "msg_context_legacy",
+          experimental: undefined,
+          tokens: { input: 500, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      ],
+    }),
+  })
+
+  const header = page.locator("[data-session-title]")
+
+  await expect(header.getByRole("button", { name: "Toggle session context", exact: true })).toBeVisible()
+  await header.locator(".session-header-layout").evaluate((element) => (element.style.inlineSize = "300px"))
+  await header.getByRole("button", { name: "View context usage", exact: true }).click()
+
+  const menu = page.getByRole("menu", { name: "View context usage", exact: true })
+  const breakdown = menu.getByRole("region", { name: "Context usage", exact: true })
+
+  await expect(breakdown.getByRole("meter")).toHaveAttribute("aria-valuenow", "51000")
+  await expect(breakdown.getByText("49,500 (99%)", { exact: true })).toBeVisible()
+  await expect(breakdown.getByText("Estimated input breakdown", { exact: true })).toBeVisible()
+  await expect(breakdown.getByText("≈ 37,000", { exact: true })).toBeVisible()
+  await expect(breakdown.getByText("332", { exact: true })).toBeVisible()
+  await expect(breakdown.getByText("Autocompact buffer 30,000", { exact: true })).toBeVisible()
+  await expect(breakdown.getByText("Free space 119,000", { exact: true })).toBeVisible()
+  await expect(breakdown.getByText("Tool definitions changed", { exact: true })).toBeVisible()
+  await expect(breakdown.getByText("System prompt changed", { exact: true })).toHaveCount(0)
+  await menu.screenshot({ path: test.info().outputPath("context-breakdown-menu.png") })
+  await menu.getByRole("menuitem", { name: "View context usage", exact: true }).click()
+
+  const panel = page.locator('[data-slot="session-usage-content"]')
+
+  await expect(panel.getByRole("meter")).toHaveAttribute("aria-valuenow", "51000")
+  await page.evaluate(() => document.documentElement.setAttribute("dir", "rtl"))
+  await expect(panel.getByText("49,500 (99%)", { exact: true })).toBeVisible()
+  await expect(panel.getByText("51,000 / 200,000", { exact: true })).toHaveAttribute("dir", "ltr")
+  await page.emulateMedia({ colorScheme: "light" })
+  await panel
+    .getByRole("region", { name: "Context usage", exact: true })
+    .screenshot({ path: test.info().outputPath("context-breakdown-rtl.png") })
+  await page.getByRole("link", { name: "C Legacy context", exact: true }).click()
+  await page
+    .locator("[data-session-title]")
+    .getByRole("button", { name: "Toggle session context", exact: true })
+    .click()
+  await expect(panel.getByRole("meter")).toHaveAttribute("aria-valuenow", "600")
+  await expect(
+    panel.getByText("Request breakdown is available after a new response from an updated server.", { exact: true }),
+  ).toBeVisible()
+  await expect(panel.getByText("332", { exact: true })).toHaveCount(0)
+})
 
 for (const direction of ["ltr", "rtl"] as const) {
   test(`session header groups controls and exposes session details in ${direction}`, async ({ page }) => {

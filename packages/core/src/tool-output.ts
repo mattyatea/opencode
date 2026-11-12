@@ -29,7 +29,7 @@ export type Editor = {
 }
 
 export interface Interface extends State.Transformable<Editor> {
-  readonly truncate: (result: Result) => Effect.Effect<Result>
+  readonly truncate: (result: Result, mode?: "head" | "head-tail") => Effect.Effect<Result>
   /** Writes bytes the model cannot receive inline to a retained file and returns its path. */
   readonly save: (bytes: Uint8Array, extension: string) => Effect.Effect<string>
   readonly cleanup: () => Effect.Effect<void>
@@ -66,7 +66,7 @@ const layer = Layer.effect(
       }),
     })
 
-    const truncate = Effect.fnUntraced(function* (result: Result) {
+    const truncate = Effect.fnUntraced(function* (result: Result, mode?: "head" | "head-tail") {
       const content = result.content
       const text = content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n")
       const limits = state.get()
@@ -92,6 +92,37 @@ const layer = Layer.effect(
       if (!retained) {
         yield* fs.ensureDir(directory).pipe(Effect.orDie)
         yield* fs.writeFileString(file, text).pipe(Effect.orDie)
+      }
+      if (mode === "head-tail" || (typeof result.metadata?.exit === "number" && result.metadata.exit !== 0)) {
+        const head = edge(lines, Math.ceil(limits.maxLines / 2), Math.ceil(limits.maxBytes / 2), false)
+        const tail = edge(
+          lines,
+          Math.floor(limits.maxLines / 2),
+          Math.floor(limits.maxBytes / 2),
+          true,
+          text.endsWith("\n"),
+        )
+        const marker = `[middle omitted; showing first ${Buffer.byteLength(head)} and last ${Buffer.byteLength(tail)} of ${totalBytes} bytes; full output saved to ${file}]`
+        const bounded: Tool.Content[] = []
+        let position = 0
+        let marked = false
+        for (const item of content) {
+          if (item.type === "file") {
+            bounded.push(item)
+            continue
+          }
+          const end = position + item.text.length
+          const first = item.text.slice(0, Math.max(0, head.length - position))
+          const last = item.text.slice(Math.max(0, text.length - tail.length - position))
+          if (first) bounded.push({ ...item, text: first })
+          if (!marked && end > head.length) {
+            bounded.push({ type: "text", text: marker })
+            marked = true
+          }
+          if (last) bounded.push({ ...item, text: last })
+          position = end + 1
+        }
+        return { ...result, content: bounded, metadata: { ...result.metadata, truncated: true, outputPath: file } }
       }
       const shown = kept.length > 0 ? `lines 1-${kept.length}` : "0 lines"
       const marker = `[showing ${shown} of ${lines.length}; full output saved to ${file}]`
@@ -139,6 +170,18 @@ const layer = Layer.effect(
     })
   }),
 )
+
+// Slice on UTF-8 boundaries, including a huge single-line error, without splitting a code point.
+function edge(lines: ReadonlyArray<string>, maxLines: number, maxBytes: number, tail: boolean, trailing = false) {
+  if (maxLines <= 0 || maxBytes <= 0) return ""
+  const bytes = Buffer.from(
+    (tail ? lines.slice(-maxLines) : lines.slice(0, maxLines)).join("\n") + (tail && trailing ? "\n" : ""),
+  )
+  if (bytes.length <= maxBytes) return bytes.toString()
+  let offset = tail ? bytes.length - maxBytes : maxBytes
+  while (offset < bytes.length && (bytes[offset]! & 0xc0) === 0x80) offset += tail ? 1 : -1
+  return (tail ? bytes.subarray(offset) : bytes.subarray(0, offset)).toString()
+}
 
 const cleanupLayer = Layer.effectDiscard(
   Effect.gen(function* () {
