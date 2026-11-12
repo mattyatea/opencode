@@ -51,7 +51,7 @@ Claude Code reads none of the user's Claude settings. The plugin passes every se
 - Auto compaction. opencode compacts instead.
 - Auto memory. Claude saves notes about the user and project to its own files and reads them in later sessions. Only Claude models would see them, and opencode could not show or control them.
 - Away summaries. Claude Code writes a recap when you come back to an idle terminal session. Opencode does not do this.
-- Tool search. Claude Code hides MCP tools until Claude searches for them. All of opencode's tools reach Claude as MCP tools, so this would hide every one of them. Opencode also has native tool deferral through codemode for normal MCPs.
+- Tool search. Claude Code hides MCP tools until Claude searches for them. All of opencode's tools reach Claude as MCP tools, but each one is marked `alwaysLoad`, so tool search would never hide them. It stays off so requests never carry tool search, which some gateways and providers reject. Opencode has its own tool deferral through codemode for normal MCPs. Tools from an MCP server set to `codemode: false` are listed directly and are deferred by neither.
 - The advisor tool. Claude can ask a stronger model for advice in the middle of a task, using the user's plan. opencode could not show or control these calls.
 - The non-streaming fallback. When a stream fails partway, Claude Code retries without streaming, and opencode would hang waiting for the step to end.
 - The refusal fallback. When a safety classifier flags a request, Claude Code switches the session to another model, so the model running would no longer match the one picked in opencode.
