@@ -184,6 +184,22 @@ describe("ClaudeAgentPlugin models", () => {
     }),
   )
 
+  it.live("checks claude again at start when a saved list has no context sizes", () =>
+    Effect.gen(function* () {
+      const store = yield* storage
+      yield* store.set("models", { models: [{ id: "sonnet", name: "Sonnet", efforts: [] }] })
+      yield* connect
+      const atStart = FakeClaude.expectStartup()
+      const claude = FakeClaude.make([atStart])
+      yield* addPlugin(FakeIO.make({ claude }))
+      yield* Effect.promise(() => claude.reached(atStart))
+      const models = yield* eventually(claudeModels, (models) =>
+        models.some((model) => model.limit.context === 1_000_000),
+      )
+      expect(find(models, "sonnet").limit.context).toBe(1_000_000)
+    }),
+  )
+
   it.live("shows no cost for a subscription", () =>
     Effect.gen(function* () {
       yield* listPrice(Provider.ID.anthropic, "claude-sonnet-5-5")

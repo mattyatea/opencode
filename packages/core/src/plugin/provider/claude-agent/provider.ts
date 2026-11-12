@@ -82,7 +82,10 @@ export const register = Effect.fn("ClaudeProvider.register")(function* (
   )
 
   // Without a saved list there is no model to pick, so the first message that would fill it can never be sent.
-  if (current.catalog.models.length === 0 && (yield* ctx.integration.connection.active(ID))) {
+  // A list saved without context windows only heals through a full check, and a chat's startup report never runs one.
+  const incomplete =
+    current.catalog.models.length === 0 || current.catalog.models.some((model) => model.contextWindow === undefined)
+  if (incomplete && (yield* ctx.integration.connection.active(ID))) {
     yield* status.refresh().pipe(Effect.forkScoped)
   }
 })

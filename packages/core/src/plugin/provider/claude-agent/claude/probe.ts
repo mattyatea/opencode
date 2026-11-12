@@ -67,6 +67,9 @@ export const run = Effect.fn("ClaudeProbe.run")(function* (options: Options) {
         const version = init.claude_code_version
         const models: Model[] = init.models.map((model) => ({ ...model }))
         if (version && atLeast(version, CONTEXT_DISCOVERY_VERSION)) yield* discoverContext(session, models)
+        else {
+          yield* Effect.logWarning("Claude Code context discovery skipped; models use conservative limits", { version })
+        }
         return { version, account: init.account, models } satisfies Result
       }),
     (session) =>
