@@ -38,10 +38,29 @@ describe("Claude conversions", () => {
       type: "finish",
       providerMetadata: { "claude-agent": { rateLimit: recorded.message.rate_limit_info } },
     })
-    expect(ConvertClaudeStream.make([])(Recorder.result("text")).at(-1)).toMatchObject({
-      type: "finish",
-      providerMetadata: undefined,
+    const finish = ConvertClaudeStream.make([])(Recorder.result("text")).at(-1)
+    expect(finish).toMatchObject({ type: "finish" })
+    expect(finish?.type === "finish" && finish.providerMetadata?.["claude-agent"]).not.toHaveProperty("rateLimit")
+  })
+
+  test("a step with several model calls keeps the last call as occupancy and records the summed input", () => {
+    // Without offered tools, Claude Code runs the recorded lookups itself, so all model calls belong to one step.
+    const convert = ConvertClaudeStream.make([])
+    const parts = Recorder.load("tools").flatMap((line) =>
+      line.from === "claude" && line.message.type !== "control_response" ? convert(line.message as SDKMessage) : [],
+    )
+    const finishes = parts.filter((part) => part.type === "finish")
+    expect(finishes).toHaveLength(1)
+    const result = Recorder.result("tools")
+    expect(result.num_turns).toBeGreaterThan(1)
+    expect(finishes[0]!.providerMetadata?.["claude-agent"]?.usage).toEqual({
+      calls: 3,
+      input: result.usage.input_tokens,
+      cacheRead: result.usage.cache_read_input_tokens,
+      cacheWrite: result.usage.cache_creation_input_tokens,
     })
+    expect(finishes[0]!.usage.inputTokens.cacheRead).toBeLessThan(result.usage.cache_read_input_tokens)
+    expect(finishes[0]!.usage.outputTokens.total).toBe(result.usage.output_tokens)
   })
 
   test("utility calls keep system instructions separate from conversation content and omit thinking", () => {

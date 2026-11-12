@@ -54,5 +54,17 @@ export function make() {
         outputTokens: { total: output, reasoning, text: output - reasoning },
       }
     },
+    // Claude Code may call the model several times in one step. The snapshot keeps the last call's input as context
+    // occupancy, so the summed input and cache traffic, which plan limits and cache checks need, is reported separately.
+    totals() {
+      if (messages.size === 0) return undefined
+      const totals = { calls: messages.size, input: 0, cacheRead: 0, cacheWrite: 0 }
+      for (const counts of messages.values()) {
+        totals.input += counts.input
+        totals.cacheRead += counts.read
+        totals.cacheWrite += counts.write
+      }
+      return totals
+    },
   }
 }
