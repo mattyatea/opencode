@@ -63,7 +63,7 @@ export const GenerateHandler = HttpApiBuilder.group(Api, "server.generate", (han
   }),
 )
 
-function generateError(error: Generate.Error) {
+export function generateError(error: Generate.Error) {
   switch (error._tag) {
     case "Generate.ModelNotFoundError":
       return new ModelNotFoundError({ providerID: error.providerID, modelID: error.modelID, message: error.message })

@@ -128,6 +128,15 @@ import type {
   ExperimentalVoiceModelsOutput,
   ExperimentalVoiceSessionInput,
   ExperimentalVoiceSessionOutput,
+  ExperimentalDictationStatusOutput,
+  ExperimentalDictationLanguagesOutput,
+  ExperimentalDictationPrepareOutput,
+  ExperimentalDictationTranscribeInput,
+  ExperimentalDictationTranscribeOutput,
+  ExperimentalDictationCancelInput,
+  ExperimentalDictationCancelOutput,
+  ExperimentalDictationCleanupInput,
+  ExperimentalDictationCleanupOutput,
   ProviderListInput,
   ProviderListOutput,
   ProviderGetInput,
@@ -1307,6 +1316,82 @@ export function make(options: ClientOptions) {
               body: { model: input["model"], session: input["session"], transport: input["transport"] },
               successStatus: 200,
               declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+      },
+      dictation: {
+        status: (requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalDictationStatusOutput }>(
+            {
+              method: "GET",
+              path: `/api/experimental/dictation/status`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        languages: (requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalDictationLanguagesOutput }>(
+            {
+              method: "GET",
+              path: `/api/experimental/dictation/languages`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        prepare: (requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalDictationPrepareOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/dictation/prepare`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        transcribe: (input: ExperimentalDictationTranscribeInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalDictationTranscribeOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/dictation/transcribe`,
+              body: {
+                session: input["session"],
+                audio: input["audio"],
+                final: input["final"],
+                language: input["language"],
+              },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        cancel: (input: ExperimentalDictationCancelInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalDictationCancelOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/dictation/cancel`,
+              body: { session: input["session"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        cleanup: (input: ExperimentalDictationCleanupInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalDictationCleanupOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/dictation/cleanup`,
+              body: { text: input["text"], model: input["model"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 422, 502, 503],
               empty: false,
             },
             requestOptions,
@@ -2815,6 +2900,21 @@ export function make(options: ClientOptions) {
       models: client.experimental.voice.models,
       /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
       session: client.experimental.voice.session,
+    },
+    /** @deprecated Use `client.experimental.dictation`. Removed in the next minor. */
+    dictation: {
+      /** @deprecated Use `client.experimental.dictation.status`. Removed in the next minor. */
+      status: client.experimental.dictation.status,
+      /** @deprecated Use `client.experimental.dictation.languages`. Removed in the next minor. */
+      languages: client.experimental.dictation.languages,
+      /** @deprecated Use `client.experimental.dictation.prepare`. Removed in the next minor. */
+      prepare: client.experimental.dictation.prepare,
+      /** @deprecated Use `client.experimental.dictation.transcribe`. Removed in the next minor. */
+      transcribe: client.experimental.dictation.transcribe,
+      /** @deprecated Use `client.experimental.dictation.cancel`. Removed in the next minor. */
+      cancel: client.experimental.dictation.cancel,
+      /** @deprecated Use `client.experimental.dictation.cleanup`. Removed in the next minor. */
+      cleanup: client.experimental.dictation.cleanup,
     },
     integration: {
       ...client.integration,

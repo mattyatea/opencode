@@ -1,10 +1,11 @@
-"""Local MLX speech-to-text worker for the OpenCode voice input plugin.
+"""Local MLX speech-to-text worker for OpenCode dictation.
 
 Reads one JSON request per line on stdin and writes one JSON reply per line on stdout:
 
   {"id": 1, "op": "load"}                                        -> {"id": 1, "model": "..."}
   {"id": 2, "op": "transcribe", "session": "s", "audio": "<b64>", "final": false} -> {"id": 2, "text": "..."}
   {"id": 3, "op": "cancel", "session": "s"}                       -> {"id": 3}
+  {"id": 4, "op": "languages"}                                   -> {"id": 4, "languages": ["Japanese", ...]}
 
 `audio` is little-endian 16-bit mono PCM at 16 kHz, appended to the session's buffer. Each transcribe returns the
 transcript of everything the session has heard so far; `final` ends the session. Failures reply {"id", "error"}.
@@ -34,13 +35,12 @@ PARTIAL_MIN = RATE // 2
 PAUSE_FRAMES = 500 // 30
 
 replies = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
-# Native code writes to fd 1 directly; point it at stderr so only replies reach the plugin.
+# Native code writes to fd 1 directly; point it at stderr so only replies reach the server.
 os.dup2(2, 1)
 sys.stdout = sys.stderr
 
-MODEL = os.environ.get("OPENCODE_VOICE_MODEL", "mlx-community/Qwen3-ASR-0.6B-8bit")
-LANGUAGE = os.environ.get("OPENCODE_VOICE_LANGUAGE") or None
-HOTWORDS = [word for word in os.environ.get("OPENCODE_VOICE_HOTWORDS", "").split("\n") if word.strip()]
+MODEL = os.environ.get("OPENCODE_DICTATION_MODEL", "mlx-community/Qwen3-ASR-0.6B-8bit")
+HOTWORDS = [word for word in os.environ.get("OPENCODE_DICTATION_HOTWORDS", "").split("\n") if word.strip()]
 
 model = None
 sessions = {}
@@ -53,7 +53,7 @@ def load():
 
         model = load_model(MODEL)
         # The first decode compiles kernels; pay for it here rather than on the user's first word.
-        model.generate(np.zeros(RATE // 2, dtype=np.float32), language=LANGUAGE)
+        model.generate(np.zeros(RATE // 2, dtype=np.float32))
     return model
 
 
@@ -110,9 +110,8 @@ def pause_cut(audio):
 
 
 def transcribe(request):
-    language = request.get("language") or LANGUAGE
-    if language == "auto":
-        language = None
+    # None lets the model detect the spoken language.
+    language = request.get("language") or None
     session = sessions.setdefault(request["session"], {"committed": [], "segment": np.zeros(0, dtype=np.float32)})
     pcm = np.frombuffer(base64.b64decode(request.get("audio") or ""), dtype="<i2").astype(np.float32) / 32768.0
     session["segment"] = np.concatenate([session["segment"], pcm])

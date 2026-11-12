@@ -7,6 +7,7 @@ import { makeEventListener } from "@solid-primitives/event-listener"
 import { useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, on, onCleanup, onMount, Show, type Accessor } from "solid-js"
 import { Composer } from "@/composer/composer"
+import { ComposerDictation } from "@/composer/dictation/button"
 import { VoiceComposer } from "@/voice/composer"
 import { useComposerState } from "@/composer/persistence"
 import { createComposerControls } from "@/composer/selection"
@@ -51,7 +52,6 @@ import { createSessionRequestModel } from "../requests/model"
 import type { Region } from "@/runtime/plugin/panels"
 import { SessionLocationMissing } from "./location-missing"
 import { SessionPluginPills } from "./plugin-pills"
-import { PluginSlot } from "@/runtime/plugin/render"
 import { createTimelineActions, type TimelineActionsView, type TimelinePendingActions } from "./timeline-actions"
 import type { MountedSession, SessionScreen } from "@opencode/plugin/gui"
 
@@ -618,19 +618,7 @@ export function ActiveSessionComposerRegion(props: {
                   borderUnderlay
                   readOnly={props.model.queue.undoing()}
                   suggestionBoundary={props.suggestionBoundary}
-                  actions={
-                    <PluginSlot
-                      at="session.composer.actions"
-                      input={{
-                        get session() {
-                          return props.view()
-                        },
-                        get screen() {
-                          return props.screen
-                        },
-                      }}
-                    />
-                  }
+                  actions={<ComposerDictation controller={props.model.composer} />}
                 />
               </VoiceComposer>
             </div>

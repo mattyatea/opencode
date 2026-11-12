@@ -1,13 +1,18 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { createInterface } from "node:readline"
-import { fileURLToPath } from "node:url"
+// Imported as text so compiled binaries carry the worker; it runs through `python -c`.
+import source from "./worker.py" with { type: "text" }
+
+/** The speech model unless `OPENCODE_DICTATION_MODEL` names another. Chosen by measurement on an M3 Pro. */
+export const DEFAULT_MODEL = "mlx-community/Qwen3-ASR-0.6B-8bit"
+/** The mlx-audio release the worker is tested with. */
+export const MLX_AUDIO = "mlx-audio==0.6.5"
 
 /** How to start the Python worker and what it transcribes with. */
-export interface WorkerConfig {
+export interface Config {
   readonly executable: string
   readonly args: readonly string[]
   readonly model: string
-  readonly language?: string
   readonly hotwords: readonly string[]
 }
 
@@ -23,18 +28,35 @@ export class WorkerError extends Error {
 
 type Reply = { readonly id: number; readonly error?: string } & Record<string, unknown>
 
-/** The plugin's worker script, which runs beside this file. */
-export const script = fileURLToPath(new URL("./worker.py", import.meta.url))
+/**
+ * Reads the worker settings from the environment. Without `OPENCODE_DICTATION_PYTHON`, uv builds and caches a Python
+ * with mlx-audio on first use.
+ */
+export function config(env: Record<string, string | undefined> = process.env): Config {
+  const python = env.OPENCODE_DICTATION_PYTHON || undefined
+  return {
+    executable: python ?? (env.OPENCODE_DICTATION_UV || "uv"),
+    args: python
+      ? ["-c", source]
+      : ["run", "--no-project", "--python", "3.12", "--with", MLX_AUDIO, "python", "-c", source],
+    model: env.OPENCODE_DICTATION_MODEL || DEFAULT_MODEL,
+    // No default: a hotword pulls similar-sounding speech toward itself ("useEffect" came back as "OpenCode").
+    hotwords: (env.OPENCODE_DICTATION_HOTWORDS ?? "")
+      .split(",")
+      .map((word) => word.trim())
+      .filter(Boolean),
+  }
+}
 
 /**
- * Plugins set up once per Location, but every Location shares one model: a second worker would load the model into
- * memory again. Workers are shared by configuration and stop when their last Location releases them.
+ * Every Location shares one model: a second worker would load it into memory again. Workers are shared by
+ * configuration and stop when their last Location releases them.
  */
 const shared = new Map<string, { worker: Worker; users: number }>()
 
-export function acquire(config: WorkerConfig) {
-  const key = JSON.stringify(config)
-  const entry = shared.get(key) ?? { worker: createWorker(config), users: 0 }
+export function acquire(input: Config) {
+  const key = JSON.stringify(input)
+  const entry = shared.get(key) ?? { worker: createWorker(input), users: 0 }
   entry.users++
   shared.set(key, entry)
   return {
@@ -50,20 +72,19 @@ export function acquire(config: WorkerConfig) {
 
 export type Worker = ReturnType<typeof createWorker>
 
-export function createWorker(config: WorkerConfig) {
+export function createWorker(input: Config) {
   const pending = new Map<number, { resolve: (reply: Reply) => void; reject: (error: WorkerError) => void }>()
   const log: string[] = []
   const state: { child?: ChildProcessWithoutNullStreams; next: number } = { next: 0 }
   const tail = () => log.slice(-20).join("\n")
 
   const start = () => {
-    const child = spawn(config.executable, [...config.args], {
+    const child = spawn(input.executable, [...input.args], {
       env: {
         ...process.env,
         PYTHONUNBUFFERED: "1",
-        OPENCODE_VOICE_MODEL: config.model,
-        OPENCODE_VOICE_LANGUAGE: config.language ?? "",
-        OPENCODE_VOICE_HOTWORDS: config.hotwords.join("\n"),
+        OPENCODE_DICTATION_MODEL: input.model,
+        OPENCODE_DICTATION_HOTWORDS: input.hotwords.join("\n"),
       },
       stdio: ["pipe", "pipe", "pipe"],
     })
@@ -84,7 +105,7 @@ export function createWorker(config: WorkerConfig) {
       pending.forEach((waiter) => waiter.reject(error))
       pending.clear()
     }
-    child.on("error", (error) => fail(`Could not start ${config.executable}: ${error.message}`))
+    child.on("error", (error) => fail(`Could not start ${input.executable}: ${error.message}`))
     child.on("exit", (code, signal) => fail(`The transcription worker exited (${signal ?? `code ${code}`})`))
     state.child = child
     return child
@@ -103,11 +124,12 @@ export function createWorker(config: WorkerConfig) {
 
   return {
     /** Reads the model configuration only, not its weights. */
-    languages: () => request({ op: "languages" }).then((reply) => {
-      if (!Array.isArray(reply.languages) || !reply.languages.every((value) => typeof value === "string"))
-        throw new WorkerError("The model did not provide a supported language list.", tail())
-      return reply.languages.filter((value): value is string => typeof value === "string")
-    }),
+    languages: () =>
+      request({ op: "languages" }).then((reply) =>
+        Array.isArray(reply.languages)
+          ? reply.languages.filter((value): value is string => typeof value === "string")
+          : [],
+      ),
     /** Starts the worker and loads the model. Resolves with the model's name. */
     load: () => request({ op: "load" }).then((reply) => String(reply.model)),
     /** Appends PCM audio to a dictation and resolves with its transcript so far. */

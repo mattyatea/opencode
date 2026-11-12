@@ -1,0 +1,89 @@
+.composer-dictation {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline-end: 6px;
+}
+
+.composer-dictation-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--v2-icon-icon-muted);
+  cursor: pointer;
+}
+
+.composer-dictation-button:hover:not(:disabled) {
+  background: var(--v2-background-bg-layer-02);
+  color: var(--v2-icon-icon-base);
+}
+
+.composer-dictation-button:focus-visible {
+  outline: 1px solid var(--v2-border-border-focus);
+}
+
+.composer-dictation-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.composer-dictation-button svg {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+.composer-dictation-button .composer-dictation-fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* The ring grows with the microphone level while listening. */
+.composer-dictation-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--v2-background-bg-accent);
+  opacity: 0;
+  transform: scale(calc(0.85 + var(--composer-dictation-level, 0) * 0.35));
+  transition: transform 80ms linear;
+}
+
+.composer-dictation-button[data-phase="listening"] {
+  color: var(--v2-icon-icon-inverse);
+}
+
+.composer-dictation-button[data-phase="listening"] .composer-dictation-ring {
+  opacity: 1;
+}
+
+.composer-dictation-button[data-phase="preparing"] .composer-dictation-ring,
+.composer-dictation-button[data-phase="finishing"] .composer-dictation-ring,
+.composer-dictation-button[data-phase="cleaning"] .composer-dictation-ring {
+  opacity: 0.35;
+  animation: composer-dictation-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes composer-dictation-pulse {
+  from {
+    transform: scale(0.8);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+:root[data-motion="reduce"] .composer-dictation-ring {
+  transition: none;
+  animation: none !important;
+}

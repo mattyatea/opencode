@@ -32,6 +32,9 @@ export type NotificationSettings = Settings["notifications"]
 
 export type SoundSettings = Settings["sounds"]
 
+/** When dictation cleanup runs: as recording stops, or from a button beside the stop button. */
+export type DictationCleanupTrigger = "stop" | "button"
+
 // Names a project for per-project settings: project IDs are only unique within one server.
 export function projectSettingsKey(scope: ServerScope, projectID: string | undefined) {
   return projectID ? ScopedKey.from(scope, projectID) : undefined
@@ -189,6 +192,17 @@ const soundsSchema = Persistence.struct({
   interfaceEnabled: Schema.optional(Schema.Boolean),
 })
 
+// Every field is optional so a missing or invalid one falls back to its default alone.
+const dictationSchema = Persistence.struct({
+  // A language the speech model supports, or "auto" to detect it.
+  language: Persistence.optional(Schema.String),
+  cleanup: Persistence.optional(Schema.Boolean),
+  // The cleanup model as "providerID/modelID"; absent uses the server's default model.
+  model: Persistence.optional(Schema.String),
+  variant: Persistence.optional(Schema.String),
+  trigger: Persistence.optional(Schema.Literals(["stop", "button"])),
+})
+
 export const settingsSchema = Persistence.struct({
   general: generalSchema,
   // Owned by the details plugin, which copies it out once; kept so settings rewrites cannot drop it first.
@@ -201,6 +215,7 @@ export const settingsSchema = Persistence.struct({
   workspaces: workspacesSchema,
   notifications: notificationsSchema,
   sounds: soundsSchema,
+  dictation: Persistence.optional(dictationSchema),
 })
 
 function storedTimelineCategory(category: TimelineCategory) {
@@ -347,7 +362,10 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
   init: () => {
     const [store, setStore, , ready] = persisted({ key: "settings.v3" }, settingsPersistence, defaultSettings)
 
-    const sidebarOrganizeOptions: SidebarOrganize[] = recentSessionsAvailable(usePlatform().platform, import.meta.env.VITE_OPENCODE_CHANNEL)
+    const sidebarOrganizeOptions: SidebarOrganize[] = recentSessionsAvailable(
+      usePlatform().platform,
+      import.meta.env.VITE_OPENCODE_CHANNEL,
+    )
       ? ["list", "projects", "customize", "recent"]
       : ["list", "projects", "customize"]
 
@@ -619,6 +637,26 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         ),
         setInterfaceEnabled(value: boolean) {
           setStore("sounds", "interfaceEnabled", value)
+        },
+      },
+      dictation: {
+        language: withFallback(() => store.dictation?.language, "auto"),
+        setLanguage(value: string) {
+          setStore("dictation", (current) => ({ ...current, language: value }))
+        },
+        cleanup: withFallback(() => store.dictation?.cleanup, false),
+        setCleanup(value: boolean) {
+          setStore("dictation", (current) => ({ ...current, cleanup: value }))
+        },
+        model: createMemo(() => store.dictation?.model),
+        variant: createMemo(() => store.dictation?.variant),
+        // A new model's variants differ, so choosing a model resets the variant.
+        setModel(model: string | undefined, variant?: string) {
+          setStore("dictation", (current) => ({ ...current, model, variant }))
+        },
+        trigger: withFallback<DictationCleanupTrigger>(() => store.dictation?.trigger, "stop"),
+        setTrigger(value: DictationCleanupTrigger) {
+          setStore("dictation", (current) => ({ ...current, trigger: value }))
         },
       },
     }

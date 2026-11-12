@@ -19,6 +19,7 @@ export const clientSettings: Entry<SettingsRootTab>[] = [
   { tab: "general", label: "settings.tab.preferences" },
   { tab: "appearance", label: "settings.general.section.appearance" },
   { tab: "notifications", label: "settings.tab.notifications" },
+  { tab: "dictation", label: "settings.tab.dictation", keywords: "voice speech microphone transcribe cleanup" },
   { tab: "shortcuts", label: "settings.shortcuts.title", keywords: "keybind keyboard hotkey" },
   { tab: "about", label: "settings.tab.about", keywords: "version license credits" },
   { tab: "experimental", label: "settings.tab.experimental", keywords: "experiments preview beta" },

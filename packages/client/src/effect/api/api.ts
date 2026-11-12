@@ -1669,6 +1669,56 @@ export interface ExperimentalVoiceApi<E = never> {
   readonly session: ExperimentalVoiceSessionOperation<E>
 }
 
+export type ExperimentalDictationStatusOutput = {
+  readonly available: boolean
+  readonly reason?: "disabled" | "unsupported" | undefined
+}
+export type ExperimentalDictationStatusOperation<E = never> = () => Effect.Effect<ExperimentalDictationStatusOutput, E>
+
+export type ExperimentalDictationLanguagesOutput = { readonly languages: ReadonlyArray<string> }
+export type ExperimentalDictationLanguagesOperation<E = never> = () => Effect.Effect<
+  ExperimentalDictationLanguagesOutput,
+  E
+>
+
+export type ExperimentalDictationPrepareOutput = { readonly model: string }
+export type ExperimentalDictationPrepareOperation<E = never> = () => Effect.Effect<
+  ExperimentalDictationPrepareOutput,
+  E
+>
+
+export type ExperimentalDictationTranscribeInput = {
+  readonly session: string
+  readonly audio: string
+  readonly final: boolean
+  readonly language?: string | undefined
+}
+export type ExperimentalDictationTranscribeOutput = { readonly text: string }
+export type ExperimentalDictationTranscribeOperation<E = never> = (
+  input: ExperimentalDictationTranscribeInput,
+) => Effect.Effect<ExperimentalDictationTranscribeOutput, E>
+
+export type ExperimentalDictationCancelInput = { readonly session: string }
+export type ExperimentalDictationCancelOutput = {}
+export type ExperimentalDictationCancelOperation<E = never> = (
+  input: ExperimentalDictationCancelInput,
+) => Effect.Effect<ExperimentalDictationCancelOutput, E>
+
+export type ExperimentalDictationCleanupInput = { readonly text: string; readonly model?: Model.Ref | undefined }
+export type ExperimentalDictationCleanupOutput = { readonly text: string }
+export type ExperimentalDictationCleanupOperation<E = never> = (
+  input: ExperimentalDictationCleanupInput,
+) => Effect.Effect<ExperimentalDictationCleanupOutput, E>
+
+export interface ExperimentalDictationApi<E = never> {
+  readonly status: ExperimentalDictationStatusOperation<E>
+  readonly languages: ExperimentalDictationLanguagesOperation<E>
+  readonly prepare: ExperimentalDictationPrepareOperation<E>
+  readonly transcribe: ExperimentalDictationTranscribeOperation<E>
+  readonly cancel: ExperimentalDictationCancelOperation<E>
+  readonly cleanup: ExperimentalDictationCleanupOperation<E>
+}
+
 export type ProviderListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 export type ProviderListOutput = { readonly location: Location.PublicRef; readonly data: ReadonlyArray<Provider.Info> }
 export type ProviderListOperation<E = never> = (input?: ProviderListInput) => Effect.Effect<ProviderListOutput, E>
@@ -3085,6 +3135,51 @@ export type VoiceSessionOutput = ExperimentalVoiceSessionOutput
 /** @deprecated Use `ExperimentalVoiceSessionOperation`. Removed in the next minor. */
 export type VoiceSessionOperation<E = never> = ExperimentalVoiceSessionOperation<E>
 
+/** @deprecated Use `ExperimentalDictationStatusOutput`. Removed in the next minor. */
+export type DictationStatusOutput = ExperimentalDictationStatusOutput
+
+/** @deprecated Use `ExperimentalDictationStatusOperation`. Removed in the next minor. */
+export type DictationStatusOperation<E = never> = ExperimentalDictationStatusOperation<E>
+
+/** @deprecated Use `ExperimentalDictationLanguagesOutput`. Removed in the next minor. */
+export type DictationLanguagesOutput = ExperimentalDictationLanguagesOutput
+
+/** @deprecated Use `ExperimentalDictationLanguagesOperation`. Removed in the next minor. */
+export type DictationLanguagesOperation<E = never> = ExperimentalDictationLanguagesOperation<E>
+
+/** @deprecated Use `ExperimentalDictationPrepareOutput`. Removed in the next minor. */
+export type DictationPrepareOutput = ExperimentalDictationPrepareOutput
+
+/** @deprecated Use `ExperimentalDictationPrepareOperation`. Removed in the next minor. */
+export type DictationPrepareOperation<E = never> = ExperimentalDictationPrepareOperation<E>
+
+/** @deprecated Use `ExperimentalDictationTranscribeInput`. Removed in the next minor. */
+export type DictationTranscribeInput = ExperimentalDictationTranscribeInput
+
+/** @deprecated Use `ExperimentalDictationTranscribeOutput`. Removed in the next minor. */
+export type DictationTranscribeOutput = ExperimentalDictationTranscribeOutput
+
+/** @deprecated Use `ExperimentalDictationTranscribeOperation`. Removed in the next minor. */
+export type DictationTranscribeOperation<E = never> = ExperimentalDictationTranscribeOperation<E>
+
+/** @deprecated Use `ExperimentalDictationCancelInput`. Removed in the next minor. */
+export type DictationCancelInput = ExperimentalDictationCancelInput
+
+/** @deprecated Use `ExperimentalDictationCancelOutput`. Removed in the next minor. */
+export type DictationCancelOutput = ExperimentalDictationCancelOutput
+
+/** @deprecated Use `ExperimentalDictationCancelOperation`. Removed in the next minor. */
+export type DictationCancelOperation<E = never> = ExperimentalDictationCancelOperation<E>
+
+/** @deprecated Use `ExperimentalDictationCleanupInput`. Removed in the next minor. */
+export type DictationCleanupInput = ExperimentalDictationCleanupInput
+
+/** @deprecated Use `ExperimentalDictationCleanupOutput`. Removed in the next minor. */
+export type DictationCleanupOutput = ExperimentalDictationCleanupOutput
+
+/** @deprecated Use `ExperimentalDictationCleanupOperation`. Removed in the next minor. */
+export type DictationCleanupOperation<E = never> = ExperimentalDictationCleanupOperation<E>
+
 /** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
 export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput
 
@@ -3187,6 +3282,9 @@ export type GenerateApi<E = never> = ExperimentalGenerateApi<E>
 /** @deprecated Use `ExperimentalVoiceApi`. Removed in the next minor. */
 export type VoiceApi<E = never> = ExperimentalVoiceApi<E>
 
+/** @deprecated Use `ExperimentalDictationApi`. Removed in the next minor. */
+export type DictationApi<E = never> = ExperimentalDictationApi<E>
+
 /** @deprecated Use `ExperimentalMigrationApi`. Removed in the next minor. */
 export type MigrationApi<E = never> = ExperimentalMigrationApi<E>
 
@@ -3203,6 +3301,7 @@ export interface AppApi<E = never> {
     readonly session: ExperimentalSessionApi<E>
     readonly generate: ExperimentalGenerateApi<E>
     readonly voice: ExperimentalVoiceApi<E>
+    readonly dictation: ExperimentalDictationApi<E>
     readonly integration: ExperimentalIntegrationApi<E>
     readonly mcp: ExperimentalMcpApi<E>
     readonly file: ExperimentalFileApi<E>
@@ -3252,6 +3351,27 @@ export interface AppApi<E = never> {
 
     /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
     readonly session: ExperimentalVoiceSessionOperation<E>
+  }
+
+  /** @deprecated Use `client.experimental.dictation`. Removed in the next minor. */
+  readonly dictation: {
+    /** @deprecated Use `client.experimental.dictation.status`. Removed in the next minor. */
+    readonly status: ExperimentalDictationStatusOperation<E>
+
+    /** @deprecated Use `client.experimental.dictation.languages`. Removed in the next minor. */
+    readonly languages: ExperimentalDictationLanguagesOperation<E>
+
+    /** @deprecated Use `client.experimental.dictation.prepare`. Removed in the next minor. */
+    readonly prepare: ExperimentalDictationPrepareOperation<E>
+
+    /** @deprecated Use `client.experimental.dictation.transcribe`. Removed in the next minor. */
+    readonly transcribe: ExperimentalDictationTranscribeOperation<E>
+
+    /** @deprecated Use `client.experimental.dictation.cancel`. Removed in the next minor. */
+    readonly cancel: ExperimentalDictationCancelOperation<E>
+
+    /** @deprecated Use `client.experimental.dictation.cleanup`. Removed in the next minor. */
+    readonly cleanup: ExperimentalDictationCleanupOperation<E>
   }
 
   /** @deprecated Use `client.experimental.migration`. Removed in the next minor. */

@@ -15,6 +15,7 @@ import { SettingsAppearance } from "./appearance/appearance"
 import { experimentalSettingsAvailable, SettingsExperimental } from "./experimental/experimental"
 import { SettingsKeybinds } from "./keybinds/keybinds"
 import { SettingsNotifications } from "./notifications/notifications"
+import { SettingsDictation } from "./dictation/dictation"
 import { SettingsProviders } from "./providers/providers"
 import { SettingsModels } from "./models/models"
 import { SettingsUsage } from "./usage/usage"
@@ -42,6 +43,7 @@ const rootClientTabs = [
   { value: "general", icon: pageIcons.general, label: "settings.tab.preferences" },
   { value: "appearance", icon: pageIcons.appearance, label: "settings.general.section.appearance" },
   { value: "notifications", icon: pageIcons.notifications, label: "settings.tab.notifications" },
+  { value: "dictation", icon: pageIcons.dictation, label: "settings.tab.dictation" },
   { value: "shortcuts", icon: pageIcons.shortcuts, label: "settings.tab.shortcuts" },
 ] as const
 
@@ -306,6 +308,9 @@ function RootSettings() {
       >
         {(server) => (
           <SettingsServerDataScope server={server}>
+            <Tabs.Content value="dictation" class="settings-panel">
+              <SettingsDictation />
+            </Tabs.Content>
             <Tabs.Content value="providers" class="settings-panel">
               <SettingsProviders
                 directory={undefined}

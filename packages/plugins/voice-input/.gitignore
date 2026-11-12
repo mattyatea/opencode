@@ -1,2 +1,0 @@
-# Git installs run no build step, so the window bundle is committed.
-!dist

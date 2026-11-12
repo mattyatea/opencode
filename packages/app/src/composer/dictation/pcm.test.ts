@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { encodeChunks, level, toPcm16, withTranscript } from "../src/pcm"
+import { encodeChunks, level, toPcm16, withTranscript } from "./pcm"
 
 test("converts float samples to clamped 16-bit PCM", () => {
   expect([...toPcm16(new Float32Array([0, 1, -1, 2, -2, 0.5]))]).toEqual([0, 32767, -32768, 32767, -32768, 16383])

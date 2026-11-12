@@ -220,6 +220,18 @@ export type VoiceWebRTCTransport = { type: "webrtc"; sdp: string }
 
 export type VoiceWebSocketTransport = { type: "websocket"; url: string; token: string; expiresAt: number }
 
+export type DictationStatus = { available: boolean; reason?: "disabled" | "unsupported" | undefined }
+
+export type DictationLanguagesResponse = { data: { languages: Array<string> } }
+
+export type DictationPrepareResponse = { data: { model: string } }
+
+export type DictationTranscribeResponse = { data: { text: string } }
+
+export type DictationCancelResponse = { data: {} }
+
+export type DictationCleanupResponse = { data: { text: string } }
+
 export type IntegrationID = string
 
 export type IntegrationMethodID = string
@@ -754,6 +766,8 @@ export type GenerateChoiceAnswer = {
 export type VoiceModel = { model: string; provider: string; transports: Array<VoiceTransportType>; available: boolean }
 
 export type VoiceTransport = VoiceWebRTCTransport | VoiceWebSocketTransport
+
+export type DictationStatusResponse = { data: DictationStatus }
 
 export type IntegrationCommandMethod = {
   id: IntegrationMethodID
@@ -2616,6 +2630,7 @@ export type ConfigEntry =
           schedules?: boolean
           artifacts?: boolean
           codemode_vm?: boolean
+          dictation?: boolean
           shell_timeout_background?: boolean
           console_watches?: boolean
           part_rows?: boolean
@@ -4090,6 +4105,32 @@ export type ExperimentalVoiceSessionInput = {
 
 export type ExperimentalVoiceSessionOutput = VoiceSessionResponse["data"]
 
+export type ExperimentalDictationStatusOutput = DictationStatusResponse["data"]
+
+export type ExperimentalDictationLanguagesOutput = DictationLanguagesResponse["data"]
+
+export type ExperimentalDictationPrepareOutput = DictationPrepareResponse["data"]
+
+export type ExperimentalDictationTranscribeInput = {
+  readonly session: string
+  readonly audio: string
+  readonly final: boolean
+  readonly language?: string | undefined
+}
+
+export type ExperimentalDictationTranscribeOutput = DictationTranscribeResponse["data"]
+
+export type ExperimentalDictationCancelInput = { readonly session: string }
+
+export type ExperimentalDictationCancelOutput = DictationCancelResponse["data"]
+
+export type ExperimentalDictationCleanupInput = {
+  readonly text: string
+  readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string } | null | undefined
+}
+
+export type ExperimentalDictationCleanupOutput = DictationCleanupResponse["data"]
+
 export type ProviderListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 
 export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfo> }
@@ -5075,6 +5116,33 @@ export type VoiceSessionInput = ExperimentalVoiceSessionInput
 
 /** @deprecated Use `ExperimentalVoiceSessionOutput`. Removed in the next minor. */
 export type VoiceSessionOutput = ExperimentalVoiceSessionOutput
+
+/** @deprecated Use `ExperimentalDictationStatusOutput`. Removed in the next minor. */
+export type DictationStatusOutput = ExperimentalDictationStatusOutput
+
+/** @deprecated Use `ExperimentalDictationLanguagesOutput`. Removed in the next minor. */
+export type DictationLanguagesOutput = ExperimentalDictationLanguagesOutput
+
+/** @deprecated Use `ExperimentalDictationPrepareOutput`. Removed in the next minor. */
+export type DictationPrepareOutput = ExperimentalDictationPrepareOutput
+
+/** @deprecated Use `ExperimentalDictationTranscribeInput`. Removed in the next minor. */
+export type DictationTranscribeInput = ExperimentalDictationTranscribeInput
+
+/** @deprecated Use `ExperimentalDictationTranscribeOutput`. Removed in the next minor. */
+export type DictationTranscribeOutput = ExperimentalDictationTranscribeOutput
+
+/** @deprecated Use `ExperimentalDictationCancelInput`. Removed in the next minor. */
+export type DictationCancelInput = ExperimentalDictationCancelInput
+
+/** @deprecated Use `ExperimentalDictationCancelOutput`. Removed in the next minor. */
+export type DictationCancelOutput = ExperimentalDictationCancelOutput
+
+/** @deprecated Use `ExperimentalDictationCleanupInput`. Removed in the next minor. */
+export type DictationCleanupInput = ExperimentalDictationCleanupInput
+
+/** @deprecated Use `ExperimentalDictationCleanupOutput`. Removed in the next minor. */
+export type DictationCleanupOutput = ExperimentalDictationCleanupOutput
 
 /** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
 export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput

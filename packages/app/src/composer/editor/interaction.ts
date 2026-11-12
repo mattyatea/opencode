@@ -644,6 +644,15 @@ export function createComposerEditor(input: {
     value() {
       return draft.state.prompt.map((part) => ("content" in part ? part.content : "")).join("")
     },
+    /** The draft being edited; another replaces it when the composer moves to a different session. */
+    draft() {
+      return draft.state
+    },
+    /** Replaces the prompt's text, keeping attachments, as dictation writes its transcript. */
+    setText(value: string) {
+      draft.setText(value)
+      dispatch(DRAFT_EDITED)
+    },
     parts() {
       return draft.state.prompt
     },

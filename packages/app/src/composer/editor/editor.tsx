@@ -90,7 +90,7 @@ export type ComposerEditorProps = {
   class?: string
   modelControl?: JSX.Element
   modelControlsVisible?: boolean
-  /** Controls before the send button, such as plugin contributions. */
+  /** Controls before the send button, such as dictation. */
   actions?: JSX.Element
   attachKeybind?: string[]
   attachShortcut?: string

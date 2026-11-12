@@ -27,6 +27,7 @@ export function Composer(props: {
   borderUnderlay?: boolean
   readOnly?: boolean
   suggestionBoundary?: () => HTMLElement | undefined
+  /** Controls before the send button, such as dictation. */
   actions?: JSX.Element
 }) {
   const dialog = useDialog()

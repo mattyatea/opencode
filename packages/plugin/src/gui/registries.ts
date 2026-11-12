@@ -897,18 +897,6 @@ export interface SlotMap {
     /** The routed session; a new object when another session is routed. */
     readonly session: MountedSession
   }
-  /**
-   * Controls beside the send button of a session's composer, before it, such as a dictation button. Keep each one a
-   * compact icon button: the row also holds the model and variant controls. Not rendered on touch layouts, which
-   * have no send button in the composer, nor in a subagent's session, which has no composer. Act on the prompt
-   * through `screen.composer`.
-   */
-  readonly "session.composer.actions": {
-    /** The owning session screen; always present. Its `composer` is the prompt beside these controls. */
-    readonly screen: SessionScreen
-    /** The routed session; a new object when another session is routed. */
-    readonly session: MountedSession
-  }
 }
 
 /** Content for one of the host's slots, typed by `at`. */

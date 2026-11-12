@@ -134,6 +134,15 @@ import type {
   ExperimentalVoiceModelsOutput,
   ExperimentalVoiceSessionInput,
   ExperimentalVoiceSessionOutput,
+  ExperimentalDictationStatusOutput,
+  ExperimentalDictationLanguagesOutput,
+  ExperimentalDictationPrepareOutput,
+  ExperimentalDictationTranscribeInput,
+  ExperimentalDictationTranscribeOutput,
+  ExperimentalDictationCancelInput,
+  ExperimentalDictationCancelOutput,
+  ExperimentalDictationCleanupInput,
+  ExperimentalDictationCleanupOutput,
   ProviderListInput,
   ProviderListOutput,
   ProviderGetInput,
@@ -1056,6 +1065,73 @@ const EndpointExperimentalVoiceSession = (raw: RawClient["server.voice"]) => (in
 const adaptGroupExperimentalVoice = (raw: RawClient["server.voice"]) => ({
   models: EndpointExperimentalVoiceModels(raw),
   session: EndpointExperimentalVoiceSession(raw),
+})
+
+const EndpointExperimentalDictationStatus = (raw: RawClient["server.dictation"]) => () =>
+  preserveEffect<ExperimentalDictationStatusOutput>()(
+    raw["dictation.status"]({}).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointExperimentalDictationLanguages = (raw: RawClient["server.dictation"]) => () =>
+  preserveEffect<ExperimentalDictationLanguagesOutput>()(
+    raw["dictation.languages"]({}).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointExperimentalDictationPrepare = (raw: RawClient["server.dictation"]) => () =>
+  preserveEffect<ExperimentalDictationPrepareOutput>()(
+    raw["dictation.prepare"]({}).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointExperimentalDictationTranscribe =
+  (raw: RawClient["server.dictation"]) => (input: ExperimentalDictationTranscribeInput) =>
+    preserveEffect<ExperimentalDictationTranscribeOutput>()(
+      raw["dictation.transcribe"]({
+        payload: {
+          session: input["session"],
+          audio: input["audio"],
+          final: input["final"],
+          language: input["language"],
+        },
+      }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalDictationCancel =
+  (raw: RawClient["server.dictation"]) => (input: ExperimentalDictationCancelInput) =>
+    preserveEffect<ExperimentalDictationCancelOutput>()(
+      raw["dictation.cancel"]({ payload: { session: input["session"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalDictationCleanup =
+  (raw: RawClient["server.dictation"]) => (input: ExperimentalDictationCleanupInput) =>
+    preserveEffect<ExperimentalDictationCleanupOutput>()(
+      raw["dictation.cleanup"]({ payload: { text: input["text"], model: input["model"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const adaptGroupExperimentalDictation = (raw: RawClient["server.dictation"]) => ({
+  status: EndpointExperimentalDictationStatus(raw),
+  languages: EndpointExperimentalDictationLanguages(raw),
+  prepare: EndpointExperimentalDictationPrepare(raw),
+  transcribe: EndpointExperimentalDictationTranscribe(raw),
+  cancel: EndpointExperimentalDictationCancel(raw),
+  cleanup: EndpointExperimentalDictationCleanup(raw),
 })
 
 const EndpointProviderList = (raw: RawClient["server.provider"]) => (input?: ProviderListInput) =>
@@ -2041,6 +2117,7 @@ const adaptClient = (raw: RawClient) => {
       session: adaptGroupExperimentalSession(raw["server.session"]),
       generate: adaptGroupExperimentalGenerate(raw["server.generate"]),
       voice: adaptGroupExperimentalVoice(raw["server.voice"]),
+      dictation: adaptGroupExperimentalDictation(raw["server.dictation"]),
       integration: adaptGroupExperimentalIntegration(raw["server.integration"]),
       mcp: adaptGroupExperimentalMcp(raw["server.mcp"]),
       file: adaptGroupExperimentalFile(raw["server.fs"]),
@@ -2128,6 +2205,21 @@ const adaptClient = (raw: RawClient) => {
       models: client.experimental.voice.models,
       /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
       session: client.experimental.voice.session,
+    },
+    /** @deprecated Use `client.experimental.dictation`. Removed in the next minor. */
+    dictation: {
+      /** @deprecated Use `client.experimental.dictation.status`. Removed in the next minor. */
+      status: client.experimental.dictation.status,
+      /** @deprecated Use `client.experimental.dictation.languages`. Removed in the next minor. */
+      languages: client.experimental.dictation.languages,
+      /** @deprecated Use `client.experimental.dictation.prepare`. Removed in the next minor. */
+      prepare: client.experimental.dictation.prepare,
+      /** @deprecated Use `client.experimental.dictation.transcribe`. Removed in the next minor. */
+      transcribe: client.experimental.dictation.transcribe,
+      /** @deprecated Use `client.experimental.dictation.cancel`. Removed in the next minor. */
+      cancel: client.experimental.dictation.cancel,
+      /** @deprecated Use `client.experimental.dictation.cleanup`. Removed in the next minor. */
+      cleanup: client.experimental.dictation.cleanup,
     },
     integration: {
       ...client.integration,

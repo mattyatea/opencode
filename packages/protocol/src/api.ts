@@ -4,6 +4,7 @@ import { SchemaErrorMiddleware } from "./middleware/schema-error.js"
 import { GenerateGroup } from "./groups/generate.js"
 import { ExperimentalGroup } from "./groups/experimental.js"
 import { VoiceGroup } from "./groups/voice.js"
+import { DictationGroup } from "./groups/dictation.js"
 import { MessageGroup } from "./groups/message.js"
 import { ModelGroup } from "./groups/model.js"
 import { ProviderGroup } from "./groups/provider.js"
@@ -100,6 +101,7 @@ type ApiGroups<
   | typeof WorktreeGroup
   | typeof GenerateGroup
   | typeof VoiceGroup
+  | typeof DictationGroup
   | typeof ExperimentalGroup
   | typeof CredentialGroup
   | typeof ProjectGroup
@@ -174,6 +176,7 @@ const makeApiFromGroup = <
     .add(ModelGroup.middleware(locationMiddleware))
     .add(GenerateGroup)
     .add(VoiceGroup)
+    .add(DictationGroup)
     .add(ProviderGroup.middleware(locationMiddleware))
     .add(IntegrationGroup.middleware(locationMiddleware))
     .add(makeMcpGroup(locationMiddleware))

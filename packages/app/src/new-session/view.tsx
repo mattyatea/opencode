@@ -18,6 +18,7 @@ import {
 import { Schema } from "effect"
 import { createPresence } from "@/runtime/presence"
 import { Composer } from "@/composer/composer"
+import { ComposerDictation } from "@/composer/dictation/button"
 import { ComposerDropzone } from "@/composer/dropzone"
 import type { ComposerModel } from "@/composer/model"
 import {
@@ -121,7 +122,7 @@ export function NewSessionView(props: {
             <div class="mt-8 flex flex-col gap-3">
               <div data-slot="new-session-composer" class="flex flex-col gap-1">
                 <div class="relative z-10">
-                  <Composer model={props.composer} />
+                  <Composer model={props.composer} actions={<ComposerDictation controller={props.composer} />} />
                 </div>
                 <Show when={props.project.selected()}>
                   {(project) => {
@@ -458,10 +459,7 @@ function NewSessionLocation(props: {
                         {(label) => <span class="min-w-0 truncate">{label()}</span>}
                       </Match>
                       <Match when={selectCheckoutSkeleton(checkoutLabel())}>
-                        <span
-                          aria-hidden="true"
-                          class="h-2 w-12 shrink-0 rounded-full bg-v2-background-bg-layer-02"
-                        />
+                        <span aria-hidden="true" class="h-2 w-12 shrink-0 rounded-full bg-v2-background-bg-layer-02" />
                       </Match>
                     </Switch>
                     <Show when={props.onboarding}>
