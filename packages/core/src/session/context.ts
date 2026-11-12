@@ -68,7 +68,7 @@ export interface Breakdown {
   readonly estimated: number
   /** The prompt's size: measured plus estimated, or the whole estimate before the first response. */
   readonly used: number
-  /** `limit - used`, never negative; 0 when the window is unknown. */
+  /** The prompt room left: the smaller of `limit` and `inputLimit` minus `used`, never negative; 0 when both are unknown. */
   readonly free: number
   /** The parts of the request, in display order. */
   readonly parts: ReadonlyArray<BreakdownPart>
@@ -333,7 +333,12 @@ const breakdownOf = (loaded: Loaded, mcpNamespaces: ReadonlySet<string>): Breakd
       })
     : undefined
   // The provider's count is exact for the prompt it saw; the character estimate only spreads it across the parts.
-  const scale = measured > 0 && anchored.total > 0 ? measured / anchored.total : 1
+  // `measured` also covers the anchor's own reply, which is next request's history but not part of `anchored`.
+  const prompt =
+    anchor?.type === "assistant" && anchor.tokens
+      ? anchor.tokens.input + anchor.tokens.cache.read + anchor.tokens.cache.write
+      : 0
+  const scale = prompt > 0 && anchored.total > 0 ? prompt / anchored.total : 1
   const parts: BreakdownParts = new Map()
 
   for (const [id, part] of anchored.parts) {
@@ -347,12 +352,15 @@ const breakdownOf = (loaded: Loaded, mcpNamespaces: ReadonlySet<string>): Breakd
       })),
     )
   }
+  if (measured > prompt) addPart(parts, "messages", measured - prompt, [{ id: "assistant", tokens: measured - prompt }])
   for (const [id, part] of added?.parts ?? []) addPart(parts, id, part.tokens, part.entries)
 
   const estimated = added?.total ?? 0
   const used = anchor ? measured + estimated : anchored.total
   const rounded = Array.from(parts.values()).reduce((sum, part) => sum + part.tokens, 0)
   adjustParts(parts, used - rounded)
+  // Matches the window automatic compaction measures against: an input limit below the context window caps the prompt.
+  const window = inputLimit && limit ? Math.min(inputLimit, limit) : inputLimit || limit
 
   return {
     limit,
@@ -360,7 +368,7 @@ const breakdownOf = (loaded: Loaded, mcpNamespaces: ReadonlySet<string>): Breakd
     measured,
     estimated,
     used,
-    free: limit > 0 ? Math.max(0, limit - used) : 0,
+    free: window > 0 ? Math.max(0, window - used) : 0,
     parts: BREAKDOWN_ORDER.flatMap((id) => {
       const part = parts.get(id)
 
@@ -473,7 +481,14 @@ const codeModeParts = (
 const addPart = (parts: BreakdownParts, id: string, tokens: number, entries: Array<{ id: string; tokens: number }>) => {
   const part = parts.get(id) ?? { tokens: 0, entries: [] }
   part.tokens += tokens
-  part.entries.push(...entries)
+  for (const entry of entries) {
+    const existing = part.entries.find((item) => item.id === entry.id)
+    if (!existing) {
+      part.entries.push({ ...entry })
+      continue
+    }
+    existing.tokens += entry.tokens
+  }
   parts.set(id, part)
 }
 
