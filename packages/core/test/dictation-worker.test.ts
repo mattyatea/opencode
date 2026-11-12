@@ -41,11 +41,11 @@ test("builds the Python environment with uv unless a Python is configured", () =
   expect(config.args).toContain(DictationWorker.MLX_AUDIO)
   expect(config.model).toBe(DictationWorker.DEFAULT_MODEL)
   expect(config.hotwords).toEqual(["OpenCode", "MLX"])
-  expect(config.draftModel).toBe(DictationWorker.DEFAULT_DRAFT_MODEL)
+  expect(config.fastModel).toBe(DictationWorker.DEFAULT_FAST_MODEL)
 })
 
-test("turns the draft model off when it is set empty", () => {
-  expect(DictationWorker.config({ OPENCODE_DICTATION_DRAFT_MODEL: "" }).draftModel).toBe("")
+test("turns the fast model off when it is set empty", () => {
+  expect(DictationWorker.config({ OPENCODE_DICTATION_FAST_MODEL: "" }).fastModel).toBe("")
 })
 
 test("shares one worker between users of the same configuration", () => {

@@ -10,8 +10,9 @@ Reads one JSON request per line on stdin and writes one JSON reply per line on s
 `audio` is little-endian 16-bit mono PCM at 16 kHz, appended to the session's buffer. Each transcribe returns the
 transcript of everything the session has heard so far, and `committed`, the start of it that later audio no longer
 changes; `final` ends the session. Failures reply {"id", "error"}.
-The unsettled end of a partial transcript comes from the faster draft model when one is set and knows the language;
-committed segments and the final pass always use the main model, which follows the hotwords.
+Speech is found with a VAD and cut into phrases at pauses; a turn model holds the cut while a sentence sounds
+unfinished. The fast model writes the languages it knows. Where it may have spelled out a registered term, the main
+model, which follows the hotwords, rewrites that phrase if it hears the term; it writes every other language.
 Libraries may print to stdout, so replies go to the original stdout and everything else to stderr.
 """
 
@@ -25,17 +26,27 @@ import traceback
 import numpy as np
 
 RATE = 16000
-FRAME = RATE * 30 // 1000
-# A segment longer than this is committed at its quietest point, so a long dictation never re-decodes minutes of audio.
+# Silero VAD scores 32 ms frames; segments are kept and cut in whole frames.
+FRAME = 512
+VAD_MODEL = "mlx-community/silero-vad"
+# A frame is speech when the VAD is at least this sure. A segment without speech is never decoded, which stops the
+# model from inventing text on silence. The VAD hears quiet microphones that a loudness threshold would drop.
+SPEECH = 0.5
+# Audio this quiet (about -70 dBFS) is silence without asking the VAD.
+SILENT_RMS = 0.0003
+# A segment longer than this is committed at its least speech-like point, so a long dictation never re-decodes minutes
+# of audio.
 SEGMENT_MAX = RATE * 20
-SEGMENT_SEARCH = RATE * 6
-# Frames quieter than this (about -44 dBFS) count as silence. A segment without a louder frame is never decoded,
-# which stops the model from inventing text on silence.
-VOICE_RMS = 0.006
+SEGMENT_SEARCH = RATE * 6 // FRAME
 # Partial passes wait for this much audio; a fraction of a word decodes into guesses that flicker in the prompt.
 PARTIAL_MIN = RATE // 2
 # A pause this long after speech commits the segment, so each partial pass re-decodes only the current phrase.
-PAUSE_FRAMES = 500 // 30
+PAUSE_FRAMES = RATE // 2 // FRAME
+# With a turn model, a pause commits only once the model hears a finished sentence, or once it lasts this long.
+TURN_MODEL = os.environ.get("OPENCODE_DICTATION_TURN_MODEL", "mlx-community/smart-turn-v3")
+LONG_PAUSE_FRAMES = RATE * 3 // 2 // FRAME
+# The turn model reads at most this much of the phrase before the pause.
+TURN_AUDIO = RATE * 8
 
 replies = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
 # Native code writes to fd 1 directly; point it at stderr so only replies reach the server.
@@ -43,11 +54,13 @@ os.dup2(2, 1)
 sys.stdout = sys.stderr
 
 MODEL = os.environ.get("OPENCODE_DICTATION_MODEL", "mlx-community/Qwen3-ASR-0.6B-8bit")
-# Empty disables the draft model, so partial passes use the main model too.
-DRAFT_MODEL = os.environ.get("OPENCODE_DICTATION_DRAFT_MODEL", "")
-# The languages the draft model transcribes, by the main model's names; `None` is automatic detection.
-DRAFT_LANGUAGES = {None, "English", "French", "German", "Spanish", "Portuguese", "Italian", "Japanese"}
+# Empty disables the fast model, so the main model writes everything.
+FAST_MODEL = os.environ.get("OPENCODE_DICTATION_FAST_MODEL", "")
+# The languages the fast model transcribes, by the main model's names; `None` is automatic detection.
+FAST_LANGUAGES = {None, "English", "French", "German", "Spanish", "Portuguese", "Italian", "Japanese"}
 HOTWORDS = [word for word in os.environ.get("OPENCODE_DICTATION_HOTWORDS", "").split("\n") if word.strip()]
+# Latin letters or a katakana run in the fast model's text: where it may have spelled out an English term.
+FOREIGN = re.compile(r"[A-Za-z]|[ァ-ヺー]{3,}")
 
 models = {}
 sessions = {}
@@ -63,12 +76,41 @@ def load(name=MODEL):
     return models[name]
 
 
-def frames_rms(audio):
-    count = len(audio) // FRAME
-    if count == 0:
-        return np.zeros(0, dtype=np.float32)
-    framed = audio[: count * FRAME].reshape(count, FRAME)
-    return np.sqrt(np.mean(framed * framed, axis=1))
+vad = None
+turn = None
+
+
+def finished(session, end):
+    # Whether the phrase up to frame `end` sounds complete; asked once per pause.
+    global turn
+    if not TURN_MODEL:
+        return True
+    if end not in session.setdefault("turns", {}):
+        if turn is None:
+            from mlx_audio.vad import load as load_vad
+
+            turn = load_vad(TURN_MODEL)
+        audio = session["segment"][max(0, end * FRAME - TURN_AUDIO) : end * FRAME]
+        session["turns"][end] = turn.predict_endpoint(audio, sample_rate=RATE).prediction == 1
+    return session["turns"][end]
+
+
+def listen(session, audio):
+    # Speech probabilities for whole frames; the VAD carries its state across a session's chunks.
+    global vad
+    if not len(audio) or np.sqrt(np.mean(audio * audio)) < SILENT_RMS:
+        return np.zeros(len(audio) // FRAME, dtype=np.float32)
+    if vad is None:
+        from mlx_audio.vad import load as load_vad
+
+        vad = load_vad(VAD_MODEL)
+    import mlx.core as mx
+
+    scores = []
+    for start in range(0, len(audio), FRAME):
+        score, session["vad"] = vad.feed(audio[start : start + FRAME], session.get("vad"))
+        scores.append(score.reshape(-1))
+    return np.array(mx.concatenate(scores), dtype=np.float32)
 
 
 # The model sometimes writes back the hotword list it was prompted with, alone or around the speech: several hotwords
@@ -89,12 +131,20 @@ def strip_hotwords(text):
     return HOTWORD_ECHO.sub("", text).strip() if HOTWORD_ECHO else text
 
 
-def decode(audio, language, draft=False):
-    rms = frames_rms(audio)
-    if len(rms) == 0 or rms.max() < VOICE_RMS:
+def decode(audio, speech, language, partial=False):
+    if not (speech >= SPEECH).any():
         return ""
-    if draft and DRAFT_MODEL and language in DRAFT_LANGUAGES:
-        return load(DRAFT_MODEL).generate(audio).text.strip()
+    if not FAST_MODEL or language not in FAST_LANGUAGES:
+        return main(audio, language)
+    text = load(FAST_MODEL).generate(audio).text.strip()
+    if partial or not HOTWORDS or not FOREIGN.search(text):
+        return text
+    # Without a registered term the main model is no better at English words and worse at the rest.
+    rewritten = main(audio, language)
+    return rewritten if any(word.lower() in rewritten.lower() for word in HOTWORDS) else text
+
+
+def main(audio, language):
     text = load().generate(audio, language=language, hotwords=HOTWORDS or None, temperature=0.0).text.strip()
     return strip_hotwords(text)
 
@@ -108,49 +158,65 @@ def join(parts):
     return text
 
 
-def split_point(audio):
-    # The quietest frame in the last few seconds, so a word is rarely cut in half.
-    start = max(0, len(audio) - SEGMENT_SEARCH)
-    rms = frames_rms(audio[start:])
-    return start + int(np.argmin(rms)) * FRAME if len(rms) else len(audio)
+def split_point(speech):
+    # The least speech-like frame in the last few seconds, so a word is rarely cut in half.
+    start = max(0, len(speech) - SEGMENT_SEARCH)
+    return start + int(np.argmin(speech[start:]))
 
 
-def pause_cut(audio):
-    # The middle of the last pause that follows speech, or None while the speaker has not paused.
-    voiced = frames_rms(audio) >= VOICE_RMS
+def pause_cut(session):
+    # The frame in the middle of the last pause that follows speech, or None while the speaker has not paused.
+    voiced = session["speech"] >= SPEECH
     if not voiced.any():
         return None
     cut, run = None, 0
     for index in range(int(np.argmax(voiced)), len(voiced)):
         run = 0 if voiced[index] else run + 1
-        if run == PAUSE_FRAMES:
-            cut = (index - PAUSE_FRAMES // 2) * FRAME
+        if run == PAUSE_FRAMES and finished(session, index + 1):
+            cut = index - PAUSE_FRAMES // 2
+        if run == LONG_PAUSE_FRAMES and TURN_MODEL:
+            cut = index - LONG_PAUSE_FRAMES // 2
     return cut
+
+
+def commit(session, frames, language):
+    session["committed"].append(decode(session["segment"][: frames * FRAME], session["speech"][:frames], language))
+    session["segment"] = session["segment"][frames * FRAME :]
+    session["speech"] = session["speech"][frames:]
+    session["turns"] = {}
 
 
 def transcribe(request):
     # None lets the model detect the spoken language.
     language = request.get("language") or None
-    session = sessions.setdefault(request["session"], {"committed": [], "segment": np.zeros(0, dtype=np.float32)})
-    pcm = np.frombuffer(base64.b64decode(request.get("audio") or ""), dtype="<i2").astype(np.float32) / 32768.0
-    session["segment"] = np.concatenate([session["segment"], pcm])
-    cut = None if request.get("final") else pause_cut(session["segment"])
-    if cut:
-        session["committed"].append(decode(session["segment"][:cut], language))
-        session["segment"] = session["segment"][cut:]
-        session["shown"] = ""
-    elif frames_rms(session["segment"]).max(initial=0) < VOICE_RMS and len(session["segment"]) > RATE:
-        # Leading silence is never decoded; keep only its end so the next word starts a short segment.
-        session["segment"] = session["segment"][-RATE // 2 :]
-    if not request.get("final") and len(session["segment"]) > SEGMENT_MAX:
-        cut = split_point(session["segment"])
-        session["committed"].append(decode(session["segment"][:cut], language))
-        session["segment"] = session["segment"][cut:]
     final = request.get("final")
+    empty = np.zeros(0, dtype=np.float32)
+    session = sessions.setdefault(request["session"], {"committed": [], "segment": empty, "speech": empty, "rest": empty})
+    pcm = np.frombuffer(base64.b64decode(request.get("audio") or ""), dtype="<i2").astype(np.float32) / 32768.0
+    audio = np.concatenate([session["rest"], pcm])
+    whole = len(audio) // FRAME * FRAME
+    session["rest"] = audio[whole:]
+    session["segment"] = np.concatenate([session["segment"], audio[:whole]])
+    session["speech"] = np.concatenate([session["speech"], listen(session, audio[:whole])])
+    cut = None if final else pause_cut(session)
+    if cut:
+        commit(session, cut, language)
+        session["shown"] = ""
+        # The VAD adapts to the loudness it has heard; a fresh state per phrase still hears a speaker who drops their
+        # voice after a pause.
+        session["vad"] = None
+    elif not (session["speech"] >= SPEECH).any() and len(session["segment"]) > RATE:
+        # Leading silence is never decoded; keep only its end so the next word starts a short segment.
+        keep = PARTIAL_MIN // FRAME
+        session["segment"], session["speech"] = session["segment"][-keep * FRAME :], session["speech"][-keep:]
+    if not final and len(session["segment"]) > SEGMENT_MAX:
+        commit(session, split_point(session["speech"]), language)
     pending = (
-        decode(session["segment"], language)
+        decode(np.concatenate([session["segment"], session["rest"]]), session["speech"], language)
         if final
-        else "" if len(session["segment"]) < PARTIAL_MIN else decode(session["segment"], language, draft=True)
+        else ""
+        if len(session["segment"]) < PARTIAL_MIN
+        else decode(session["segment"], session["speech"], language, partial=True)
     )
     # A partial pass that hears nothing new keeps the last words shown, so the prompt never blinks empty mid-phrase.
     if not final and not pending and session.get("shown"):
@@ -171,10 +237,14 @@ def handle(request):
         with open(hf_hub_download(MODEL, "config.json"), encoding="utf-8") as config:
             return {"languages": json.load(config).get("support_languages", [])}
     if op == "load":
-        load()
-        if DRAFT_MODEL:
-            load(DRAFT_MODEL)
-        return {"model": MODEL}
+        listen({}, np.ones(FRAME, dtype=np.float32))
+        finished({"segment": np.ones(RATE, dtype=np.float32)}, RATE // FRAME)
+        if FAST_MODEL:
+            load(FAST_MODEL)
+        # Other languages and registered terms load the main model when first needed.
+        if not FAST_MODEL or HOTWORDS:
+            load()
+        return {"model": FAST_MODEL or MODEL}
     if op == "transcribe":
         return transcribe(request)
     if op == "cancel":
