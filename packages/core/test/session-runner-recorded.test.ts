@@ -272,6 +272,8 @@ describe("SessionRunnerLLM recorded", () => {
         "opencode.usage.cost_usd": 0,
       })
       expect(attempt?.attributes.get("opencode.llm.first_output_ms")).toBeNumber()
+      // The estimate of the request as sent sits beside the provider's count of the same request.
+      expect(attempt?.attributes.get("opencode.request.estimated_input_tokens")).toBeGreaterThan(0)
       // The provider stream has its own span under the attempt, so model time splits from tool time.
       const stream = turn.find((span) => span.name === "LLM.stream")
       expect(Option.getOrUndefined(stream!.parent)?.spanId).toBe(attempt!.spanId)
