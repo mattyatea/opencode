@@ -272,3 +272,40 @@ export function setCursorPosition(parent: HTMLElement, position: number) {
   fallbackSelection?.removeAllRanges()
   fallbackSelection?.addRange(fallbackRange)
 }
+
+/** A range over the characters from `start` to `end` of `parent`, counted the way `setCursorPosition` places them. */
+export function createTextRange(parent: HTMLElement, start: number, end: number) {
+  const range = document.createRange()
+  range.setStart(...textBoundary(parent, start))
+  range.setEnd(...textBoundary(parent, end))
+
+  return range
+}
+
+function textBoundary(parent: HTMLElement, position: number): [Node, number] {
+  let remaining = position
+  let index = 0
+
+  for (let node = parent.firstChild; node; node = node.nextSibling) {
+    const length = getNodeLength(node)
+
+    if (node instanceof Text && remaining <= length) return [node, textOffset(node.data, remaining)]
+
+    // Mentions and breaks are atomic, so a position inside one falls before it.
+    if (remaining < length || remaining === 0) return [parent, index]
+    remaining -= length
+    index++
+  }
+
+  return [parent, index]
+}
+
+// The offset in `text` after `count` characters, skipping zero-width spaces as `countText` does.
+function textOffset(text: string, count: number) {
+  let seen = 0
+  let index = 0
+
+  for (; index < text.length && seen < count; index++) if (text.charCodeAt(index) !== 0x200b) seen++
+
+  return index
+}

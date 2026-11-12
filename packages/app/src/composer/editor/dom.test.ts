@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test"
 import type { ComposerPrompt } from "../types"
-import { editorMatchesPrompt, getCursorPosition, isEditorDomBlank, isPromptInlineBlank, setCursorPosition } from "./dom"
+import {
+  createTextRange,
+  editorMatchesPrompt,
+  getCursorPosition,
+  isEditorDomBlank,
+  isPromptInlineBlank,
+  setCursorPosition,
+} from "./dom"
 
 const br = () => document.createElement("br")
 
@@ -165,4 +172,16 @@ test("reads no caret for a range or a selection outside the editor", () => {
 
   container.remove()
   outside.remove()
+})
+
+test("covers characters across text, breaks and mentions, skipping zero-width spaces", () => {
+  const editor = document.createElement("div")
+  const mention = document.createElement("span")
+  mention.dataset.mention = "file"
+  mention.textContent = "@a.ts"
+  editor.append("修正​して", document.createElement("br"), mention, "えっと")
+
+  expect(createTextRange(editor, 2, 4).toString()).toBe("​して")
+  expect(createTextRange(editor, 10, 13).toString()).toBe("えっと")
+  expect(createTextRange(editor, 5, 13).toString()).toBe("@a.tsえっと")
 })

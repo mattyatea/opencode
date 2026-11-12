@@ -132,9 +132,12 @@ export function createWorker(input: Config) {
       ),
     /** Starts the worker and loads the model. Resolves with the model's name. */
     load: () => request({ op: "load" }).then((reply) => String(reply.model)),
-    /** Appends PCM audio to a dictation and resolves with its transcript so far. */
+    /** Appends PCM audio to a dictation and resolves with its transcript so far and the part of it now settled. */
     transcribe: (session: string, audio: string, final: boolean, language?: string) =>
-      request({ op: "transcribe", session, audio, final, language }).then((reply) => String(reply.text ?? "")),
+      request({ op: "transcribe", session, audio, final, language }).then((reply) => ({
+        text: String(reply.text ?? ""),
+        committed: String(reply.committed ?? ""),
+      })),
     /** Drops a dictation. */
     cancel: (session: string) => request({ op: "cancel", session }).then(() => undefined),
     close: () => {

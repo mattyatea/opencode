@@ -69,7 +69,14 @@ export const DictationGroup = HttpApiGroup.make("server.dictation")
         final: Schema.Boolean,
         language: Schema.optional(Schema.String),
       }),
-      success: Schema.Struct({ data: Schema.Struct({ text: Schema.String }) }).annotate({
+      success: Schema.Struct({
+        data: Schema.Struct({
+          text: Schema.String,
+          committed: Schema.String.annotate({
+            description: "The start of `text` that later audio no longer changes; the rest may still be revised.",
+          }),
+        }),
+      }).annotate({
         identifier: "DictationTranscribeResponse",
       }),
       error: errors,

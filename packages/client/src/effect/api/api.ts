@@ -1693,7 +1693,7 @@ export type ExperimentalDictationTranscribeInput = {
   readonly final: boolean
   readonly language?: string | undefined
 }
-export type ExperimentalDictationTranscribeOutput = { readonly text: string }
+export type ExperimentalDictationTranscribeOutput = { readonly text: string; readonly committed: string }
 export type ExperimentalDictationTranscribeOperation<E = never> = (
   input: ExperimentalDictationTranscribeInput,
 ) => Effect.Effect<ExperimentalDictationTranscribeOutput, E>

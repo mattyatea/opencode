@@ -19,7 +19,7 @@ const dictation = makeLocationNode({
       prepare: () => Effect.fail(new Dictation.UnavailableError({ message: "no python" })),
       transcribe: (input) => {
         transcribed.push(input)
-        return Effect.succeed("こんにちは")
+        return Effect.succeed({ text: "こんにちは、元気", committed: "こんにちは、" })
       },
       cancel: () => Effect.void,
       cleanup: (input) => Effect.succeed(`cleaned:${input.text}:${input.model?.providerID}/${input.model?.id}`),
@@ -58,7 +58,7 @@ it.live("serves dictation from the global Location", () =>
     transcribed.length = 0
     expect(yield* call("transcribe", { session: "a", audio: "", final: true, language: "Japanese" })).toEqual({
       status: 200,
-      body: { data: { text: "こんにちは" } },
+      body: { data: { text: "こんにちは、元気", committed: "こんにちは、" } },
     })
     expect(transcribed).toEqual([{ session: "a", audio: "", final: true, language: "Japanese" }])
 

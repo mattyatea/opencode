@@ -6,6 +6,7 @@ import { useServerSDK } from "@/runtime/server/client"
 import { useSettings } from "@/settings/model"
 import { errorMessage } from "@/shell/layout/helpers"
 import { showToast } from "@/shell/notifications/toast"
+import { createTextRange } from "@/composer/editor/dom"
 import { encodeChunks, level, RATE, toPcm16, withTranscript } from "./pcm"
 import "./dictation.css"
 
@@ -17,6 +18,9 @@ const PARTIAL_MS = 250
 
 /** A model that has not answered `prepare` by then is loading or downloading; say so. */
 const LOADING_TOAST_MS = 1500
+
+/** Words the model may still revise are drawn muted through this CSS highlight until they settle. */
+const PENDING = "composer-dictation-pending"
 
 type Phase = "idle" | "preparing" | "listening" | "finishing" | "cleaning"
 
@@ -107,9 +111,22 @@ export function ComposerDictation(props: { controller: ComposerEditorModel }) {
       if (current()) controller.setText(withTranscript(base, text))
     }
 
+    // A partial transcript lands with its unsettled end muted. The editor renders it synchronously, so the range is
+    // set in a microtask rather than a frame, which a hidden or occluded window may never run.
+    const writePartial = (result: { text: string; committed: string }) => {
+      write(result.text)
+
+      if (!current()) return
+
+      const end = withTranscript(base, result.text).length
+      const start = end - (result.text.length - result.committed.length)
+      queueMicrotask(() => markPending(controller.editorElement(), start, end))
+    }
+
     const take = () => encodeChunks(chunks.splice(0))
 
     const release = () => {
+      clearPending()
       clearInterval(timer)
       clearTimeout(loading)
       processor.disconnect()
@@ -136,7 +153,7 @@ export function ComposerDictation(props: { controller: ComposerEditorModel }) {
       await api()
         .transcribe({ session: id, audio: take(), final: false, language: spoken })
         .then((result) => {
-          if (!progress.ended) write(result.text)
+          if (!progress.ended) writePartial(result)
         })
         .catch((error: unknown) => {
           if (progress.ended) return
@@ -304,4 +321,18 @@ export function ComposerDictation(props: { controller: ComposerEditorModel }) {
       </div>
     </Show>
   )
+}
+
+function markPending(editor: HTMLElement | undefined, start: number, end: number) {
+  const highlights = globalThis.CSS?.highlights
+
+  if (!highlights || typeof Highlight === "undefined") return
+
+  if (!editor || start >= end) return clearPending()
+
+  highlights.set(PENDING, new Highlight(createTextRange(editor, start, end)))
+}
+
+function clearPending() {
+  globalThis.CSS?.highlights?.delete(PENDING)
 }

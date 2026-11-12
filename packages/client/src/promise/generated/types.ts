@@ -226,7 +226,7 @@ export type DictationLanguagesResponse = { data: { languages: Array<string> } }
 
 export type DictationPrepareResponse = { data: { model: string } }
 
-export type DictationTranscribeResponse = { data: { text: string } }
+export type DictationTranscribeResponse = { data: { text: string; committed: string } }
 
 export type DictationCancelResponse = { data: {} }
 

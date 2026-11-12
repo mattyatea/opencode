@@ -11,8 +11,8 @@ describe.skipIf(!python)("dictation worker", () => {
   test("answers silence without loading the model", async () => {
     const worker = start()
     const silence = Buffer.alloc(16000 * 2).toString("base64")
-    expect(await worker.transcribe("a", silence, false)).toBe("")
-    expect(await worker.transcribe("a", silence, true)).toBe("")
+    expect(await worker.transcribe("a", silence, false)).toEqual({ text: "", committed: "" })
+    expect(await worker.transcribe("a", silence, true)).toEqual({ text: "", committed: "" })
     await worker.cancel("a")
     worker.close()
   })

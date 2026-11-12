@@ -13,6 +13,12 @@ export interface Status {
   readonly reason?: "disabled" | "unsupported"
 }
 
+export interface Transcript {
+  readonly text: string
+  /** The start of `text` that later audio no longer changes; the rest may still be revised. All of it once final. */
+  readonly committed: string
+}
+
 export interface TranscribeInput {
   /** The client's id for one recording. */
   readonly session: string
@@ -38,7 +44,7 @@ export interface Interface {
   readonly languages: () => Effect.Effect<readonly string[], UnavailableError>
   readonly prepare: () => Effect.Effect<{ readonly model: string }, UnavailableError>
   /** Resolves with the recording's transcript so far. */
-  readonly transcribe: (input: TranscribeInput) => Effect.Effect<string, UnavailableError>
+  readonly transcribe: (input: TranscribeInput) => Effect.Effect<Transcript, UnavailableError>
   readonly cancel: (session: string) => Effect.Effect<void>
   /** Removes fillers and structures dictated text with a model; speech never leaves the server. */
   readonly cleanup: (input: CleanupInput) => Effect.Effect<string, Generate.Error>

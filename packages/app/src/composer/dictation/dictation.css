@@ -87,3 +87,8 @@
   transition: none;
   animation: none !important;
 }
+
+/* Dictated words the model may still revise. */
+::highlight(composer-dictation-pending) {
+  color: var(--v2-text-text-muted);
+}

@@ -57,7 +57,7 @@ export const DictationHandler = HttpApiBuilder.group(Api, "server.dictation", (h
         Effect.fn("server.dictation.transcribe")(
           function* (request) {
             const dictation = yield* Dictation.Service
-            return { data: { text: yield* dictation.transcribe(request.payload).pipe(Effect.mapError(unavailable)) } }
+            return { data: yield* dictation.transcribe(request.payload).pipe(Effect.mapError(unavailable)) }
           },
           Effect.provide(services),
           locationErrors,

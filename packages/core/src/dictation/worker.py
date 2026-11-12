@@ -3,12 +3,13 @@
 Reads one JSON request per line on stdin and writes one JSON reply per line on stdout:
 
   {"id": 1, "op": "load"}                                        -> {"id": 1, "model": "..."}
-  {"id": 2, "op": "transcribe", "session": "s", "audio": "<b64>", "final": false} -> {"id": 2, "text": "..."}
+  {"id": 2, "op": "transcribe", "session": "s", "audio": "<b64>", "final": false} -> {"id": 2, "text": "...", "committed": "..."}
   {"id": 3, "op": "cancel", "session": "s"}                       -> {"id": 3}
   {"id": 4, "op": "languages"}                                   -> {"id": 4, "languages": ["Japanese", ...]}
 
 `audio` is little-endian 16-bit mono PCM at 16 kHz, appended to the session's buffer. Each transcribe returns the
-transcript of everything the session has heard so far; `final` ends the session. Failures reply {"id", "error"}.
+transcript of everything the session has heard so far, and `committed`, the start of it that later audio no longer
+changes; `final` ends the session. Failures reply {"id", "error"}.
 Libraries may print to stdout, so replies go to the original stdout and everything else to stderr.
 """
 
@@ -136,7 +137,8 @@ def transcribe(request):
     text = join([*session["committed"], pending])
     if final:
         sessions.pop(request["session"], None)
-    return {"text": text}
+        return {"text": text, "committed": text}
+    return {"text": text, "committed": join(session["committed"])}
 
 
 def handle(request):

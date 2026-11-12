@@ -644,6 +644,10 @@ export function createComposerEditor(input: {
     value() {
       return draft.state.prompt.map((part) => ("content" in part ? part.content : "")).join("")
     },
+    /** The editable element once mounted, as dictation marks where its words may still change. */
+    editorElement() {
+      return editor
+    },
     /** The draft being edited; another replaces it when the composer moves to a different session. */
     draft() {
       return draft.state
