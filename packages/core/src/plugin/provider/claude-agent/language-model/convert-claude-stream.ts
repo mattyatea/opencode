@@ -17,7 +17,11 @@ export function make(tools: readonly LanguageModelV3FunctionTool[]) {
   let metadata: Record<string, { sessionID: string; messageID: string }> | undefined
   // Plugins read plan usage from step metadata instead of polling Anthropic for it.
   let rateLimit: SDKRateLimitInfo | undefined
-  const finishMetadata = () => (rateLimit ? { [Provider.ID.claudeAgent]: { rateLimit } } : undefined)
+  const finishMetadata = () => {
+    const totals = usage.totals()
+    if (!rateLimit && !totals) return undefined
+    return { [Provider.ID.claudeAgent]: { ...(rateLimit && { rateLimit }), ...(totals && { usage: totals }) } }
+  }
 
   return (message: SDKMessage): LanguageModelV3StreamPart[] => {
     const parts: LanguageModelV3StreamPart[] = []
