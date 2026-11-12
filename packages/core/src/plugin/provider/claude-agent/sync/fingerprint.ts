@@ -92,6 +92,9 @@ export function groups(prompt: LanguageModelV3Prompt, prefix: readonly { readonl
     const parts = visible(message)
     if (parts.length === 0) continue
     const members = [hash(parts)]
+    // Consecutive user messages hash without order on purpose. Plan mode splices its reminder before the user's
+    // prompt in the current request but persists it as a synthetic message after that prompt, so the next request
+    // carries the same user group in the opposite order.
     if (message.role === "user") {
       while (i < prompt.length) {
         // A submitted input remains a boundary even when a later user message arrives without a visible reply.
