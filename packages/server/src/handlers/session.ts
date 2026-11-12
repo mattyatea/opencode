@@ -10,6 +10,7 @@ import { HttpServerResponse } from "effect/http"
 import { HttpApiBuilder, HttpApiSchema } from "effect/http-api"
 import { SessionMediaMessageResponse } from "@opencode/protocol/groups/message"
 import { SessionMediaInboxResponse } from "@opencode/protocol/groups/session"
+import { Model } from "@opencode/schema/model"
 import { Api } from "../api"
 import { wantsMediaRefs } from "../media-uri"
 import {
@@ -92,6 +93,8 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
               projectID: ctx.query.project,
               timezone,
               tools: ctx.query.tools,
+              providerID: ctx.query.provider,
+              modelID: ctx.query.model === undefined ? undefined : Model.ID.make(ctx.query.model),
             }).pipe(
               Effect.mapError(() => new InvalidRequestError({ message: "Stats range must end after it starts" })),
             ),

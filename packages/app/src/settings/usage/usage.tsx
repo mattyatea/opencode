@@ -1,39 +1,108 @@
 import { Button } from "@opencode/ui/button"
 import { Loader } from "@opencode/ui/loader"
+import { Select } from "@opencode/ui/select"
 import { createMemo, createResource, For, Show, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useServerSDK } from "@/runtime/server/client"
 import { useUsageFormat } from "@/usage/format"
 import { TokenUsage } from "@opencode/schema/token-usage"
+import { Provider } from "@opencode/schema/provider"
+import { Model } from "@opencode/schema/model"
 import "./usage.css"
 
 export function SettingsUsage(props: { active: boolean; headerAction?: JSX.Element }) {
   const language = useLanguage()
   const sdk = useServerSDK()
   const format = useUsageFormat()
-  const [state, setState] = createStore({ days: 7, sessions: 10 })
+  const [state, setState] = createStore({ days: 7, sessions: 10, provider: "", model: "" })
+  const load = async (query: { days: number; provider?: string; model?: string }) => {
+    const to = Date.now()
+    const from = new Date(to)
+    from.setHours(0, 0, 0, 0)
+    from.setDate(from.getDate() - query.days + 1)
+    const result = await sdk.api.experimental.session.stats({
+      from: from.getTime(),
+      to,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      tools: "detail",
+      provider: query.provider ? Provider.ID.make(query.provider) : undefined,
+      model: query.model ? Model.ID.make(query.model) : undefined,
+    })
+    return { ...query, value: result }
+  }
   const [stats, actions] = createResource(
     () => props.active && state.days,
-    async (days) => {
-      const to = Date.now()
-      const from = new Date(to)
-      from.setHours(0, 0, 0, 0)
-      from.setDate(from.getDate() - days + 1)
-      const result = await sdk.api.experimental.session.stats({
-        from: from.getTime(),
-        to,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        tools: "detail",
-      })
-      return { days, value: result }
-    },
+    (days) => load({ days }),
+  )
+  const [filtered, filteredActions] = createResource(
+    () => (props.active && state.provider ? { days: state.days, provider: state.provider, model: state.model } : false),
+    load,
   )
   // A settings read must not suspend the whole route or display the previous period as the new one.
-  const info = () =>
+  const info = () => {
+    const resource = state.provider ? filtered : stats
+    if (resource.state !== "ready" && resource.state !== "refreshing") return
+    const latest = resource.latest
+    if (
+      latest?.days !== state.days ||
+      (latest.provider ?? "") !== state.provider ||
+      (latest.model ?? "") !== state.model
+    )
+      return
+    return latest.value
+  }
+  const catalogue = () =>
     (stats.state === "ready" || stats.state === "refreshing") && stats.latest?.days === state.days
-      ? stats.latest.value
-      : undefined
+      ? stats.latest.value.models
+      : []
+  const providers = createMemo(() => ["", ...new Set(catalogue().map((row) => row.model.providerID))].sort())
+  const models = createMemo(() =>
+    [
+      "",
+      ...new Set(
+        catalogue()
+          .filter((row) => row.model.providerID === state.provider)
+          .map((row) => row.model.id),
+      ),
+    ].sort(),
+  )
+  const breakdowns = createMemo(() => {
+    const rows = info()?.models ?? []
+    return [
+      {
+        key: "providers" as const,
+        rows: Array.from(
+          Map.groupBy(rows, (row) => row.model.providerID),
+          ([name, models]) => ({
+            name,
+            provider: "",
+            steps: models.reduce((sum, row) => sum + row.steps, 0),
+            cost: models.reduce((sum, row) => sum + row.cost, 0),
+            tokens: {
+              input: models.reduce((sum, row) => sum + row.tokens.input, 0),
+              output: models.reduce((sum, row) => sum + row.tokens.output, 0),
+              reasoning: models.reduce((sum, row) => sum + row.tokens.reasoning, 0),
+              cache: {
+                read: models.reduce((sum, row) => sum + row.tokens.cache.read, 0),
+                write: models.reduce((sum, row) => sum + row.tokens.cache.write, 0),
+              },
+            },
+          }),
+        ).sort((a, b) => b.steps - a.steps),
+      },
+      {
+        key: "models" as const,
+        rows: rows.map((row) => ({
+          ...row,
+          name: `${row.model.id}${row.model.variant ? ` #${row.model.variant}` : ""}`,
+          provider: row.model.providerID,
+        })),
+      },
+    ]
+  })
+  const loading = () => (state.provider ? filtered.loading : stats.loading)
+  const error = () => (state.provider ? filtered.error : stats.error)
   const number = (value: number) => new Intl.NumberFormat(language.intl()).format(value)
   const toolUsage = () => {
     const tools = info()?.tools
@@ -60,7 +129,16 @@ export function SettingsUsage(props: { active: boolean; headerAction?: JSX.Eleme
   const maximum = () => Math.max(1, ...activity().map((day) => day.steps))
   const refresh = () => {
     void actions.refetch()
+    if (state.provider) void filteredActions.refetch()
   }
+  const tokenRows = (tokens: TokenUsage.Info) =>
+    [
+      { key: "input", count: tokens.input },
+      { key: "output", count: tokens.output },
+      { key: "reasoning", count: tokens.reasoning },
+      { key: "cacheRead", count: tokens.cache.read },
+      { key: "cacheWrite", count: tokens.cache.write },
+    ] as const
 
   function Section(section: { title: string; children: JSX.Element; note?: string }) {
     return (
@@ -100,19 +178,46 @@ export function SettingsUsage(props: { active: boolean; headerAction?: JSX.Eleme
               )}
             </For>
           </div>
-          <Button variant="ghost" disabled={stats.loading} onClick={refresh}>
+          <Button variant="ghost" disabled={loading()} onClick={refresh}>
             {language.t("settings.usage.refresh")}
           </Button>
         </div>
-        <Show when={stats.loading && !info()}>
+        <div class="usage-filters">
+          <label>
+            <span>{language.t("settings.usage.provider")}</span>
+            <Select
+              aria-label={language.t("settings.usage.provider")}
+              placeholder={language.t("settings.usage.allProviders")}
+              appearance="base"
+              options={providers()}
+              current={state.provider}
+              label={(value) => value || language.t("settings.usage.allProviders")}
+              onSelect={(value) => value !== null && setState({ provider: value, model: "", sessions: 10 })}
+            />
+          </label>
+          <label>
+            <span>{language.t("settings.usage.model")}</span>
+            <Select
+              aria-label={language.t("settings.usage.model")}
+              placeholder={language.t("settings.usage.allModels")}
+              appearance="base"
+              disabled={!state.provider}
+              options={models()}
+              current={state.model}
+              label={(value) => value || language.t("settings.usage.allModels")}
+              onSelect={(value) => value !== null && setState({ model: value, sessions: 10 })}
+            />
+          </label>
+        </div>
+        <Show when={loading() && !info()}>
           <div role="status">
             <Loader />
           </div>
         </Show>
-        <Show when={stats.error}>
+        <Show when={error()}>
           <div role="alert" class="usage-controls">
             <span>{language.t("settings.usage.error")}</span>
-            <Button onClick={() => void actions.refetch()}>{language.t("usage.retry")}</Button>
+            <Button onClick={refresh}>{language.t("usage.retry")}</Button>
           </div>
         </Show>
         <Show when={info()}>
@@ -137,7 +242,33 @@ export function SettingsUsage(props: { active: boolean; headerAction?: JSX.Eleme
                   )}
                 </For>
               </div>
-              <p class="usage-note">{language.t("settings.usage.note")}</p>
+              <p class="usage-note">
+                {language.t(state.provider ? "settings.usage.filteredNote" : "settings.usage.note")}
+              </p>
+              <Section title={language.t("settings.usage.tokens")}>
+                <div class="usage-card">
+                  <div class="usage-token-stack" role="img" aria-label={language.t("settings.usage.tokenBreakdown")}>
+                    <For each={tokenRows(value().tokens)}>
+                      {(row) => (
+                        <span
+                          data-token={row.key}
+                          style={{ width: `${(row.count / Math.max(1, TokenUsage.total(value().tokens))) * 100}%` }}
+                        />
+                      )}
+                    </For>
+                  </div>
+                  <div class="usage-token-legend">
+                    <For each={tokenRows(value().tokens)}>
+                      {(row) => (
+                        <span>
+                          <i data-token={row.key} aria-hidden="true" />
+                          {language.t(`settings.usage.${row.key}`)} <strong>{number(row.count)}</strong>
+                        </span>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </Section>
               <Section title={language.t("settings.usage.activity")}>
                 <div class="usage-card">
                   <div class="usage-chart" role="img" aria-label={language.t("settings.usage.activity")} dir="ltr">
@@ -168,65 +299,68 @@ export function SettingsUsage(props: { active: boolean; headerAction?: JSX.Eleme
                   </details>
                 </div>
               </Section>
-              <Section title={language.t("settings.usage.models")}>
-                <div class="usage-table-wrap" data-scrollable>
-                  <table class="usage-table" aria-label={language.t("settings.usage.models")}>
-                    <thead>
-                      <tr>
-                        <For
-                          each={
-                            [
-                              "name",
-                              "steps",
-                              "input",
-                              "output",
-                              "reasoning",
-                              "cacheRead",
-                              "cacheWrite",
-                              "cost",
-                            ] as const
-                          }
-                        >
-                          {(key) => <th>{language.t(`settings.usage.${key}`)}</th>}
-                        </For>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <For each={value().models}>
-                        {(row) => (
+              <For each={breakdowns()}>
+                {(breakdown) => (
+                  <Section title={language.t(`settings.usage.${breakdown.key}`)}>
+                    <div class="usage-table-wrap" data-scrollable>
+                      <table class="usage-table" aria-label={language.t(`settings.usage.${breakdown.key}`)}>
+                        <thead>
                           <tr>
-                            <th>
-                              <bdi>
-                                {row.model.id}
-                                {row.model.variant ? ` #${row.model.variant}` : ""}
-                              </bdi>
-                              <small>
-                                <bdi>{row.model.providerID}</bdi>
-                              </small>
-                            </th>
                             <For
-                              each={[
-                                row.steps,
-                                row.tokens.input,
-                                row.tokens.output,
-                                row.tokens.reasoning,
-                                row.tokens.cache.read,
-                                row.tokens.cache.write,
-                              ]}
+                              each={
+                                [
+                                  "name",
+                                  "steps",
+                                  "input",
+                                  "output",
+                                  "reasoning",
+                                  "cacheRead",
+                                  "cacheWrite",
+                                  "cost",
+                                ] as const
+                              }
                             >
-                              {(count) => <td>{number(count)}</td>}
+                              {(key) => <th>{language.t(`settings.usage.${key}`)}</th>}
                             </For>
-                            <td>{format.money(row.cost)}</td>
                           </tr>
-                        )}
-                      </For>
-                    </tbody>
-                  </table>
-                </div>
-                <Show when={!value().models.length}>
-                  <p class="usage-note">{language.t("settings.usage.empty")}</p>
-                </Show>
-              </Section>
+                        </thead>
+                        <tbody>
+                          <For each={breakdown.rows}>
+                            {(row) => (
+                              <tr>
+                                <th>
+                                  <bdi>{row.name}</bdi>
+                                  <Show when={row.provider}>
+                                    <small>
+                                      <bdi>{row.provider}</bdi>
+                                    </small>
+                                  </Show>
+                                </th>
+                                <For
+                                  each={[
+                                    row.steps,
+                                    row.tokens.input,
+                                    row.tokens.output,
+                                    row.tokens.reasoning,
+                                    row.tokens.cache.read,
+                                    row.tokens.cache.write,
+                                  ]}
+                                >
+                                  {(count) => <td>{number(count)}</td>}
+                                </For>
+                                <td>{format.money(row.cost)}</td>
+                              </tr>
+                            )}
+                          </For>
+                        </tbody>
+                      </table>
+                    </div>
+                    <Show when={!breakdown.rows.length}>
+                      <p class="usage-note">{language.t("settings.usage.empty")}</p>
+                    </Show>
+                  </Section>
+                )}
+              </For>
               <Section title={language.t("settings.usage.sessionBreakdown")}>
                 <div class="usage-table-wrap" data-scrollable>
                   <table class="usage-table" aria-label={language.t("settings.usage.sessionBreakdown")}>

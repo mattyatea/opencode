@@ -21,6 +21,8 @@ type Input = {
   readonly projectID?: Project.ID
   readonly timezone?: string
   readonly tools?: ToolMode
+  readonly providerID?: Provider.ID
+  readonly modelID?: Model.ID
 }
 
 type Tokens = Types.DeepMutable<TokenUsage.Info>
@@ -84,7 +86,11 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
   const db = (yield* Database.Service).db
   const to = input.to ?? Date.now()
   if (input.from !== undefined && input.from >= to) return yield* new InvalidRangeError({ from: input.from, to })
-  const project = input.projectID === undefined ? sql`` : sql`AND session.project_id = ${input.projectID}`
+  const filters = sql`
+    ${input.projectID === undefined ? sql`` : sql`AND session.project_id = ${input.projectID}`}
+    ${input.providerID === undefined ? sql`` : sql`AND json_extract(message.data, '$.model.providerID') = ${input.providerID}`}
+    ${input.modelID === undefined ? sql`` : sql`AND json_extract(message.data, '$.model.id') = ${input.modelID}`}
+  `
   const from =
     input.from ??
     (yield* db
@@ -96,7 +102,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
         WHERE message.type IN ('user', 'assistant')
           AND message.time_created < ${to}
           AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
-          ${project}
+          ${filters}
       `,
       )
       .pipe(Effect.orDie))?.time ??
@@ -156,7 +162,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
             AND message.time_created >= ${range.from}
             AND message.time_created < ${range.to}
             AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
-            ${project}
+            ${filters}
         `,
         )
         .pipe(
@@ -232,7 +238,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
                 AND message.time_created < ${range.to}
                 AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
                 AND part.type = 'tool'
-                ${project}
+                ${filters}
               UNION ALL
               SELECT json_extract(content.value, '$.state.status') AS status
               FROM ${SessionMessageTable} AS message
@@ -244,7 +250,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
                 AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
                 AND NOT EXISTS (SELECT 1 FROM ${SessionPartTable} AS part WHERE part.message_id = message.id)
                 AND json_extract(content.value, '$.type') = 'tool'
-                ${project}
+                ${filters}
             )
             SELECT
               count(*) AS calls,
@@ -289,7 +295,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
             AND message.time_created < ${range.to}
             AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
             AND part.type = 'tool'
-            ${project}
+            ${filters}
           UNION ALL
           SELECT
             json_extract(content.value, '$.name') AS name,
@@ -311,7 +317,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
             AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
             AND NOT EXISTS (SELECT 1 FROM ${SessionPartTable} AS part WHERE part.message_id = message.id)
             AND json_extract(content.value, '$.type') = 'tool'
-            ${project}
+            ${filters}
         `,
           )
           .pipe(
@@ -343,12 +349,16 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
       { concurrency: 1, discard: true },
     )
 
-  const ids = yield* db
-    .select({ id: SessionTable.id })
-    .from(SessionTable)
-    .where(input.projectID === undefined ? undefined : eq(SessionTable.project_id, input.projectID))
-    .all()
-    .pipe(Effect.orDie)
+  // Compaction events do not record their model, so they cannot be attributed to a filtered model or provider.
+  const ids =
+    input.providerID !== undefined || input.modelID !== undefined
+      ? []
+      : yield* db
+          .select({ id: SessionTable.id })
+          .from(SessionTable)
+          .where(input.projectID === undefined ? undefined : eq(SessionTable.project_id, input.projectID))
+          .all()
+          .pipe(Effect.orDie)
   const events = (yield* Effect.forEach(
     batches(ids.map((row) => row.id)),
     (batch) =>

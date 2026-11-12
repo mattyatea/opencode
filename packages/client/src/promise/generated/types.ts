@@ -2574,6 +2574,7 @@ export type ConfigEntry =
           }
         }
         experimental?: {
+          json_read?: boolean
           codemode_tools?: boolean
           paste_files?: boolean
           portable_shell_scanner?: boolean
@@ -3825,6 +3826,8 @@ export type ExperimentalSessionStatsInput = {
   readonly project?: string | undefined
   readonly timezone?: string | undefined
   readonly tools?: "none" | "summary" | "detail" | undefined
+  readonly provider?: string | undefined
+  readonly model?: string | undefined
 }
 
 export type ExperimentalSessionStatsOutput = { data: SessionStatsInfo }["data"]

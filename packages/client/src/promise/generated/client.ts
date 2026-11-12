@@ -1073,6 +1073,8 @@ export function make(options: ClientOptions) {
                 project: input?.["project"],
                 timezone: input?.["timezone"],
                 tools: input?.["tools"],
+                provider: input?.["provider"],
+                model: input?.["model"],
               },
               successStatus: 200,
               declaredStatuses: [400, 401],

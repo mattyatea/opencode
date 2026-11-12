@@ -20,7 +20,7 @@ import { useDialog } from "@opencode/ui/context/dialog"
 import { popularProviders } from "@/providers/catalog/providers"
 import { Button } from "@opencode/ui/button"
 import { Badge } from "@opencode/ui/badge"
-import { Dialog, DialogBody, DialogTitle } from "@opencode/ui/dialog"
+import { Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitle, DialogTitleGroup } from "@opencode/ui/dialog"
 import { Icon } from "@opencode/ui/icon"
 import { IconButton } from "@opencode/ui/icon-button"
 import { Keybind } from "@opencode/ui/keybind"
@@ -575,20 +575,30 @@ function DialogModelSwitch(props: { sessionID: string; model: ModelRef; onSwitch
   }
 
   return (
-    <Dialog>
-      <DialogTitle>{language.t("dialog.model.switch.title")}</DialogTitle>
-      <DialogBody class="flex flex-col gap-4">
-        <p>{language.t("dialog.model.switch.description")}</p>
-        <Show when={store.error}>{(error) => <p role="alert">{error()}</p>}</Show>
+    <Dialog class="font-sans" containerClass="max-w-[calc(100vw-32px)]" fit>
+      <DialogHeader>
+        <DialogTitleGroup
+          title={language.t("dialog.model.switch.title")}
+          description={<span class="whitespace-pre-line">{language.t("dialog.model.switch.description")}</span>}
+        />
+      </DialogHeader>
+      <Show when={store.error}>
+        {(error) => (
+          <DialogBody class="px-4 text-13-regular text-v2-text-text-base">
+            <p role="alert">{error()}</p>
+          </DialogBody>
+        )}
+      </Show>
+      <DialogFooter>
         <div class="flex flex-wrap justify-end gap-2">
           <Button variant="outline" disabled={store.busy} onClick={() => void select(false)}>
             {language.t("dialog.model.switch.direct")}
           </Button>
-          <Button disabled={store.busy} onClick={() => void select(true)}>
+          <Button variant="contrast" disabled={store.busy} onClick={() => void select(true)}>
             {language.t(store.busy ? "dialog.model.switch.compacting" : "dialog.model.switch.compact")}
           </Button>
         </div>
-      </DialogBody>
+      </DialogFooter>
     </Dialog>
   )
 }

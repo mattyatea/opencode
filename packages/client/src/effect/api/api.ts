@@ -16,6 +16,7 @@ import type { AgentAttachment } from "@opencode/schema/prompt"
 import type { FileDiff } from "@opencode/schema/file-diff"
 import type { Form } from "@opencode/schema/form"
 import type { DateTime } from "effect"
+import type { Provider } from "@opencode/schema/provider"
 import type { Money } from "@opencode/schema/money"
 import type { Skill } from "@opencode/schema/skill"
 import type { InstructionEntry } from "@opencode/schema/instruction-entry"
@@ -27,7 +28,6 @@ import type { Instruction } from "@opencode/schema/instruction"
 import type { Snapshot } from "@opencode/schema/snapshot"
 import type { Shell } from "@opencode/schema/shell"
 import type { Generate } from "@opencode/schema/generate"
-import type { Provider } from "@opencode/schema/provider"
 import type { Integration } from "@opencode/schema/integration"
 import type { Mcp } from "@opencode/schema/mcp"
 import type { PtyTicket } from "@opencode/schema/pty-ticket"
@@ -498,6 +498,8 @@ export type ExperimentalSessionStatsInput = {
   readonly project?: Project.ID | undefined
   readonly timezone?: string | undefined
   readonly tools?: "none" | "summary" | "detail" | undefined
+  readonly provider?: Provider.ID | undefined
+  readonly model?: string | undefined
 }
 export type ExperimentalSessionStatsOutput = {
   readonly range: { readonly from: DateTime.Utc; readonly to: DateTime.Utc }
