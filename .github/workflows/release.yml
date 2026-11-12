@@ -1,9 +1,10 @@
 name: release
 run-name: "release ${{ inputs.version || github.ref_name }}"
 
-# Builds the CLI for every target and publishes the archives to a GitHub release.
+# Builds the CLI for every target and the desktop app for macOS arm64, and publishes them to a GitHub release.
 # Trigger it by dispatching with a version, or by pushing a v<version> tag.
-# Binaries are not signed or notarized, and nothing is published to npm, Docker or package managers.
+# Nothing is notarized, and nothing is published to npm, Docker or package managers.
+# The CLI binaries are unsigned; the macOS desktop app is signed ad hoc only.
 
 on:
   push:
@@ -90,8 +91,69 @@ jobs:
           path: out
           if-no-files-found: error
 
+  # Desktop app for macOS arm64 only. It bundles the CLI for its own target, so the CLI is built here for that target.
+  desktop-mac-arm64:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      OPENCODE_VERSION: ${{ inputs.version || github.ref_name }}
+      OPENCODE_CHANNEL: latest
+      OPENCODE_TARGET: darwin-arm64
+    steps:
+      - name: Normalize version
+        run: echo "OPENCODE_VERSION=${OPENCODE_VERSION#v}" >> "$GITHUB_ENV"
+
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.4
+          install-flags: --os=darwin --cpu=arm64
+
+      - name: Fetch models catalog
+        run: bun packages/core/script/update-models-snapshot.ts .cache/models-catalog/api.json
+
+      - name: Build CLI
+        working-directory: packages/cli
+        run: bun run build && rm -rf dist/.bun
+        env:
+          BUN_COMPILE_RELEASE: bun-v1.4.4
+          OPENCODE_MODELS_SNAPSHOT: ${{ github.workspace }}/.cache/models-catalog/api.json
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build desktop
+        working-directory: packages/desktop
+        run: bun run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Pack desktop
+        working-directory: packages/desktop
+        timeout-minutes: 40
+        run: bun run pack
+
+      # pack.ts leaves the .app unsigned. Apple silicon refuses to run unsigned code, so sign it ad hoc.
+      # The app is not notarized: on first launch, run `xattr -cr OpenCode.app` or allow it in System Settings.
+      - name: Sign ad hoc and zip
+        run: |
+          mkdir -p out app
+          tar -xf dist/desktop/opencode-desktop-mac-arm64.app.tar -C app
+          codesign --force --deep --sign - app/*.app
+          ditto -c -k --keepParent app/*.app out/opencode-desktop-mac-arm64.zip
+
+      - name: Upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-desktop
+          path: out
+          if-no-files-found: error
+
   publish:
-    needs: build
+    needs: [build, desktop-mac-arm64]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -99,8 +161,12 @@ jobs:
       - name: Download
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: release-archives
+          pattern: release-*
           path: out
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd out && rm -f SHA256SUMS && sha256sum * > SHA256SUMS
 
       - name: Publish
         run: |
