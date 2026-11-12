@@ -252,7 +252,8 @@ export function ComposerDictation(props: { controller: ComposerEditorModel }) {
     )
 
   return (
-    <Show when={status()?.available}>
+    // Reading the status only once it has loaded keeps the session view from suspending while it is requested.
+    <Show when={status.state === "ready" && status()?.available}>
       <div data-component="composer-dictation" class="composer-dictation">
         <Show when={phase() === "listening" && cleanupButton()}>
           <Tooltip placement="top" value={language.t("composer.dictation.cleanup")}>

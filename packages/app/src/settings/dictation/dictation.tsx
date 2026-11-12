@@ -78,7 +78,11 @@ export const SettingsDictation: Component = () => {
     }
   })
 
-  const languageOptions = createMemo(() => ["auto", ...(languages.latest ?? [])])
+  // A settings read must not suspend the whole route, so resources are read only once they have a value.
+  const languageOptions = createMemo(() => [
+    "auto",
+    ...(languages.state === "ready" || languages.state === "refreshing" ? languages.latest : []),
+  ])
 
   const modelOptions = createMemo(() => [
     undefined,
@@ -92,7 +96,7 @@ export const SettingsDictation: Component = () => {
   const variantOptions = createMemo(() => [undefined, ...Object.keys(selectedModel()?.item.variants ?? {})])
 
   const unavailable = () => {
-    const reason = status()?.reason
+    const reason = status.state === "ready" ? status()?.reason : undefined
 
     if (reason === "disabled") return language.t("settings.dictation.unavailable.disabled")
 
