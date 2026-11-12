@@ -397,3 +397,44 @@ it.live(
       expect(events.map((event) => event.type)).toContain(Bus.versionedType(SessionEvent.TaskDetached.type, 1))
     }),
 )
+
+it.live("a child task starts on its parent's model", () =>
+  Effect.gen(function* () {
+    const fixture = yield* setup()
+    const model = Model.Ref.make({ providerID: Provider.ID.make("test"), id: Model.ID.make("parent-model") })
+    const parent = yield* fixture.sessions.create({
+      location: Location.Ref.make({ directory: fixture.location.directory }),
+      model,
+    })
+    const child = yield* fixture.sessions.taskCreate({ sessionID: parent.id, title: "Child" })
+    expect(parent.model).toMatchObject(model)
+    expect(child.model).toEqual(parent.model)
+  }),
+)
+
+it.live("a failed child task notifies its parent once and does not wake itself", () =>
+  Effect.gen(function* () {
+    active.clear()
+    const fixture = yield* setup()
+    const bus = yield* Bus.Service
+    const task = yield* fixture.sessions.taskCreate({ sessionID: fixture.caller.id, title: "Child" })
+    wakes.length = 0
+    const failure = yield* bus.publish(SessionEvent.Execution.Failed, {
+      sessionID: task.id,
+      error: { type: "unknown", message: "boom" },
+    })
+    // The event fires again before the parent has read the first report.
+    yield* bus.publish(SessionEvent.Execution.Failed, { sessionID: task.id, error: failure.data.error })
+    const received = () =>
+      fixture.sessions.taskMessages(fixture.caller.id).pipe(Effect.map((all) => all.filter((m) => m.from === task.id)))
+    for (let attempt = 0; attempt < 50 && (yield* received()).length === 0; attempt++) yield* Effect.sleep("20 millis")
+    yield* Effect.sleep("200 millis")
+
+    const messages = yield* received()
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.text).toContain("boom")
+    expect(wakes).toContain(fixture.caller.id)
+    // The report goes to the parent only: the failed child is not woken again, so there is no retry loop.
+    expect(wakes).not.toContain(task.id)
+  }),
+)
