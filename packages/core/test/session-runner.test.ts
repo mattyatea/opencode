@@ -132,7 +132,9 @@ const fakeIdentity = identity("fake", "fake-model")
 const replacementIdentity = identity("fake", "replacement")
 const gptIdentity = identity("openai", "gpt-5")
 const replacementModel = testModel("replacement")
-const compactModel = testModel("compact", { context: 4_000, output: 50 })
+// Compacts at 6,800 tokens. The summary request must also fit the conversation and the summary prompt below the
+// window, which a 4,000 token window cannot do once a measured count crosses its ceiling.
+const compactModel = testModel("compact", { context: 8_000, output: 50 })
 const fullOutputModel = testModel("full-output", { context: 262_144, output: 262_144 })
 const unknownContextModel = testModel("unknown-context", { context: 0, output: 32_000 })
 const undersizedContextModel = testModel("undersized-context", { context: 1, output: 1_000 })
@@ -3556,14 +3558,16 @@ describe("SessionRunnerLLM", () => {
 
   scenario("automatically compacts into a completed summary and retained recent turn", function* (s) {
     const store = yield* SessionStore.Service
-    yield* s.llm.push(TestLLM.textWithUsage("Earlier answer", "text-first", 3_950))
+    // Only the same model's count is trusted, so the earlier answer comes from the model that compacts. It stays
+    // under the ceiling until the recent request is added.
+    s.currentModel = compactModel
+    yield* s.llm.push(TestLLM.textWithUsage("Earlier answer", "text-first", 6_000))
     yield* s.runPrompt("Earlier question ".repeat(180))
 
-    s.currentModel = compactModel
     s.requests.length = 0
     yield* s.llm.push(
       TestLLM.text("## Objective\n- Preserve the task", "text-summary"),
-      TestLLM.textWithUsage("Continued", "text-final", 3_950),
+      TestLLM.textWithUsage("Continued", "text-final", 6_000),
     )
     yield* s.runPrompt("Recent exact request ".repeat(180))
 
@@ -3715,10 +3719,10 @@ describe("SessionRunnerLLM", () => {
   })
 
   scenario("stops after required automatic compaction fails", function* (s) {
-    yield* s.llm.push(TestLLM.textWithUsage("Earlier answer", "text-before-failed-compaction", 3_950))
+    s.currentModel = compactModel
+    yield* s.llm.push(TestLLM.textWithUsage("Earlier answer", "text-before-failed-compaction", 6_000))
     yield* s.runPrompt("Earlier question ".repeat(180))
 
-    s.currentModel = compactModel
     s.requests.length = 0
     yield* s.llm.push(
       TestLLM.failAfter(providerRejected({ message: "Unsupported parameter: max_output_tokens" })),

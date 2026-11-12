@@ -505,6 +505,10 @@ it.effect("auto compaction estimates current content against the buffered prompt
     // Another provider's usage is not trusted either.
     const foreign = { ...assistant, model: { ...assistant.model, providerID: Provider.ID.make("other") } }
     expect(SessionCompaction.estimateContext({ ...grown, messages: [foreign] })).toBe(21)
+    // Nor is another model's from the same provider: its tokenizer counts the same text differently.
+    const switched = { ...assistant, model: { ...assistant.model, id: Model.ID.make("other") } }
+    expect(SessionCompaction.estimateContext({ ...grown, messages: [switched] })).toBe(21)
+    expect(yield* due({ ...grown, messages: [switched] })).toBe(false)
     expect(
       SessionCompaction.estimateContext({
         ...grown,
@@ -1058,6 +1062,12 @@ const precomputeHistory = () => {
   return { near: [...near, anchor], due, anchor }
 }
 
+/** `due` after a switch to the "other" model, whose first response measured the third answer. */
+const switchedDue = (history: ReturnType<typeof precomputeHistory>) => {
+  const answer = measured("Third answer", 182_000)
+  return [...history.due.slice(0, -1), { ...answer, model: { ...answer.model, id: Model.ID.make("other") } }]
+}
+
 const enablePrecompute = Effect.gen(function* () {
   const compaction = yield* SessionCompaction.Service
   yield* compaction.transform((editor) => editor.configure({ precompute: true }))
@@ -1352,7 +1362,7 @@ it.effect("a model switch waits for the new model's first response before summar
 
     // The latest response came from the previous model, so the new one has no cached prefix to summarize from.
     yield* compaction.precompute(Effect.succeed(switched(history.near)))
-    expect(yield* compaction.compact({ reason: "auto", context: switched(history.due) })).toEqual({
+    expect(yield* compaction.compact({ reason: "auto", context: switched(switchedDue(history)) })).toEqual({
       status: "completed",
     })
     expect(requests).toHaveLength(1)
@@ -1437,10 +1447,10 @@ it.effect("compaction summarizes as usual when the background summary no longer 
 
     // A different model would replay a summary written for the previous one.
     const switched = {
-      ...loaded(session, history.due),
+      ...loaded(session, switchedDue(history)),
       model: { ...resolved, ref: { ...resolved.ref, id: Model.ID.make("other") } },
     }
-    expect(yield* compactAfterPrecompute(history.due, switched)).toContain("Third answer")
+    expect(yield* compactAfterPrecompute(switched.messages, switched)).toContain("Third answer")
   }),
 )
 

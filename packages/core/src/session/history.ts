@@ -37,6 +37,19 @@ export const isNativeCompaction = (
 ): message is SessionMessage.CompactionCompleted & { readonly native: { readonly messages: unknown } } =>
   message.type === "compaction" && message.status === "completed" && message.native?.messages !== undefined
 
+/**
+ * A response whose usage counts the prompt `model` is sent. Only the same model's counts are trusted: another
+ * model's tokenizer counts the same text differently, even from the same provider, and another provider's count may
+ * describe a native window this model cannot replay. Until the current model answers, the prompt is estimated.
+ */
+export const hasMeasuredPrompt = (message: SessionMessage.Info, model: Model.Ref) =>
+  message.type === "assistant" &&
+  message.model.providerID === model.providerID &&
+  message.model.id === model.id &&
+  !message.error &&
+  message.tokens !== undefined &&
+  message.tokens.input + message.tokens.cache.read + message.tokens.cache.write > 0
+
 /** A native compaction's window: canonical AI messages, stored as JSON. */
 export const NativeWindow = Schema.toCodecJson(Schema.Array(Message))
 const decodeNativeWindow = Schema.decodeUnknownOption(NativeWindow)
