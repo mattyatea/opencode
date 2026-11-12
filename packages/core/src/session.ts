@@ -706,11 +706,17 @@ const layer = Layer.effect(
           const task = yield* store.get(event.data.sessionID)
           const parentID = task?.experimental?.taskParentID
           if (!task || !parentID) return
-          yield* result.taskMessage({
-            sessionID: task.id,
-            targetID: parentID,
-            text: `This task's run failed and stopped.\nError: ${event.data.error.message}\nOpen the task to inspect it, or send it a message to retry.`,
-          })
+          const text = `This task's run failed and stopped.\nError: ${event.data.error.message}\nOpen the task to inspect it, or send it a message to retry.`
+          // Repeated failures the parent has not read yet are one report, not one wake per event.
+          const unread = (yield* result.taskMessages(parentID)).some(
+            (message) =>
+              message.from === task.id &&
+              message.to === parentID &&
+              message.state === "pending" &&
+              message.text === text,
+          )
+          if (unread) return
+          yield* result.taskMessage({ sessionID: task.id, targetID: parentID, text })
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
