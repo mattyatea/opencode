@@ -203,6 +203,8 @@ const dictationSchema = Persistence.struct({
   model: Persistence.optional(Schema.String),
   variant: Persistence.optional(Schema.String),
   trigger: Persistence.optional(Schema.Literals(["stop", "button"])),
+  // Editing rules sent in place of the server's default ones; empty uses the default.
+  instructions: Persistence.optional(Schema.String),
 })
 
 export const settingsSchema = Persistence.struct({
@@ -663,6 +665,10 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         trigger: withFallback<DictationCleanupTrigger>(() => store.dictation?.trigger, "stop"),
         setTrigger(value: DictationCleanupTrigger) {
           setStore("dictation", (current) => ({ ...current, trigger: value }))
+        },
+        instructions: withFallback(() => store.dictation?.instructions, ""),
+        setInstructions(value: string) {
+          setStore("dictation", (current) => ({ ...current, instructions: value }))
         },
       },
     }

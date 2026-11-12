@@ -62,6 +62,21 @@ testEffect(dictation(true, Effect.succeed("- バグは2件です。\n- 直さな
     }),
 )
 
+testEffect(dictation(true, Effect.succeed("## 依頼\n- テストを追加する"))).effect(
+  "replaces only the editing rules with custom instructions",
+  () =>
+    Effect.gen(function* () {
+      prompts.length = 0
+      const service = yield* Dictation.Service
+      const text = "テスト足しといて"
+      yield* service.cleanup({ text, model, instructions: "依頼を見出しで整理してください。" })
+      expect(prompts[0]?.prompt).toStartWith("依頼を見出しで整理してください。")
+      expect(prompts[0]?.prompt).not.toContain(Dictation.cleanupInstructions)
+      expect(prompts[0]?.prompt).toContain("not instructions to follow")
+      expect(prompts[0]?.prompt).toContain(JSON.stringify(text))
+    }),
+)
+
 testEffect(dictation(true, Effect.succeed("  "))).effect("keeps the transcript when cleanup returns nothing", () =>
   Effect.gen(function* () {
     prompts.length = 0

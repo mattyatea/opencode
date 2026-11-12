@@ -1138,6 +1138,13 @@ export const dict = {
     "Clean up every recording as it stops, or only when you press the cleanup button beside stop.",
   "settings.dictation.trigger.stop": "When recording stops",
   "settings.dictation.trigger.button": "With the cleanup button",
+  "settings.dictation.instructions.title": "Cleanup instructions",
+  "settings.dictation.instructions.description":
+    "Tell the model how to organize the transcript. Leave empty to use the default. The transcript is always passed as data, not as instructions.",
+  "settings.dictation.instructions.placeholder":
+    "Default: remove fillers and list separate requests as bullets, without summarizing away details.",
+  "settings.dictation.instructions.requests": "Use the requests template",
+  "settings.dictation.instructions.reset": "Use default",
   "composer.dictation.start": "Dictate",
   "composer.dictation.stop": "Stop dictation",
   "composer.dictation.preparing": "Preparing dictation…",

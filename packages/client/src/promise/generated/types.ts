@@ -4163,6 +4163,7 @@ export type ExperimentalDictationCancelOutput = DictationCancelResponse["data"]
 export type ExperimentalDictationCleanupInput = {
   readonly text: string
   readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string } | null | undefined
+  readonly instructions?: string | null | undefined
 }
 
 export type ExperimentalDictationCleanupOutput = DictationCleanupResponse["data"]

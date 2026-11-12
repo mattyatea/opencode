@@ -1730,7 +1730,11 @@ export type ExperimentalDictationCancelOperation<E = never> = (
   input: ExperimentalDictationCancelInput,
 ) => Effect.Effect<ExperimentalDictationCancelOutput, E>
 
-export type ExperimentalDictationCleanupInput = { readonly text: string; readonly model?: Model.Ref | undefined }
+export type ExperimentalDictationCleanupInput = {
+  readonly text: string
+  readonly model?: Model.Ref | undefined
+  readonly instructions?: string | undefined
+}
 export type ExperimentalDictationCleanupOutput = { readonly text: string }
 export type ExperimentalDictationCleanupOperation<E = never> = (
   input: ExperimentalDictationCleanupInput,

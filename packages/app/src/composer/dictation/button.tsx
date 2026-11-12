@@ -207,7 +207,11 @@ export function ComposerDictation(props: { controller: ComposerEditorModel }) {
       if (cleanup && transcript.trim()) {
         setPhase("cleaning")
         await api()
-          .cleanup({ text: transcript, model: cleanupModel() })
+          .cleanup({
+            text: transcript,
+            model: cleanupModel(),
+            instructions: settings.dictation.instructions().trim() || undefined,
+          })
           .then((result) => {
             if (controller.value() === original) write(result.text)
           })

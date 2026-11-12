@@ -103,7 +103,11 @@ export const DictationGroup = HttpApiGroup.make("server.dictation")
   )
   .add(
     HttpApiEndpoint.post("dictation.cleanup", "/api/experimental/dictation/cleanup", {
-      payload: Schema.Struct({ text: Schema.String, model: Model.Ref.pipe(Schema.optional) }),
+      payload: Schema.Struct({
+        text: Schema.String,
+        model: Model.Ref.pipe(Schema.optional),
+        instructions: Schema.String.pipe(Schema.optional),
+      }),
       success: Schema.Struct({ data: Schema.Struct({ text: Schema.String }) }).annotate({
         identifier: "DictationCleanupResponse",
       }),
@@ -120,7 +124,7 @@ export const DictationGroup = HttpApiGroup.make("server.dictation")
       OpenApi.annotations({
         identifier: "experimental.dictation.cleanup",
         summary: "Clean up dictation",
-        description: `Remove fillers from dictated text and structure it with a model. The text is sent to the model's provider. ${description}`,
+        description: `Remove fillers from dictated text and structure it with a model, following optional instructions that replace the default editing rules. The text is sent to the model's provider. ${description}`,
       }),
     ),
   )

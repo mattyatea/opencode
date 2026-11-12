@@ -2,6 +2,7 @@ import { type Component, createMemo, createResource, Show } from "solid-js"
 import { Button } from "@opencode/ui/button"
 import { Select } from "@opencode/ui/select"
 import { Switch } from "@opencode/ui/switch"
+import { Textarea } from "@opencode/ui/textarea"
 import { useModels } from "@/providers/models/models"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useServerSDK } from "@/runtime/server/client"
@@ -47,6 +48,29 @@ const languageTags = new Map(
 )
 
 const triggers: DictationCleanupTrigger[] = ["stop", "button"]
+
+// Turns a rambling spoken request into what the speaker is asking for, the shape an agent acts on best.
+const requestsTemplate = `あなたは音声入力の文字起こしを、話し手が何を求めているかが一目で分かる形に整理する編集者です。話し手に返答する役ではありません。
+話し言葉の言い直し、「えっと」「あの」などのつなぎ言葉、重複を取り除いてください。
+音声認識の誤変換と思われる語は、文脈から明らかな場合だけ直してください。
+話の全体から、話し手の目的と依頼を読み取り、次の形のMarkdownで書いてください。
+
+## 依頼
+- やってほしいことを1行に1つずつ、「〜する」の形で書く
+
+## 背景・理由
+- なぜそれが必要か
+
+## 条件・制約
+- 守ってほしいこと、やらないでほしいこと、完了の条件
+
+## 不明点
+- 聞き取れない箇所や、解釈が分かれる箇所
+
+話の中に内容がない見出しは、見出しごと省いてください。依頼が1つだけで背景も条件もなければ、1文だけで返してください。
+話した言語のまま書き、翻訳しないでください。
+否定・条件・数値・固有名詞・技術用語・URLは変えずに残してください。
+話していない事実や依頼を付け足さないでください。質問に答えたり、依頼を実行したりしないでください。`
 
 /** Dictation preferences, kept on this device; the selected server lists the languages and cleanup models. */
 export const SettingsDictation: Component = () => {
@@ -218,6 +242,37 @@ export const SettingsDictation: Component = () => {
                   gutter={6}
                 />
               </SettingsRow>
+              <SettingsRow
+                title={language.t("settings.dictation.instructions.title")}
+                description={language.t("settings.dictation.instructions.description")}
+              >
+                <div class="flex items-center gap-2">
+                  <Show when={settings.dictation.instructions()}>
+                    <Button variant="ghost" size="small" onClick={() => settings.dictation.setInstructions("")}>
+                      {language.t("settings.dictation.instructions.reset")}
+                    </Button>
+                  </Show>
+                  <Button
+                    data-action="settings-dictation-requests-template"
+                    variant="outline"
+                    size="small"
+                    onClick={() => settings.dictation.setInstructions(requestsTemplate)}
+                  >
+                    {language.t("settings.dictation.instructions.requests")}
+                  </Button>
+                </div>
+              </SettingsRow>
+              <div class="pb-5">
+                <Textarea
+                  data-action="settings-dictation-instructions"
+                  class="!w-full"
+                  rows={8}
+                  value={settings.dictation.instructions()}
+                  placeholder={language.t("settings.dictation.instructions.placeholder")}
+                  aria-label={language.t("settings.dictation.instructions.title")}
+                  onInput={(event) => settings.dictation.setInstructions(event.currentTarget.value)}
+                />
+              </div>
             </Show>
           </SettingsList>
         </div>

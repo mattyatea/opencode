@@ -490,6 +490,13 @@ export const dict = {
     "録音を止めるたびに整理するか、停止ボタンの左の整理ボタンを押したときだけ整理するかを選びます。",
   "settings.dictation.trigger.stop": "録音を止めたとき",
   "settings.dictation.trigger.button": "整理ボタンを押したとき",
+  "settings.dictation.instructions.title": "整理の指示",
+  "settings.dictation.instructions.description":
+    "文字起こしをどう整理するかを、モデルへの指示として書きます。空欄のときは標準の指示を使います。文字起こしは指示ではなく、データとして渡します。",
+  "settings.dictation.instructions.placeholder":
+    "標準：つなぎ言葉を取り除き、複数の依頼は箇条書きにします。細部は省きません。",
+  "settings.dictation.instructions.requests": "依頼の整理テンプレートを入れる",
+  "settings.dictation.instructions.reset": "標準に戻す",
   "composer.dictation.start": "音声入力",
   "composer.dictation.stop": "音声入力を停止",
   "composer.dictation.preparing": "音声入力を準備しています…",

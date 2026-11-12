@@ -1391,7 +1391,7 @@ export function make(options: ClientOptions) {
             {
               method: "POST",
               path: `/api/experimental/dictation/cleanup`,
-              body: { text: input["text"], model: input["model"] },
+              body: { text: input["text"], model: input["model"], instructions: input["instructions"] },
               successStatus: 200,
               declaredStatuses: [400, 401, 404, 422, 502, 503],
               empty: false,

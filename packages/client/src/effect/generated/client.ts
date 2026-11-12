@@ -1121,7 +1121,9 @@ const EndpointExperimentalDictationCancel =
 const EndpointExperimentalDictationCleanup =
   (raw: RawClient["server.dictation"]) => (input: ExperimentalDictationCleanupInput) =>
     preserveEffect<ExperimentalDictationCleanupOutput>()(
-      raw["dictation.cleanup"]({ payload: { text: input["text"], model: input["model"] } }).pipe(
+      raw["dictation.cleanup"]({
+        payload: { text: input["text"], model: input["model"], instructions: input["instructions"] },
+      }).pipe(
         Effect.mapError(mapClientError),
         Effect.map((value) => value.data),
       ),
