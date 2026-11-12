@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { LanguageModelV3FunctionTool, LanguageModelV3Prompt } from "@ai-sdk/provider"
 import { ToolNames } from "@opencode/core/plugin/provider/claude-agent/tools/names"
+import { PendingTools } from "@opencode/core/plugin/provider/claude-agent/tools/pending"
 import { ToolResult } from "@opencode/core/plugin/provider/claude-agent/tools/result"
 
 describe("tool bridge conversion", () => {
@@ -81,5 +82,40 @@ describe("tool bridge conversion", () => {
     })
     expect(image.mcp.content).toEqual([{ type: "image", mimeType: "image/png", data: "aW1hZ2U=" }])
     expect(image.replacement).toBeUndefined()
+  })
+})
+
+describe("pending tool calls", () => {
+  const result = (text: string): ToolResult.Result => ({
+    mcp: { content: [{ type: "text", text }] },
+    replacement: undefined,
+  })
+
+  test("parallel calls of one tool each receive the result of their own input", async () => {
+    const pending = PendingTools.make()
+    pending.before("a", "read", { path: "a.ts" })
+    pending.before("b", "read", { path: "b.ts" })
+    const b = pending.call("read", { path: "b.ts" })
+    const a = pending.call("read", { path: "a.ts" })
+    pending.resolve("a", result("A"))
+    pending.resolve("b", result("B"))
+    expect(await a).toEqual(result("A").mcp)
+    expect(await b).toEqual(result("B").mcp)
+  })
+
+  test("an unmatched input takes the only open call, but not one of several parallel calls", async () => {
+    const single = PendingTools.make()
+    single.before("a", "read", { path: "a.ts" })
+    const a = single.call("read", { path: "./a.ts" })
+    single.resolve("a", result("A"))
+    expect(await a).toEqual(result("A").mcp)
+
+    const parallel = PendingTools.make()
+    parallel.before("a", "read", { path: "a.ts" })
+    parallel.before("b", "read", { path: "b.ts" })
+    await expect(parallel.call("read", { path: "./a.ts" })).rejects.toThrow("without a PreToolUse call that matches")
+    const b = parallel.call("read", { path: "b.ts" })
+    parallel.resolve("b", result("B"))
+    expect(await b).toEqual(result("B").mcp)
   })
 })

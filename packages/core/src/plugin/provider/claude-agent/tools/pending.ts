@@ -1,6 +1,7 @@
 export * as PendingTools from "./pending.js"
 
 import type { CallToolResult } from "@modelcontextprotocol/server"
+import { Effect } from "effect"
 import type { ToolResult } from "./result.js"
 
 interface Call {
@@ -47,17 +48,22 @@ export function make(): Interface {
   // own. Its name and input pick an unclaimed call; identical calls are interchangeable, so the oldest one is enough.
   function take(name: string, input: unknown) {
     const wanted = canonical(input ?? {})
-    let fallback: Call | undefined
-    for (const call of calls.values()) {
-      if (call.claimed || call.name !== name) continue
-      if (call.input === wanted) {
-        call.claimed = true
-        return call
-      }
-      fallback ??= call
+    const open = calls
+      .values()
+      .filter((call) => !call.claimed && call.name === name)
+      .toArray()
+    const match = open.find((call) => call.input === wanted)
+    if (match) {
+      match.claimed = true
+      return match
     }
-    if (fallback) fallback.claimed = true
-    return fallback
+    // Serial tools have only one open call, so it is theirs even if its input was serialized differently. Among
+    // parallel calls a differing input cannot be attributed safely: answering the wrong one swaps their results.
+    if (open.length !== 1) return undefined
+    const call = open[0]!
+    Effect.runFork(Effect.logWarning("Claude tool call input differs from its PreToolUse input", { id: call.id, name }))
+    call.claimed = true
+    return call
   }
 
   return {
@@ -65,7 +71,7 @@ export function make(): Interface {
     before: expect,
     async call(name: string, input: unknown) {
       const call = take(name, input)
-      if (!call) throw new Error("Claude invoked an OpenCode tool without its PreToolUse ID")
+      if (!call) throw new Error(`Claude invoked ${name} without a PreToolUse call that matches its input`)
       const result = await call.result.promise
       if (result.replacement) replacements.set(call.id, result.replacement)
       calls.delete(call.id)
