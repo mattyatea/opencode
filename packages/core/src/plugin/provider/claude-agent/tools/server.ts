@@ -6,8 +6,10 @@ import type { Tool } from "@modelcontextprotocol/server"
 import { ToolNames } from "./names.js"
 import type { PendingTools } from "./pending.js"
 
+type FunctionTool = LanguageModelV3FunctionTool & { readonly readOnly?: boolean }
+
 export async function make(
-  tools: readonly LanguageModelV3FunctionTool[],
+  tools: readonly FunctionTool[],
   pending: PendingTools.Interface,
 ): Promise<McpSdkServerConfigWithInstance> {
   // Loaded on first use, so opencode starts without loading the MCP SDK.
@@ -18,8 +20,9 @@ export async function make(
       name: ToolNames.short(tool.name),
       description: ToolNames.description(tool),
       inputSchema: tool.inputSchema as Tool["inputSchema"],
-      // Claude serializes non-read-only tools, so each handler takes the ID from the preceding hook.
-      annotations: { readOnlyHint: false },
+      // Claude schedules read-only MCP tools concurrently, so each handler matches its own call by name and input.
+      // Everything else stays serial, which keeps writes and commands one at a time.
+      annotations: { readOnlyHint: tool.readOnly === true },
       _meta: { "anthropic/alwaysLoad": true, "anthropic/maxResultSizeChars": 500_000 },
     }),
   )
@@ -27,7 +30,7 @@ export async function make(
   server.setRequestHandler("tools/call", async (request) => {
     const name = ToolNames.PREFIX + request.params.name
     if (!ToolNames.original(name, tools)) throw new Error(`Claude Code called an unregistered OpenCode tool: ${name}`)
-    return pending.call(name)
+    return pending.call(name, request.params.arguments)
   })
   // Claude Agent SDK bundles its own MCP SDK types; its public instance type also names the higher-level McpServer.
   return { type: "sdk", name: "opencode", instance: server as unknown as McpSdkServerConfigWithInstance["instance"] }

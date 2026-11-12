@@ -8,7 +8,7 @@ import {
   type ToolCall,
 } from "@opencode/ai/effect"
 import type { Agent } from "@opencode/schema/agent"
-import { Cause, Clock, Data, Deferred, Effect, Exit, Fiber, Option, Stream } from "effect"
+import { Cause, Clock, Data, Deferred, Effect, Exit, Fiber, Option, Semaphore, Stream } from "effect"
 import { SessionError } from "@opencode/schema/session-error"
 import { Bus } from "../../bus.js"
 import { Permission } from "../../permission.js"
@@ -50,6 +50,8 @@ interface Input {
   readonly assistantMessageID: SessionMessage.ID
   readonly agent: Agent.ID
   readonly model: SessionRunnerModel.Resolved
+  /** Whether a response's tool calls run at the same time; see `Agent.Info.parallel_tool_calls`. Defaults to true. */
+  readonly parallelToolCalls?: boolean
   readonly prepared: Omit<SessionModelRequest.Prepared, "event">
   /** Set when this attempt runs because an earlier one in the step scheduled a retry. */
   readonly retryAttempt?: number
@@ -115,6 +117,9 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((settled) => (Option.isSome(settled) ? Effect.void : interruptTools)),
       )
     })
+    // Calls in one response run concurrently by default. A serial agent takes the same path while holding the only
+    // permit, so each call still settles its own `cancel` and the stream keeps reading while one is in flight.
+    const toolPermits = input.parallelToolCalls === false ? yield* Semaphore.make(1) : undefined
     const executeTool = (call: ToolCall, cancel: Cancel) => {
       if (input.prepared.request.toolChoice?.type === "none")
         return new Tool.Error({ message: "Tools are disabled after the maximum agent steps" })
@@ -144,18 +149,21 @@ export const make = Effect.gen(function* () {
             firstOutputAt = yield* Clock.currentTimeMillis
           if (event.type !== "tool-call" || event.providerExecuted) return
           const cancel = makeCancel()
+          const execution = Effect.uninterruptibleMask((restore) =>
+            restore(executeTool(event, cancel)).pipe(
+              Effect.flatMap(toolOutput.truncate),
+              Effect.flatMap((outcome) => publisher.toolExecution(event.id, event.name, outcome)),
+              Effect.catchTag("Tool.Error", (error) =>
+                publisher.failTool(event.id, toSessionError(error), error.metadata).pipe(Effect.asVoid),
+              ),
+            ),
+          )
           toolRuns.push({
             call: event,
             cancel,
-            fiber: yield* Effect.uninterruptibleMask((restore) =>
-              restore(executeTool(event, cancel)).pipe(
-                Effect.flatMap(toolOutput.truncate),
-                Effect.flatMap((outcome) => publisher.toolExecution(event.id, event.name, outcome)),
-                Effect.catchTag("Tool.Error", (error) =>
-                  publisher.failTool(event.id, toSessionError(error), error.metadata).pipe(Effect.asVoid),
-                ),
-              ),
-            ).pipe(Effect.forkScoped),
+            fiber: yield* (toolPermits === undefined ? execution : toolPermits.withPermits(1)(execution)).pipe(
+              Effect.forkScoped,
+            ),
           })
         }),
       ),

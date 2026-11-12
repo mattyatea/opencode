@@ -98,7 +98,7 @@ export const Plugin = {
       .transform((editor) =>
         editor.add({
           name,
-          options: { codemode: false },
+          options: { codemode: false, readOnly: true },
           description:
             'Search file contents with ripgrep regex or literal text; reuse known owner paths via `path`/`include`, widen scope if needed, and match declaration syntax—not references/imports—when locating definitions. Use output="files" only to locate files, not matched code or nearby values; use default content with `context` for local facts, and read the file for larger bodies.',
           input: Input,

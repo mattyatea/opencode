@@ -68,6 +68,8 @@ export interface NormalizedResult extends Tool.Result {
 
 export interface Snapshot {
   readonly definitions: ReadonlyArray<ToolDefinition>
+  /** The registry namespace of each advertised definition, keyed by its advertised name. */
+  readonly namespaces?: ReadonlyMap<string, string>
   readonly codeModeCatalog?: CodeModeCatalog.Inventory
   readonly execute: (input: {
     readonly sessionID: SessionSchema.ID
@@ -296,6 +298,13 @@ const layer = Layer.effect(
             }
           return {
             ...(codeModeCatalog === undefined ? {} : { codeModeCatalog }),
+            namespaces: new Map(
+              Array.from(active).flatMap(([name, tool]) => {
+                const namespace = tool.options?.namespace
+
+                return namespace === undefined ? [] : [[name, namespace] as const]
+              }),
+            ),
             definitions: [
               ...Array.from(direct)
                 .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))

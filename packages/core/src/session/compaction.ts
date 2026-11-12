@@ -3,14 +3,12 @@ export * as SessionCompaction from "./compaction.js"
 import {
   ai,
   AIError,
-  type ContentPart,
   InvalidProviderOutputError,
   isContextOverflowFailure,
   LLMClient,
   LLMEvent,
   type LLMRequest,
   Message,
-  type ToolEntry,
   UnknownProviderError,
   type Usage,
 } from "@opencode/ai/effect"
@@ -33,6 +31,7 @@ import { SessionEvent } from "./event.js"
 import { SessionHistory } from "./history.js"
 import type { SessionMessage } from "./message.js"
 import { SessionModelRequest } from "./model-request.js"
+import { estimateMessage, estimateRequest } from "./estimate.js"
 import { SessionRunnerModel } from "./runner/model.js"
 import { SessionRunnerRetry } from "./runner/retry.js"
 import { toLLMMessages } from "./runner/to-llm-message.js"
@@ -155,8 +154,6 @@ const OMITTED = 4
 const TRANSCRIPT_LEVELS = [0, OUTPUTS_CLIPPED, OUTPUTS_REMOVED, USER_ONLY, OMITTED]
 /** Characters kept, from the start and end, of a cut tool input, tool output, or user message. */
 const TRANSCRIPT_CLIP = 2_000
-const IMAGE_TOKEN_ESTIMATE = 1_500
-const PDF_TOKEN_ESTIMATE = 2_000
 /**
  * Tokens before the ceiling at which a background summary starts. Writing one takes 30–60 s, and in that time the
  * conversation grows by a few thousand tokens at the median but by 25k or more one time in twenty, when large file
@@ -1265,44 +1262,4 @@ const fitOutput = (request: LLMRequest, limit: SessionContext.Loaded["model"]["l
   )
   if (maxTokens === current) return request
   return { ...request, maxTokens }
-}
-
-const estimateRequest = (request: Pick<LLMRequest, "system" | "tools" | "messages">) =>
-  request.system.reduce((sum, part) => sum + Token.estimate(part.text), 0) +
-  request.tools.reduce((sum, tool) => sum + estimateTool(tool), 0) +
-  request.messages.reduce((sum, message) => sum + estimateMessage(message), 0)
-
-/** Only what providers receive; `metadata` and `native` stay local. */
-const estimateTool = (tool: ToolEntry): number => {
-  if (tool.type === "tool") return Token.estimate(tool.name + tool.description + JSON.stringify(tool.inputSchema))
-  return (
-    Token.estimate(tool.name + (tool.description ?? "")) +
-    tool.tools.reduce((sum, entry) => sum + estimateTool(entry), 0)
-  )
-}
-
-const estimateMessage = (message: Message) => message.content.reduce((sum, part) => sum + estimatePart(part), 0)
-
-const estimatePart = (part: ContentPart): number => {
-  // An encrypted native compaction has no locally measurable size.
-  if (part.type === "compaction") return Token.estimate(part.text ?? "")
-  if (part.type === "effort") return 0
-  if (part.type === "text" || part.type === "reasoning") return Token.estimate(part.text)
-  if (part.type === "media") return estimateMedia(part.media.mediaType)
-  if (part.type === "tool-call") return Token.estimate(part.name + (JSON.stringify(part.input) ?? ""))
-
-  if (part.result.type === "content")
-    return part.result.value.reduce(
-      (sum, content) => sum + (content.type === "text" ? Token.estimate(content.text) : estimateMedia(content.mime)),
-      0,
-    )
-  const value = part.result.value
-  return Token.estimate(typeof value === "string" ? value : (JSON.stringify(value) ?? ""))
-}
-
-const estimateMedia = (mime: string) => {
-  const type = mime.toLowerCase()
-  if (type.startsWith("image/")) return IMAGE_TOKEN_ESTIMATE
-  if (type === "application/pdf") return PDF_TOKEN_ESTIMATE
-  return 0
 }

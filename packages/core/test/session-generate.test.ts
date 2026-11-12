@@ -498,3 +498,55 @@ it.effect(
     }),
   { timeout: 15_000 },
 )
+
+it.effect("sizes the next request by context part", () =>
+  Effect.gen(function* () {
+    instruction = "Initial context"
+    const { bus, db, instructions } = yield* setup
+    yield* InstructionState.prepare(db, bus, instructions, sessionID)
+    const user = SessionMessage.ID.create()
+    yield* bus.publish(SessionEvent.InboxEnqueued, {
+      sessionID,
+      inboxID: user,
+      item: { type: "user", payload: { text: "Explain the context window" }, delivery: "steer" },
+    })
+    yield* bus.publish(SessionEvent.InboxDelivered, { sessionID, inboxID: user })
+    const context = yield* SessionContext.Service
+    const beforeStep = yield* context.breakdown(sessionID)
+    expect(beforeStep.measured).toBe(0)
+    expect(beforeStep.used).toBeGreaterThan(0)
+    expect(beforeStep.parts.reduce((sum, part) => sum + part.tokens, 0)).toBe(beforeStep.used)
+    const assistant = SessionMessage.ID.create()
+    yield* bus.publish(SessionEvent.Step.Started, {
+      sessionID,
+      assistantMessageID: assistant,
+      agent: Agent.ID.make("build"),
+      model: { id: ID.make("generate-model"), providerID: Provider.ID.make("test") },
+      started: 0,
+    })
+    yield* bus.publish(SessionEvent.Text.Started, { sessionID, assistantMessageID: assistant, ordinal: 0 })
+    yield* bus.publish(SessionEvent.Text.Ended, {
+      sessionID,
+      assistantMessageID: assistant,
+      ordinal: 0,
+      text: "The context window holds the prompt.",
+    })
+    yield* bus.publish(SessionEvent.Step.Ended, {
+      sessionID,
+      assistantMessageID: assistant,
+      finish: "stop",
+      cost: Money.USD.make(0),
+      tokens: { input: 1_000, output: 20, reasoning: 0, cache: { read: 200, write: 0 } },
+    })
+
+    const breakdown = yield* context.breakdown(sessionID)
+
+    expect(breakdown.limit).toBe(200_000)
+    expect(breakdown.measured).toBe(1_220)
+    expect(breakdown.used).toBeGreaterThanOrEqual(breakdown.measured)
+    expect(breakdown.parts.map((part) => part.id)).toContain("messages")
+    expect(breakdown.parts.map((part) => part.id)).toContain("system-prompt")
+    expect(breakdown.parts.reduce((sum, part) => sum + part.tokens, 0)).toBe(breakdown.used)
+    expect(breakdown.free).toBe(200_000 - breakdown.used)
+  }),
+)

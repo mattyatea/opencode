@@ -670,12 +670,13 @@ function toolOutput(result: ToolResultValue) {
   }
 }
 
-function tool(input: ToolDefinition): LanguageModelV3FunctionTool {
+function tool(input: ToolDefinition): LanguageModelV3FunctionTool & { readonly readOnly?: boolean } {
   return {
     type: "function",
     name: input.name,
     description: input.description,
     inputSchema: input.inputSchema as JSONSchema7,
+    ...(input.readOnly === undefined ? {} : { readOnly: input.readOnly }),
   }
 }
 

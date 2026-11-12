@@ -25,6 +25,7 @@ export const definition = (tool: Tool.Info<any, any>): ToolDefinition => ({
   description: tool.description,
   inputSchema: inputJsonSchema(tool.input),
   ...(tool.freeform && { freeform: tool.freeform }),
+  ...(tool.options?.readOnly === true && { readOnly: true }),
   ...(tool.output === undefined ? {} : { outputSchema: outputJsonSchema(tool.output) }),
 })
 

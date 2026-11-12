@@ -260,6 +260,9 @@ const layer = Layer.effect(
         }
         yield* compaction.precompute(Effect.succeed(loaded), estimate)
         const stepLimitReached = loaded.agent.info.steps !== undefined && step >= loaded.agent.info.steps
+        // Independent calls run concurrently by default. `"auto"` leaves the provider request untouched; `true` also
+        // asks the provider to batch them, and `false` asks it not to and serializes the local calls.
+        const parallelToolCalls = loaded.agent.info.parallel_tool_calls ?? "auto"
         const transcript = SessionModelRequest.baseTranscript({
           agent: loaded.agent.info,
           model: loaded.model,
@@ -278,7 +281,11 @@ const layer = Layer.effect(
               ? [...transcript.messages, Message.assistant(MAX_STEPS_PROMPT)]
               : transcript.messages,
             // Keep tool definitions on the final Step to preserve the provider's cached prefix.
-            toolChoice: stepLimitReached ? "none" : undefined,
+            toolChoice: stepLimitReached
+              ? "none"
+              : parallelToolCalls === "auto"
+                ? undefined
+                : { type: "auto", disableParallelToolUse: parallelToolCalls === false },
             webSocket: "session",
             inputTokens: estimate,
           })
@@ -301,6 +308,7 @@ const layer = Layer.effect(
           assistantMessageID,
           agent: loaded.agent.id,
           model: loaded.model,
+          parallelToolCalls: parallelToolCalls !== false,
           prepared: {
             ...prepared,
             // A tool call can arrive during a reload; its permission check reads the session's agent.

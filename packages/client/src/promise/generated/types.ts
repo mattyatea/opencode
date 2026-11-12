@@ -33,6 +33,8 @@ export type ProviderEncoding = "zstd" | "gzip" | "none"
 
 export type AgentColor = string
 
+export type AgentParallelToolCalls = boolean | "auto"
+
 export type PermissionEffect = "allow" | "deny" | "ask"
 
 export type PluginID = string
@@ -151,6 +153,8 @@ export type SessionStatsToolUsage = {
 export type SessionStatsActivity = { date: string; steps: number }
 
 export type SessionStatsSkillUsage = { id: string; calls: number }
+
+export type SessionContextBreakdownEntry = { id: string; tokens: number }
 
 export type InstructionEntryKey = string
 
@@ -677,6 +681,8 @@ export type SessionStatsTools =
   | { mode: "summary"; totals: SessionStatsToolTotals }
   | { mode: "detail"; totals: SessionStatsToolTotals; usage: Array<SessionStatsToolUsage> }
 
+export type SessionContextBreakdownPart = { id: string; tokens: number; entries: Array<SessionContextBreakdownEntry> }
+
 export type InstructionEntryInfo = { key: InstructionEntryKey; value: JsonValue }
 
 export type InstructionEntrySnapshot = Array<{ key: InstructionEntryKey; value: JsonValue; removed: boolean }>
@@ -1183,6 +1189,16 @@ export type FormState =
   | { status: "pending" }
   | { status: "answered"; answer: FormAnswer }
   | { status: "cancelled"; message?: string }
+
+export type SessionContextBreakdown = {
+  limit: number
+  inputLimit: number
+  measured: number
+  estimated: number
+  used: number
+  free: number
+  parts: Array<SessionContextBreakdownPart>
+}
 
 export type SessionAgentSelected = {
   id: EventID
@@ -2445,6 +2461,7 @@ export type ConfigEntry =
             hidden?: boolean
             color?: string
             steps?: number
+            parallel_tool_calls?: AgentParallelToolCalls
             disabled?: boolean
             permissions?: PermissionRuleset
           }
@@ -2478,6 +2495,7 @@ export type ConfigEntry =
           image?: { auto_resize?: boolean; max_width?: number; max_height?: number; max_base64_bytes?: number }
         }
         tool_output?: { max_lines?: number; max_bytes?: number }
+        tool_calls?: { parallel?: AgentParallelToolCalls }
         mcp?: {
           timeout?: { startup?: number; catalog?: number; execution?: number }
           servers?: {
@@ -2723,6 +2741,7 @@ export type AgentInfo = {
   hidden: boolean
   color?: AgentColor
   steps?: number
+  parallel_tool_calls?: AgentParallelToolCalls
   permissions: PermissionRuleset
 }
 
@@ -3924,6 +3943,10 @@ export type ExperimentalSessionWaitInput = { readonly sessionID: string }
 
 export type ExperimentalSessionWaitOutput = void
 
+export type ExperimentalSessionContextBreakdownInput = { readonly sessionID: string }
+
+export type ExperimentalSessionContextBreakdownOutput = { data: SessionContextBreakdown }["data"]
+
 export type ExperimentalSessionInstructionsEntryListInput = { readonly sessionID: string }
 
 export type ExperimentalSessionInstructionsEntryListOutput = { data: Array<InstructionEntryInfo> }["data"]
@@ -4971,6 +4994,12 @@ export type SessionWaitInput = ExperimentalSessionWaitInput
 
 /** @deprecated Use `ExperimentalSessionWaitOutput`. Removed in the next minor. */
 export type SessionWaitOutput = ExperimentalSessionWaitOutput
+
+/** @deprecated Use `ExperimentalSessionContextBreakdownInput`. Removed in the next minor. */
+export type SessionContextBreakdownInput = ExperimentalSessionContextBreakdownInput
+
+/** @deprecated Use `ExperimentalSessionContextBreakdownOutput`. Removed in the next minor. */
+export type SessionContextBreakdownOutput = ExperimentalSessionContextBreakdownOutput
 
 /** @deprecated Use `ExperimentalSessionInstructionsEntryListInput`. Removed in the next minor. */
 export type SessionInstructionsEntryListInput = ExperimentalSessionInstructionsEntryListInput
