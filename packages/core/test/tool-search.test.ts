@@ -128,18 +128,14 @@ describe("search tools", () => {
               expect(result).toMatchObject({
                 status: "completed",
                 output: {
-                  output: JSON.stringify(
-                    {
-                      counts: [
-                        { path: "one.ts", count: 2 },
-                        { path: "two.ts", count: 1 },
-                      ],
-                      truncated: false,
-                      limited: { count: 1, truncated: true },
-                    },
-                    null,
-                    2,
-                  ),
+                  output: JSON.stringify({
+                    counts: [
+                      { path: "one.ts", count: 2 },
+                      { path: "two.ts", count: 1 },
+                    ],
+                    truncated: false,
+                    limited: { count: 1, truncated: true },
+                  }),
                 },
               })
               expect(result.content?.[0]).not.toHaveProperty("text", expect.stringContaining("needle"))

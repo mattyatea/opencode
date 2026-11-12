@@ -274,7 +274,7 @@ describe("ReadTool", () => {
       })
       expect(computed).toMatchObject({
         status: "completed",
-        output: { output: JSON.stringify({ count: 50, total: 2450, truncated: false }, null, 2) },
+        output: { output: JSON.stringify({ count: 50, total: 2450, truncated: false }) },
       })
       expect(computed.content).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('"json-selection"') })]),
@@ -399,7 +399,7 @@ describe("ReadTool", () => {
       })
       expect(result).toMatchObject({
         status: "completed",
-        output: { output: JSON.stringify({ path: "data.json", count: 50, total: 2450 }, null, 2) },
+        output: { output: JSON.stringify({ path: "data.json", count: 50, total: 2450 }) },
       })
       expect(result.content?.[0]).not.toHaveProperty("text", expect.stringContaining("active"))
       expect(assertions).toMatchObject([{ action: "read", sessionID, source: { id: "call-json-reduce" } }])
@@ -1129,9 +1129,10 @@ describe("ReadTool", () => {
         )
         expect(yield* readMissing(tmp.path, "short/ui.ts")).toBe("File not found: short/ui.ts")
         // Case-insensitive filesystems, such as macOS by default, simply read the file.
-        expect([undefined, `File not found: case/readme.md\n\nDid you mean one of these?\n${path.join("case", "README.md")}`]).toContain(
-          yield* readMissing(tmp.path, "case/readme.md"),
-        )
+        expect([
+          undefined,
+          `File not found: case/readme.md\n\nDid you mean one of these?\n${path.join("case", "README.md")}`,
+        ]).toContain(yield* readMissing(tmp.path, "case/readme.md"))
       }),
     ),
   )

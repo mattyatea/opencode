@@ -146,14 +146,10 @@ describe("CodeModeTools", () => {
       expect(result).toMatchObject({
         status: "completed",
         output: {
-          output: JSON.stringify(
-            [
-              { items: [], truncated: true },
-              { items: [], truncated: true },
-            ],
-            null,
-            2,
-          ),
+          output: JSON.stringify([
+            { items: [], truncated: true },
+            { items: [], truncated: true },
+          ]),
         },
       })
     }).pipe(Effect.scoped, Effect.provide(layer)),

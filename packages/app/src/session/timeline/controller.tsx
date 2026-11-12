@@ -40,6 +40,7 @@ import {
   type SessionHeaderTitleEvent,
 } from "./header-actions-machine"
 import { createTimelineProjection } from "./projection"
+import { createNextTimelineProjection } from "@opencode/session-ui/timeline-next"
 import { useServer } from "@/runtime/server/current"
 import type { ReasoningMode } from "@opencode/session-ui/timeline/projection"
 
@@ -74,7 +75,12 @@ export type TimelineSessionSource = {
   history: Pick<SessionModel["history"], "messages">
 }
 
-export function createTimelineController(input: { session: TimelineSessionSource; active: Accessor<boolean> }) {
+export function createTimelineController(input: {
+  session: TimelineSessionSource
+  active: Accessor<boolean>
+  /** Whether this timeline is the New timeline experiment. */
+  next: boolean
+}) {
   const navigate = useNavigate()
   const sdk = useWorkspaceLocation()
   const serverSDK = useServerSDK()
@@ -238,17 +244,23 @@ export function createTimelineController(input: { session: TimelineSessionSource
   const shellToolPartsExpanded = () => timelineDetail().shell.details === "expanded"
   const editToolPartsExpanded = () => timelineDetail().edit.details === "expanded"
 
-  const projection = createTimelineProjection({
+  const projectionInput = {
     sessionMessages: projectedMessages,
     status: input.session.data.status,
-    reasoningMode,
-    shellToolDefaultOpen: shellToolPartsExpanded,
-    editToolDefaultOpen: editToolPartsExpanded,
     timelineDetail,
     pendingInputIDs,
     queuedCompactionIDs,
     turnDiffs: settings.general.showTurnDiffs,
-  })
+  }
+
+  const projection = input.next
+    ? createNextTimelineProjection(projectionInput)
+    : createTimelineProjection({
+        ...projectionInput,
+        reasoningMode,
+        shellToolDefaultOpen: shellToolPartsExpanded,
+        editToolDefaultOpen: editToolPartsExpanded,
+      })
 
   const errorMessage = (cause: unknown) =>
     Option.match(decodeErrorData(cause), {
