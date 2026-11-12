@@ -1210,6 +1210,7 @@ export type SessionContextBreakdown = {
   measured: number
   estimated: number
   used: number
+  window: number
   free: number
   parts: Array<SessionContextBreakdownPart>
 }

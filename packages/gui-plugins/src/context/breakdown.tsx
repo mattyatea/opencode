@@ -155,9 +155,9 @@ export function ContextWindow(props: { session: MountedSession }) {
           >
             {(data) => (
               <div class="text-16-medium text-text-strong">
-                <Show when={data().limit > 0} fallback={ctx.t("contextWindow.estimated")}>
+                <Show when={data().window > 0} fallback={ctx.t("contextWindow.estimated")}>
                   {ctx.t("contextWindow.percent", {
-                    percent: percent(data().used, data().limit) ?? "0",
+                    percent: percent(data().used, data().window) ?? "0",
                   })}
                 </Show>
               </div>
@@ -168,9 +168,9 @@ export function ContextWindow(props: { session: MountedSession }) {
           {(data) => (
             <div class="shrink-0 text-end text-12-regular tabular-nums text-text-weak">
               {compact().format(data().used)}
-              <Show when={data().limit > 0}>
+              <Show when={data().window > 0}>
                 {" / "}
-                {compact().format(data().limit)}
+                {compact().format(data().window)}
               </Show>
             </div>
           )}
@@ -192,7 +192,7 @@ export function ContextWindow(props: { session: MountedSession }) {
 
       <Show when={breakdown.latest}>
         {(data) => {
-          const scale = () => (data().limit > 0 ? data().limit : data().used)
+          const scale = () => (data().window > 0 ? data().window : data().used)
           const share = (tokens: number) => (scale() > 0 ? Math.max(0, (tokens / scale()) * 100) : 0)
 
           return (
@@ -220,13 +220,13 @@ export function ContextWindow(props: { session: MountedSession }) {
                       entries={part.entries}
                       label={partLabel(part.id)}
                       entryLabel={entryLabel}
-                      percentOf={(tokens) => percent(tokens, data().limit)}
+                      percentOf={(tokens) => percent(tokens, data().window)}
                       compact={compact()}
                       exact={exact()}
                     />
                   )}
                 </For>
-                <Show when={data().limit > 0}>
+                <Show when={data().window > 0}>
                   <div class="flex h-7 items-center gap-2.5 text-[13px] font-[440] leading-[var(--line-height-compact)] tracking-[-0.04px]">
                     <span class="size-2 shrink-0 rounded-[2px] bg-v2-background-bg-layer-04" />
                     <span class="min-w-0 truncate text-v2-text-text-base">{ctx.t("contextWindow.free")}</span>
@@ -234,7 +234,7 @@ export function ContextWindow(props: { session: MountedSession }) {
                       {compact().format(data().free)}
                     </span>
                     <span class="w-11 shrink-0 text-end tabular-nums text-v2-text-text-muted">
-                      {percent(data().free, data().limit)}%
+                      {percent(data().free, data().window)}%
                     </span>
                   </div>
                 </Show>

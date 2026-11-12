@@ -68,7 +68,9 @@ export interface Breakdown {
   readonly estimated: number
   /** The prompt's size: measured plus estimated, or the whole estimate before the first response. */
   readonly used: number
-  /** The prompt room left: the smaller of `limit` and `inputLimit` minus `used`, never negative; 0 when both are unknown. */
+  /** The largest prompt the model takes: the smaller of `limit` and `inputLimit`, or whichever is known; 0 when neither is. */
+  readonly window: number
+  /** `window - used`, never negative; 0 when the window is unknown. */
   readonly free: number
   /** The parts of the request, in display order. */
   readonly parts: ReadonlyArray<BreakdownPart>
@@ -318,14 +320,15 @@ const breakdownOf = (loaded: Loaded, mcpNamespaces: ReadonlySet<string>): Breakd
         model: loaded.model,
         tools: loaded.tools,
         initial: [],
-        messages: loaded.messages.slice(anchorIndex + 1),
+        messages: loaded.messages.slice(anchorIndex),
       })
     : undefined
   const added = after
     ? composition({
         system: [],
         tools: [],
-        messages: after.messages,
+        // `measured` covers the anchor's reply, but not its local tool results, which the provider never saw.
+        messages: after.messages.filter((message) => message.role !== "assistant" || message.id !== anchor?.id),
         initial: [],
         namespaces: undefined,
         mcpNamespaces,
@@ -368,6 +371,7 @@ const breakdownOf = (loaded: Loaded, mcpNamespaces: ReadonlySet<string>): Breakd
     measured,
     estimated,
     used,
+    window,
     free: window > 0 ? Math.max(0, window - used) : 0,
     parts: BREAKDOWN_ORDER.flatMap((id) => {
       const part = parts.get(id)
