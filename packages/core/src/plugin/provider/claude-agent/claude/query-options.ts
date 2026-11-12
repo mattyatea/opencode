@@ -13,7 +13,8 @@ const ISOLATION_ENV = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
   DISABLE_AUTO_COMPACT: "1",
   CLAUDE_CODE_ENABLE_AWAY_SUMMARY: "0",
-  // Would defer opencode's own tools too; MCP tools are already deferred by Code Mode
+  // Defers nothing here: every opencode tool sets alwaysLoad (tools/server.ts). Kept off so requests never carry
+  // tool search, which some gateways and providers reject. MCP tools are deferred by Code Mode unless `codemode: false`.
   ENABLE_TOOL_SEARCH: "false",
   CLAUDE_CODE_DISABLE_ADVISOR_TOOL: "1",
   CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1",
