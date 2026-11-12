@@ -289,7 +289,9 @@ const INSTRUCTION_PART: Record<Instructions.Category, string> = {
 const breakdownOf = (loaded: Loaded, mcpNamespaces: ReadonlySet<string>): Breakdown => {
   const limit = loaded.model.limit.context
   const inputLimit = loaded.model.limit.input ?? 0
-  const anchorIndex = loaded.messages.findLastIndex((message) => hasMeasuredPrompt(message, loaded.model.ref))
+  const anchorIndex = loaded.messages.findLastIndex((message) =>
+    SessionHistory.hasMeasuredPrompt(message, loaded.model.ref),
+  )
   const anchor = anchorIndex === -1 ? undefined : loaded.messages[anchorIndex]
   const measured = anchor?.type === "assistant" && anchor.tokens ? tokenTotal(anchor.tokens) : 0
   // The anchor's count covers the prompt before its own response: the base system prompt, instructions, tools, and
@@ -487,18 +489,6 @@ const adjustParts = (parts: BreakdownParts, difference: number) => {
   if (!part) return
   part.tokens = Math.max(0, part.tokens + difference)
 }
-
-const hasMeasuredPrompt = (message: SessionMessage.Info, model: { readonly providerID: string; readonly id: string }) =>
-  message.type === "assistant" &&
-  message.model.providerID === model.providerID &&
-  !message.error &&
-  message.tokens !== undefined &&
-  promptTokens(message.tokens) > 0
-
-const promptTokens = (tokens: {
-  readonly input: number
-  readonly cache: { readonly read: number; readonly write: number }
-}) => tokens.input + tokens.cache.read + tokens.cache.write
 
 const tokenTotal = (tokens: {
   readonly input: number

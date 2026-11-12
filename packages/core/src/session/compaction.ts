@@ -382,11 +382,13 @@ export const layer = Layer.effect(
       if (!Number.isFinite(ceiling)) return
       const estimate = given ?? estimatePrompt(context)
       if (due(context, ceiling, estimate)) return
-      const first = context.messages.find((message) => hasMeasuredPrompt(message, context.model.ref))
+      const first = context.messages.find((message) => SessionHistory.hasMeasuredPrompt(message, context.model.ref))
       const cycleStart = first?.type === "assistant" && first.tokens ? promptTokens(first.tokens) : 0
       if (total(estimate) < ceiling - Math.min(PRECOMPUTE_LEAD, (ceiling - cycleStart) / 2)) return
 
-      const anchorIndex = context.messages.findLastIndex((message) => hasMeasuredPrompt(message, context.model.ref))
+      const anchorIndex = context.messages.findLastIndex((message) =>
+        SessionHistory.hasMeasuredPrompt(message, context.model.ref),
+      )
       const anchor = context.messages[anchorIndex]
       if (anchorIndex <= 0 || anchor?.type !== "assistant" || !anchor.tokens) return
 
@@ -404,7 +406,8 @@ export const layer = Layer.effect(
         precomputed.delete(sessionID)
       }
       // After a model switch nothing is cached for the new model yet; wait until its first response has written it.
-      if (anchor.model.id !== context.model.ref.id || anchor.model.variant !== context.model.ref.variant) return
+      // The anchor is always the current model's, but it can predate a switch of variant.
+      if (anchor.model.variant !== context.model.ref.variant) return
       // The same once the latest response is older than the cache lifetime, as when the user comes back from a
       // break: the summary would write the whole prefix again, at the same time as the next request.
       const age = (yield* Clock.currentTimeMillis) - DateTime.toEpochMillis(anchor.time.created)
@@ -465,7 +468,7 @@ export const layer = Layer.effect(
       const last = messages.at(-1)
       if (last?.type === "compaction" && last.status === "completed") return false
       // An encrypted native window estimates as nothing, so wait for a response to measure it.
-      const measured = messages.findLastIndex((message) => hasMeasuredPrompt(message, context.model.ref))
+      const measured = messages.findLastIndex((message) => SessionHistory.hasMeasuredPrompt(message, context.model.ref))
       if (measured < messages.findLastIndex(SessionHistory.isNativeCompaction)) return false
       return total(estimate ?? estimatePrompt(context)) >= ceiling
     }
@@ -1161,7 +1164,9 @@ export const estimateContext = (context: SessionContext.Loaded) => total(estimat
 
 /** The size of the prompt `context` sends. */
 export const estimatePrompt = (context: SessionContext.Loaded): Estimate => {
-  const anchorIndex = context.messages.findLastIndex((message) => hasMeasuredPrompt(message, context.model.ref))
+  const anchorIndex = context.messages.findLastIndex((message) =>
+    SessionHistory.hasMeasuredPrompt(message, context.model.ref),
+  )
   const anchor = context.messages[anchorIndex]
   const base = transcript(context, context.messages.slice(Math.max(0, anchorIndex)))
   // TODO: Pass compaction history the runner has already shaped. This and `recentUserMessages` repeat the
@@ -1216,23 +1221,11 @@ const summaryRoom = (limit: SessionContext.Loaded["model"]["limit"], output = RE
 const inputWindow = (limit: SessionContext.Loaded["model"]["limit"]) =>
   limit.input && limit.context ? Math.min(limit.input, limit.context) : limit.input || limit.context
 
-/**
- * Another provider's count may describe a native window this model cannot replay. History then holds the original
- * messages that window stood for, which the count leaves out, so only the current provider's counts are trusted.
- */
-const hasMeasuredPrompt = (message: SessionMessage.Info, model: SessionContext.Loaded["model"]["ref"]) =>
-  message.type === "assistant" &&
-  message.model.providerID === model.providerID &&
-  !message.error &&
-  message.tokens !== undefined &&
-  promptTokens(message.tokens) > 0
-
 /** The prompt size, only while the model, variant and agent that were measured still match; they shape the request. */
 const measuredPrompt = (context: SessionContext.Loaded) => {
-  const anchor = context.messages.findLast((message) => hasMeasuredPrompt(message, context.model.ref))
+  const anchor = context.messages.findLast((message) => SessionHistory.hasMeasuredPrompt(message, context.model.ref))
   if (
     anchor?.type !== "assistant" ||
-    anchor.model.id !== context.model.ref.id ||
     anchor.model.variant !== context.model.ref.variant ||
     anchor.agent !== context.agent.id
   )
