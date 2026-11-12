@@ -90,6 +90,8 @@ Set them on a model to override the provider's values for that model.
 - Claude Code's system prompt replaces OpenCode's built-in prompt. Custom agent prompts still apply.
 - Temperature, top-p, top-k, seed, and stop sequences are not supported.
 - Plugin `http.request` and `http.response` hooks do not run, because Claude Code makes the API calls.
+- A change to the system prompt restarts Claude Code. Plugins that add context on every prompt, such as recalled
+  memories, should add it to the user message instead. The server log records each restart and what changed.
 - Claude Code features such as `/usage`, `/loop`, auto mode, and agent teams are not available.
 
 ## Errors
