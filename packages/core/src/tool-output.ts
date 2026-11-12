@@ -78,14 +78,24 @@ const layer = Layer.effect(
           ? result
           : { ...result, metadata: { ...result.metadata, truncated: false } }
 
-      const kept: string[] = []
-      let bytes = 0
-      for (const line of lines.slice(0, limits.maxLines)) {
-        const size = Buffer.byteLength(line, "utf-8") + (kept.length > 0 ? 1 : 0)
-        if (bytes + size > limits.maxBytes) break
-        kept.push(line)
-        bytes += size
-      }
+      // Keep both ends: failures in test and build logs usually come last, and the shell tool's own tail view
+      // ends with its truncation notice and exit status. The tail takes whatever budget the head leaves.
+      const first = fit(lines, Math.ceil(limits.maxLines / 2), limits.maxBytes / 2)
+      const last = fit(
+        lines.slice(first.lines).reverse(),
+        limits.maxLines - first.lines,
+        // The newline joining the two ends counts too.
+        limits.maxBytes - first.bytes - (first.lines > 0 ? 1 : 0),
+      )
+      // Both ends meet only when the trailing newline alone was over budget: show every line and mark the end.
+      const covered = first.lines + last.lines === lines.length
+      const headLines = covered ? lines.length : first.lines
+      const tailLines = covered ? 0 : last.lines
+      const headEnd = lines.slice(0, headLines).join("\n").length
+      const tailStart =
+        tailLines === 0
+          ? text.length
+          : text.length - lines.slice(-tailLines).join("\n").length - (text.endsWith("\n") ? 1 : 0)
       const previous = result.metadata?.outputPath
       const retained = typeof previous === "string" && (yield* fs.exists(previous).pipe(Effect.orDie))
       const file = retained ? previous : path.join(directory, fileName())
@@ -93,28 +103,34 @@ const layer = Layer.effect(
         yield* fs.ensureDir(directory).pipe(Effect.orDie)
         yield* fs.writeFileString(file, text).pipe(Effect.orDie)
       }
-      const shown = kept.length > 0 ? `lines 1-${kept.length}` : "0 lines"
+      const ranges = [
+        ...(headLines > 0 ? [`1-${headLines}`] : []),
+        ...(tailLines > 0 ? [`${lines.length - tailLines + 1}-${lines.length}`] : []),
+      ]
+      const shown = ranges.length > 0 ? `lines ${ranges.join(" and ")}` : "0 lines"
       const marker = `[showing ${shown} of ${lines.length}; full output saved to ${file}]`
       const bounded: Tool.Content[] = []
-      let remaining = kept.join("\n").length
-      let seenText = false
+      // Offset of each text item in `text`, which joins them with a newline.
+      let start = 0
       let marked = false
       for (const item of content) {
         if (item.type === "file") {
           bounded.push(item)
           continue
         }
-        if (seenText && remaining > 0) remaining--
-        seenText = true
-        if (remaining >= item.text.length) {
+        const end = start + item.text.length
+        const offset = start
+        start = end + 1
+        if (end <= headEnd || offset >= tailStart) {
           bounded.push(item)
-          remaining -= item.text.length
           continue
         }
-        if (remaining > 0) bounded.push({ ...item, text: item.text.slice(0, remaining) })
+        const before = item.text.slice(0, Math.max(0, headEnd - offset))
+        const after = item.text.slice(Math.max(0, tailStart - offset))
+        if (before) bounded.push({ ...item, text: before })
         if (!marked) bounded.push({ type: "text", text: marker })
-        remaining = 0
         marked = true
+        if (after) bounded.push({ ...item, text: after })
       }
       if (!marked) bounded.push({ type: "text", text: marker })
       return {
@@ -162,3 +178,16 @@ export const node = makeLocationNode({
   layer,
   deps: [FSUtil.node, Global.node, cleanupNode],
 })
+
+/** How many whole lines from the start of `lines` fit the budget, and their size joined by newlines. */
+function fit(lines: string[], maxLines: number, maxBytes: number) {
+  let count = 0
+  let bytes = 0
+  for (const line of lines.slice(0, maxLines)) {
+    const size = Buffer.byteLength(line, "utf-8") + (count > 0 ? 1 : 0)
+    if (bytes + size > maxBytes) break
+    count++
+    bytes += size
+  }
+  return { lines: count, bytes }
+}
