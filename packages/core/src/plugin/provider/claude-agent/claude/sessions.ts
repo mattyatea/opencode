@@ -45,7 +45,7 @@ interface LiveProcess {
   model: string
   effort?: Options["effort"]
   // Settings that need a new process to change. Model and effort change on the running one.
-  readonly launch: string
+  readonly launch: readonly string[]
   waiting?: string[]
 }
 
@@ -68,8 +68,15 @@ export interface Interface {
   readonly idle: (sessionID: string) => Effect.Effect<void>
 }
 
-const launch = (request: Request) =>
-  JSON.stringify([request.maxOutputTokens, request.connection, request.system, request.tools])
+const LAUNCH_FIELDS = ["maxOutputTokens", "connection", "system", "tools"] as const
+
+const launch = (request: Request) => LAUNCH_FIELDS.map((field) => JSON.stringify(request[field]))
+
+// Names only: connection values can hold credentials and the system prompt can be large.
+const launchChanges = (process: LiveProcess, request: Request) => {
+  const next = launch(request)
+  return LAUNCH_FIELDS.filter((_, index) => process.launch[index] !== next[index])
+}
 
 const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: toError })
@@ -384,8 +391,14 @@ export function registry() {
       // refused by the user. A step without tools (the step limit) still stops it, since the old process offers them.
       if (entry.process) {
         const parked = entry.process.waiting && entry.process.session.running && request.tools.length > 0
-        const needsRestart = entry.process.session.ended || (entry.process.launch !== launch(request) && !parked)
-        if (needsRestart) yield* stop(entry)
+        const ended = entry.process.session.ended
+        const changed = parked ? [] : launchChanges(entry.process, request)
+        if (ended || changed.length > 0) {
+          yield* Effect.logInfo("restarting Claude Code").pipe(
+            Effect.annotateLogs({ sessionID: request.sessionID, ended, changed: changed.join(",") }),
+          )
+          yield* stop(entry)
+        }
       }
 
       if (!request.sessionID) {
@@ -428,7 +441,7 @@ export function registry() {
       if (collected.aborted) {
         // A stopped OpenCode turn needs a fresh Claude turn; addUser would only steer the old one.
         // After a launch change it also needs a new process.
-        yield* live.launch === launch(request) ? interrupt(entry) : stop(entry)
+        yield* launchChanges(live, request).length === 0 ? interrupt(entry) : stop(entry)
         return { start, continuation: undefined }
       }
       return { start, continuation }

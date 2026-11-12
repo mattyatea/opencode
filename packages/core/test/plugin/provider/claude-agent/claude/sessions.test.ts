@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Fiber } from "effect"
+import { Effect, Fiber, Logger, References } from "effect"
 import { TestClock } from "effect/testing"
 import { ClaudeSessions } from "@opencode/core/plugin/provider/claude-agent/claude/sessions"
 import { ClaudeAgentLanguageModel } from "@opencode/core/plugin/provider/claude-agent/language-model/claude-agent-language-model"
@@ -290,7 +290,12 @@ describe("Claude sessions", () => {
         recorded(4),
         FakeClaude.expectInterrupt(),
       ])
-      const test = yield* TestSessions.start(claude)
+      const restarts: unknown[] = []
+      const logger = Logger.make((entry) => {
+        if (Array.isArray(entry.message) && entry.message[0] === "restarting Claude Code")
+          restarts.push(entry.fiber.getRef(References.CurrentLogAnnotations))
+      })
+      const test = yield* TestSessions.start(claude).pipe(Effect.provide(Logger.layer([logger])))
       const prompt = TestSessions.prompt("Remember CONTROL-OTTER. Reply only CONTROL-OTTER.")
       const settings = [
         { model: "haiku", effort: "low", maxOutputTokens: 2048 },
@@ -319,6 +324,11 @@ describe("Claude sessions", () => {
         )
       }
       expect(claude.runs).toHaveLength(3)
+      // Model and effort changes run live; only the output limit names a restart.
+      expect(restarts).toEqual([
+        { sessionID: "session-a", ended: false, changed: "maxOutputTokens" },
+        { sessionID: "session-a", ended: false, changed: "maxOutputTokens" },
+      ])
       const id = claude.runs[0]!.args.find((arg) => arg.startsWith("--session-id="))!.split("=")[1]
       const requests = claude.runs[0]!.received.map((message) => message.request)
       expect(requests).toContainEqual({ subtype: "set_model", model: "sonnet" })
