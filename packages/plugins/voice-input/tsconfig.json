@@ -10,5 +10,5 @@
     "noEmit": true,
     "strict": true
   },
-  "include": ["index.ts", "rpc.ts", "worker.ts", "i18n", "src", "test", "vite.config.ts"]
+  "include": ["index.ts", "cleanup.ts", "rpc.ts", "worker.ts", "i18n", "src", "test", "vite.config.ts"]
 }

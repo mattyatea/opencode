@@ -19,6 +19,7 @@
   },
   "files": [
     "index.ts",
+    "cleanup.ts",
     "rpc.ts",
     "worker.ts",
     "worker.py",

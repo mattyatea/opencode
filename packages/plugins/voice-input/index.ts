@@ -1,4 +1,6 @@
 import { Plugin } from "@opencode/plugin"
+import { Schema } from "effect"
+import { Cleanup, cleanup } from "./cleanup"
 import { Dictation } from "./rpc"
 import { acquire, script, WorkerError, type WorkerConfig } from "./worker"
 
@@ -10,6 +12,7 @@ export const MLX_AUDIO = "mlx-audio==0.6.5"
 export default Plugin.define({
   id: "voice-input",
   async setup(ctx) {
+    const editing = Schema.decodeUnknownSync(Cleanup)(ctx.options.cleanup ?? false)
     const lease = acquire(config(ctx.options))
     const failure = (error: unknown) =>
       error instanceof WorkerError
@@ -17,6 +20,14 @@ export default Plugin.define({
         : { message: error instanceof Error ? error.message : String(error), log: "" }
 
     await ctx.rpc.register(Dictation, {
+      languages: async () => ({ languages: await lease.worker.languages() }),
+      cleanup: async (input, call) => {
+        if (!editing) return { text: input.text }
+        return cleanup(input.text, editing.model, ctx.experimental.generate, call.signal).then(
+          (text) => ({ text }),
+          () => call.error("cleanup", "Could not clean up the transcript. The original text is kept.", { log: "" }),
+        )
+      },
       prepare: async (_input, call) => {
         if (process.platform !== "darwin" || process.arch !== "arm64")
           return call.error("worker", "Voice input runs MLX models, which need a Mac with Apple Silicon.", { log: "" })
@@ -29,7 +40,7 @@ export default Plugin.define({
         )
       },
       transcribe: async (input, call) =>
-        lease.worker.transcribe(input.session, input.audio, input.final).then(
+        lease.worker.transcribe(input.session, input.audio, input.final, input.language).then(
           (text) => ({ text }),
           (error) => {
             const detail = failure(error)
@@ -58,7 +69,7 @@ function config(options: Readonly<Record<string, unknown>>): WorkerConfig {
     executable: python ?? text("uv") ?? "uv",
     args: python ? [script] : ["run", "--no-project", "--python", "3.12", "--with", MLX_AUDIO, "python", script],
     model: text("model") ?? DEFAULT_MODEL,
-    language: text("language"),
+    language: text("language") === "auto" ? undefined : text("language"),
     hotwords,
   }
 }

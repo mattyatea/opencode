@@ -7,6 +7,17 @@ const Failure = Schema.toStandardSchemaV1(Schema.Struct({ log: Schema.String }))
 export const Dictation = Rpc.define({
   id: "voice-input",
   methods: {
+    /** The selected speech model's supported languages, read without loading its weights. */
+    languages: {
+      input: Schema.toStandardSchemaV1(Schema.Struct({})),
+      output: Schema.toStandardSchemaV1(Schema.Struct({ languages: Schema.Array(Schema.String) })),
+    },
+    /** Optional LLM edit after recording stops. Never called for live partials. */
+    cleanup: {
+      input: Schema.toStandardSchemaV1(Schema.Struct({ text: Schema.String })),
+      output: Schema.toStandardSchemaV1(Schema.Struct({ text: Schema.String })),
+      errors: { cleanup: Failure },
+    },
     /** Starts the local transcription worker and loads the model, downloading it on first use. */
     prepare: {
       input: Schema.toStandardSchemaV1(Schema.Struct({})),
@@ -19,7 +30,7 @@ export const Dictation = Rpc.define({
      */
     transcribe: {
       input: Schema.toStandardSchemaV1(
-        Schema.Struct({ session: Schema.String, audio: Schema.String, final: Schema.Boolean }),
+        Schema.Struct({ session: Schema.String, audio: Schema.String, final: Schema.Boolean, language: Schema.optional(Schema.String) }),
       ),
       output: Schema.toStandardSchemaV1(Schema.Struct({ text: Schema.String })),
       errors: { worker: Failure },

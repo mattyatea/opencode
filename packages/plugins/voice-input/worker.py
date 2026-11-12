@@ -72,11 +72,11 @@ def echoes_hotwords(text):
     return bool(words) and all(word.lower() in hotwords for word in words) and len(words) > 1
 
 
-def decode(audio):
+def decode(audio, language):
     rms = frames_rms(audio)
     if len(rms) == 0 or rms.max() < VOICE_RMS:
         return ""
-    text = load().generate(audio, language=LANGUAGE, hotwords=HOTWORDS or None, temperature=0.0).text.strip()
+    text = load().generate(audio, language=language, hotwords=HOTWORDS or None, temperature=0.0).text.strip()
     return "" if echoes_hotwords(text) else text
 
 
@@ -110,12 +110,15 @@ def pause_cut(audio):
 
 
 def transcribe(request):
+    language = request.get("language") or LANGUAGE
+    if language == "auto":
+        language = None
     session = sessions.setdefault(request["session"], {"committed": [], "segment": np.zeros(0, dtype=np.float32)})
     pcm = np.frombuffer(base64.b64decode(request.get("audio") or ""), dtype="<i2").astype(np.float32) / 32768.0
     session["segment"] = np.concatenate([session["segment"], pcm])
     cut = None if request.get("final") else pause_cut(session["segment"])
     if cut:
-        session["committed"].append(decode(session["segment"][:cut]))
+        session["committed"].append(decode(session["segment"][:cut], language))
         session["segment"] = session["segment"][cut:]
         session["shown"] = ""
     elif frames_rms(session["segment"]).max(initial=0) < VOICE_RMS and len(session["segment"]) > RATE:
@@ -123,10 +126,10 @@ def transcribe(request):
         session["segment"] = session["segment"][-RATE // 2 :]
     if not request.get("final") and len(session["segment"]) > SEGMENT_MAX:
         cut = split_point(session["segment"])
-        session["committed"].append(decode(session["segment"][:cut]))
+        session["committed"].append(decode(session["segment"][:cut], language))
         session["segment"] = session["segment"][cut:]
     final = request.get("final")
-    pending = "" if not final and len(session["segment"]) < PARTIAL_MIN else decode(session["segment"])
+    pending = "" if not final and len(session["segment"]) < PARTIAL_MIN else decode(session["segment"], language)
     # A partial pass that hears nothing new keeps the last words shown, so the prompt never blinks empty mid-phrase.
     if not final and not pending and session.get("shown"):
         pending = session["shown"]
@@ -139,6 +142,11 @@ def transcribe(request):
 
 def handle(request):
     op = request.get("op")
+    if op == "languages":
+        from huggingface_hub import hf_hub_download
+
+        with open(hf_hub_download(MODEL, "config.json"), encoding="utf-8") as config:
+            return {"languages": json.load(config).get("support_languages", [])}
     if op == "load":
         load()
         return {"model": MODEL}

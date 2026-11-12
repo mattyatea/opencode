@@ -102,11 +102,17 @@ export function createWorker(config: WorkerConfig) {
     })
 
   return {
+    /** Reads the model configuration only, not its weights. */
+    languages: () => request({ op: "languages" }).then((reply) => {
+      if (!Array.isArray(reply.languages) || !reply.languages.every((value) => typeof value === "string"))
+        throw new WorkerError("The model did not provide a supported language list.", tail())
+      return reply.languages.filter((value): value is string => typeof value === "string")
+    }),
     /** Starts the worker and loads the model. Resolves with the model's name. */
     load: () => request({ op: "load" }).then((reply) => String(reply.model)),
     /** Appends PCM audio to a dictation and resolves with its transcript so far. */
-    transcribe: (session: string, audio: string, final: boolean) =>
-      request({ op: "transcribe", session, audio, final }).then((reply) => String(reply.text ?? "")),
+    transcribe: (session: string, audio: string, final: boolean, language?: string) =>
+      request({ op: "transcribe", session, audio, final, language }).then((reply) => String(reply.text ?? "")),
     /** Drops a dictation. */
     cancel: (session: string) => request({ op: "cancel", session }).then(() => undefined),
     close: () => {

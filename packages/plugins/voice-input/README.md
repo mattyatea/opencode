@@ -27,8 +27,8 @@ Face cache on the first dictation; later dictations start in a few seconds.
       "options": {
         // A Hugging Face repo of an mlx-audio speech-to-text model.
         "model": "mlx-community/Qwen3-ASR-0.6B-8bit",
-        // A language name the model knows, e.g. "Japanese" or "English". Omit it to detect the language.
-        "language": "Japanese",
+        // Defaults to auto. The Voice input settings page overrides this per recording.
+        "language": "auto",
         // Terms the recognizer should prefer, e.g. identifiers from your project.
         "hotwords": ["TypeScript", "setState"],
         // A Python with mlx-audio installed, instead of uv.
@@ -44,7 +44,31 @@ Face cache on the first dictation; later dictations start in a few seconds.
 Hotwords pull similar-sounding speech toward themselves: with `OpenCode` as a hotword, a spoken "useEffect" came back as
 "OpenCode". List only terms you actually dictate.
 
+Settings → Voice input lets you select Auto (the initial value) or any language advertised by the model.
+The default Qwen3-ASR model advertises 30 languages, including Japanese, English and Korean.
+The list is read from its configuration, without downloading model weights.
+Selections are saved and take effect on the next recording.
+
 ## Model choice
+
+### Optional cleanup after dictation
+
+Set `options.cleanup` to an explicit small language model to remove fillers and organize the final transcript:
+
+```jsonc
+"cleanup": {
+  "model": { "providerID": "inception", "id": "mercury-3", "variant": "instant" }
+}
+```
+
+Use any text model configured in OpenCode, including Haiku, by setting its provider and model ids.
+Cleanup is disabled by default (`"cleanup": false`), and is never run on live partials.
+After stopping, the raw transcript is shown first, then replaced with the edited text.
+If generation fails or returns empty text, the original stays. Edits you type while waiting are not overwritten.
+Only the dictated text is sent, not the rest of the prompt or session history. Unlike local MLX transcription,
+this sends text to the chosen provider and uses its quota or incurs its normal generation charges.
+The model is instructed to preserve meaning, uncertainty, negations, numbers and technical identifiers, but
+this is not a guarantee: review the result before sending.
 
 Measured on an Apple M3 Pro (36 GB) with mlx-audio 0.6.5 and mlx-whisper 0.4.3, on five synthesized Japanese sentences
 that mix in English technical terms (macOS `say -v Kyoko`, 16 kHz), with eight hotwords:

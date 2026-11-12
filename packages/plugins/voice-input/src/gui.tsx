@@ -1,5 +1,6 @@
-import { createSignal, onCleanup, Show } from "solid-js"
-import { Command, Plugin, Slot, Style, type MountedSession, type SessionScreen } from "@opencode/plugin/gui"
+import { createSignal, onCleanup, onMount, Show } from "solid-js"
+import { Schema } from "effect"
+import { Command, Plugin, SettingsPage, Slot, Store, Style, type MountedSession, type SessionScreen } from "@opencode/plugin/gui"
 import { Dictation } from "../rpc"
 import en from "../i18n/en"
 import ja from "../i18n/ja"
@@ -18,6 +19,9 @@ type Phase = "idle" | "preparing" | "listening" | "finishing"
 
 export default Plugin.define({
   i18n: { en, ja },
+  stores: {
+    preferences: Store.global(Schema.Struct({ language: Schema.String }), { language: "auto" }),
+  },
   setup(ctx) {
     const [phase, setPhase] = createSignal<Phase>("idle")
     const [meter, setMeter] = createSignal(0)
@@ -36,6 +40,8 @@ export default Plugin.define({
       const rpc = ctx.client.rpc(Dictation)
       const id = `${session.key}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`
       const base = screen.composer.text()
+      // One language per recording, even if settings change while the user speaks.
+      const language = ctx.stores.preferences.value.language
       setOwner(session.key)
       setPhase("preparing")
 
@@ -94,7 +100,7 @@ export default Plugin.define({
         if (busy || ended || phase() !== "listening") return
         busy = true
         await rpc
-          .transcribe({ session: id, audio: take(), final: false }, { location })
+          .transcribe({ session: id, audio: take(), final: false, language }, { location })
           .then((result) => !ended && write(result.text))
           .catch((error: unknown) => {
             if (ended) return
@@ -122,9 +128,14 @@ export default Plugin.define({
         // Let a running partial pass land first, so the final pass gets the remaining audio in order.
         while (busy) await new Promise((resolve) => setTimeout(resolve, 20))
         await rpc
-          .transcribe({ session: id, audio: take(), final: true }, { location })
-          .then((result) => {
+          .transcribe({ session: id, audio: take(), final: true, language }, { location })
+          .then(async (result) => {
             write(result.text)
+            const original = withTranscript(base, result.text)
+            const cleaned = await rpc.cleanup({ text: result.text }, { location })
+            // Do not overwrite a user's edits or a different session while the model was working.
+            if (ctx.sessions.current()?.key === session.key && screen.composer.text() === original)
+              write(cleaned.text)
             screen.composer.focus()
           })
           .catch(fail)
@@ -162,6 +173,54 @@ export default Plugin.define({
     onCleanup(() => state.abort?.())
 
     ctx.add(Style, css)
+
+    ctx.add(SettingsPage, {
+      id: "voice",
+      get title() { return ctx.t("settings.title") },
+      icon: "waveform",
+      render: () => {
+        const [languages, setLanguages] = createSignal<readonly string[]>([])
+        const [loading, setLoading] = createSignal(false)
+        const [error, setError] = createSignal("")
+        const lifetime = new AbortController()
+        onCleanup(() => lifetime.abort())
+        const refresh = async () => {
+          setLoading(true)
+          setError("")
+          await ctx.client.rpc(Dictation).languages({}, { signal: lifetime.signal }).then(
+            (result) => { if (!lifetime.signal.aborted) setLanguages(result.languages) },
+            () => { if (!lifetime.signal.aborted) setError(ctx.t("settings.error")) },
+          )
+          if (!lifetime.signal.aborted) setLoading(false)
+        }
+        onMount(() => void refresh())
+        return (
+          <ctx.ui.SettingsLayout title={ctx.t("settings.title")}>
+            <ctx.ui.SettingsSection footer={error()}>
+              <ctx.ui.SettingsRow title={ctx.t("settings.language")} description={ctx.t("settings.description")}>
+                <ctx.ui.Select
+                  label={ctx.t("settings.language")}
+                  options={[
+                    { value: "auto", label: ctx.t("settings.auto") },
+                    ...languages().map((language) => ({
+                      value: language,
+                      label: Object.hasOwn(en, `language.${language}`) ? ctx.t(`language.${language}`) : language,
+                    })),
+                  ]}
+                  value={ctx.stores.preferences.value.language}
+                  onChange={(language) => void ctx.stores.preferences.update((draft) => { draft.language = language })}
+                />
+              </ctx.ui.SettingsRow>
+              <ctx.ui.SettingsRow title={ctx.t("settings.languages")} description={ctx.t("settings.download")}>
+                <ctx.ui.Button onClick={() => void refresh()} disabled={loading()}>
+                  {loading() ? ctx.t("settings.loading") : ctx.t("settings.reload")}
+                </ctx.ui.Button>
+              </ctx.ui.SettingsRow>
+            </ctx.ui.SettingsSection>
+          </ctx.ui.SettingsLayout>
+        )
+      },
+    })
 
     ctx.add(
       Command,
