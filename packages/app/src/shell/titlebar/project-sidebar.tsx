@@ -1,4 +1,4 @@
-import { createMemo, createResource, For, onCleanup, Show, startTransition } from "solid-js"
+import { createEffect, createMemo, createResource, For, onCleanup, Show, startTransition } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useQueries, useQueryClient } from "@tanstack/solid-query"
 import type { SessionInfo } from "@opencode/client/promise"
@@ -43,6 +43,7 @@ export function ProjectSidebar() {
   const [state, setState, , ready] = persisted(Persist.global("sidebar.project-sections"), ProjectSectionsState, {
     sections: [],
     order: [],
+    projects: [],
     assignments: {},
     collapsed: {},
     sessions: {},
@@ -97,13 +98,17 @@ export function ProjectSidebar() {
             .toSorted((a, b) => b.time.updated - a.time.updated),
         }))
       })
-      .toSorted((a, b) => {
-        // Project activity also advances on viewing; rank by conversation updates instead.
-        const updated = (b.sessions[0]?.time.updated ?? 0) - (a.sessions[0]?.time.updated ?? 0)
-        return updated || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
-      }),
+      .toSorted((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)),
   )
 
+  createEffect(() => {
+    if (!ready()) return
+    const saved = new Set(state.projects)
+    const added = projects().map((project) => project.key).filter((key) => !saved.has(key))
+    if (added.length) setState("projects", (order) => [...order, ...added])
+  })
+
+  const projectOrder = createMemo(() => new Map(state.projects.map((key, index) => [key, index])))
   const byKey = createMemo(() => new Map(projects().map((project) => [project.key, project])))
   const drafts = createMemo(() =>
     tabs.store
@@ -275,7 +280,15 @@ export function ProjectSidebar() {
         <For each={sections()}>
           {(section) => {
             const id = section.id
-            const items = createMemo(() => projects().filter((project) => projectSection(state, project.key) === id))
+            const items = createMemo(() =>
+              projects()
+                .filter((project) => projectSection(state, project.key) === id)
+                .toSorted(
+                  (a, b) =>
+                    (projectOrder().get(a.key) ?? projectOrder().size) -
+                    (projectOrder().get(b.key) ?? projectOrder().size),
+                ),
+            )
             const projectLimit = () => projectLimits[id] ?? 5
             const collapsed = () => !!state.collapsed[`section:${id}`]
 
@@ -415,7 +428,25 @@ export function ProjectSidebar() {
 
                       return (
                         <div role="group" aria-label={displayName(item().project)}>
-                          <div class="group/project flex h-7 items-center">
+                          <div
+                            class="group/project flex h-7 items-center"
+                            onDragOver={(event) => {
+                              if (!drag.project || projectSection(state, drag.project) !== id) return
+                              event.preventDefault()
+                              event.stopPropagation()
+                              if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
+                            }}
+                            onDrop={(event) => {
+                              if (!drag.project || projectSection(state, drag.project) !== id) return
+                              event.preventDefault()
+                              event.stopPropagation()
+                              const source = state.projects.indexOf(drag.project)
+                              const target = state.projects.indexOf(key)
+                              if (source < 0 || target < 0) return
+                              setState("projects", (order) => order.toSpliced(source, 1).toSpliced(target, 0, drag.project))
+                              setDrag({ project: "", target: undefined })
+                            }}
+                          >
                             <button
                               type="button"
                               draggable="true"
