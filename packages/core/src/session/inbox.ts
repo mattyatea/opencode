@@ -227,23 +227,29 @@ export const make = Effect.fn("SessionInbox.make")(function* () {
     readonly id: SessionMessage.ID
     readonly sessionID: SessionSchema.ID
     readonly delivery: Delivery
+    readonly payload?: SessionInbox.CompactionPayload
   }) {
     return yield* serialized(
       input.sessionID,
       Effect.gen(function* () {
         const exact = yield* find(db, input.id)
         if (exact) {
-          if (exact.type === "compaction" && exact.sessionID === input.sessionID) return exact
+          if (exact.type === "compaction" && exact.sessionID === input.sessionID &&
+            JSON.stringify(exact.payload.experimental?.switchModel) === JSON.stringify(input.payload?.experimental?.switchModel)) return exact
           return yield* new LifecycleConflict({ id: input.id })
         }
         if (yield* promotedFromMessage(db, input.sessionID, input.id, input.delivery))
           return yield* new LifecycleConflict({ id: input.id })
         const pending = (yield* list(db, input.sessionID)).find((item) => item.type === "compaction")
-        if (pending) return pending
+        if (pending) {
+          if (JSON.stringify(pending.payload.experimental?.switchModel) !== JSON.stringify(input.payload?.experimental?.switchModel))
+            return yield* new LifecycleConflict({ id: input.id })
+          return pending
+        }
         return yield* admit({
           id: input.id,
           sessionID: input.sessionID,
-          item: { type: "compaction", payload: {}, delivery: input.delivery },
+          item: { type: "compaction", payload: input.payload ?? {}, delivery: input.delivery },
         })
       }),
     )

@@ -2,6 +2,7 @@ export * as SessionInbox from "./session-inbox.js"
 
 import { Schema } from "effect"
 import { Location } from "./location.js"
+import { Model } from "./model.js"
 import { Project } from "./project.js"
 import { Attachment, Prompt } from "./prompt.js"
 import { DateTimeUtcFromMillis, optional, RelativePath } from "./schema.js"
@@ -32,7 +33,12 @@ export const SyntheticPayload = Schema.Struct({
 }).annotate({ identifier: "Session.Inbox.SyntheticPayload" })
 
 export interface CompactionPayload extends Schema.Schema.Type<typeof CompactionPayload> {}
-export const CompactionPayload = Schema.Struct({}).annotate({ identifier: "Session.Inbox.CompactionPayload" })
+export const CompactionPayload = Schema.Struct({
+  experimental: Schema.Struct({
+    /** Write a portable summary with the current model, then select this model on success. */
+    switchModel: Model.Ref.pipe(optional),
+  }).pipe(optional),
+}).annotate({ identifier: "Session.Inbox.CompactionPayload" })
 
 export interface MovePayload extends Schema.Schema.Type<typeof MovePayload> {}
 export const MovePayload = Schema.Struct({

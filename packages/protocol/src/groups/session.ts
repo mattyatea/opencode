@@ -442,6 +442,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
         payload: Schema.Struct({
           id: SessionMessage.ID.pipe(Schema.optional),
           delivery: SessionInbox.Delivery.pipe(Schema.optional),
+          ...SessionInbox.CompactionPayload.fields,
         }),
         success: Schema.Struct({ data: SessionInbox.Compaction }),
         error: [ConflictError, SessionNotFoundError],
@@ -450,7 +451,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           identifier: "session.compact",
           summary: "Compact session",
           description:
-            "Durably admit a session compaction request. Steers by default: it runs at the next step boundary instead of waiting behind queued prompts.",
+              "Durably admit a session compaction request. Steers by default: it runs at the next step boundary instead of waiting behind queued prompts. Experimental: switchModel writes a portable summary with the current model, then switches to the requested model only on success, before continuing.",
         }),
       ),
     )

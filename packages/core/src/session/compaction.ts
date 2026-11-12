@@ -60,7 +60,12 @@ export type Trigger =
   /** `overflow`: the provider just rejected this context as too long. `estimate` is `estimatePrompt(context)`. */
   | { readonly reason: "auto" | "overflow"; readonly context: SessionContext.Loaded; readonly estimate?: Estimate }
   /** `inputID` is the `/compact` inbox item, whose message shows the outcome. */
-  | { readonly reason: "manual"; readonly context: SessionContext.Loaded; readonly inputID: SessionMessage.ID }
+  | {
+      readonly reason: "manual"
+      readonly context: SessionContext.Loaded
+      readonly inputID: SessionMessage.ID
+      readonly switchModel?: Model.Ref
+    }
 
 export type Outcome =
   /** Only `auto` skips: the context fits, or automatic compaction is off. */
@@ -307,8 +312,14 @@ export const layer = Layer.effect(
         return { status: "skipped" }
       const held = precomputed.get(context.session.id)
       precomputed.delete(context.session.id)
-      const native = context.model.compaction?.type === "native"
-      const model = yield* selectModel(context, settings.buffer, native)
+      const switchModel = trigger.reason === "manual" ? trigger.switchModel : undefined
+      if (switchModel) {
+        const target = yield* models.resolve({ ...context.session, model: switchModel }, catalog.available).pipe(Effect.result)
+        if (Result.isFailure(target)) return yield* publish(trigger, { error: toSessionError(target.failure) })
+      }
+      // Native checkpoints cannot cross providers; use the source model's portable summary for a handoff.
+      const native = !switchModel && context.model.compaction?.type === "native"
+      const model = yield* selectModel(context, settings.buffer, native || !!switchModel)
       // The provider just rejected this context, so the estimate ran low; the first attempt already aims below it.
       const budget =
         trigger.reason === "overflow"
@@ -913,18 +924,22 @@ export const layer = Layer.effect(
         return { status: "failed", error: outcome.error }
       }
 
-      yield* bus.publish(
-        SessionEvent.Compaction.Ended,
-        {
+      const switchModel = trigger.reason === "manual" ? trigger.switchModel : undefined
+      yield* bus.publishAll([
+        [SessionEvent.Compaction.Ended, {
           sessionID,
           reason,
           model: context.model.ref,
           native: outcome.native,
           text: outcome.text,
           ...usage,
-        },
-        { metadata: outcome.metadata },
-      )
+        }, { metadata: outcome.metadata }],
+        ...(switchModel ? [[SessionEvent.ModelSelected, {
+          sessionID,
+          model: switchModel,
+          previous: context.session.model,
+        }] as const] : []),
+      ])
       return { status: "completed" }
     })
 
