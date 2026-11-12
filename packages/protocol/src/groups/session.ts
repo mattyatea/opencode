@@ -90,6 +90,7 @@ const SessionContextBreakdown = Schema.Struct({
   measured: Schema.Number,
   estimated: Schema.Number,
   used: Schema.Number,
+  window: Schema.Number,
   free: Schema.Number,
   parts: Schema.Array(SessionContextBreakdownPart),
 }).annotate({ identifier: "Session.ContextBreakdown" })

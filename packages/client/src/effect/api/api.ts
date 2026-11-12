@@ -631,6 +631,7 @@ export type ExperimentalSessionContextBreakdownOutput = {
   readonly measured: number
   readonly estimated: number
   readonly used: number
+  readonly window: number
   readonly free: number
   readonly parts: ReadonlyArray<{
     readonly id: string

@@ -552,6 +552,68 @@ it.effect("sizes the next request by context part", () =>
     expect(messages?.entries.find((entry) => entry.id === "assistant")?.tokens).toBe(5_000)
     expect(messages?.entries.filter((entry) => entry.id === "assistant")).toHaveLength(1)
     // The prompt can only fill the input limit, which is below the context window.
+    expect(breakdown.window).toBe(150_000)
     expect(breakdown.free).toBe(150_000 - breakdown.used)
+  }),
+)
+
+it.effect("counts the anchor's local tool results as estimated", () =>
+  Effect.gen(function* () {
+    instruction = "Initial context"
+    const { bus, db, instructions } = yield* setup
+    yield* InstructionState.prepare(db, bus, instructions, sessionID)
+    const user = SessionMessage.ID.create()
+    yield* bus.publish(SessionEvent.InboxEnqueued, {
+      sessionID,
+      inboxID: user,
+      item: { type: "user", payload: { text: "Read the file" }, delivery: "steer" },
+    })
+    yield* bus.publish(SessionEvent.InboxDelivered, { sessionID, inboxID: user })
+    const assistant = SessionMessage.ID.create()
+    yield* bus.publish(SessionEvent.Step.Started, {
+      sessionID,
+      assistantMessageID: assistant,
+      agent: Agent.ID.make("build"),
+      model: { id: ID.make("generate-model"), providerID: Provider.ID.make("test") },
+      started: 0,
+    })
+    yield* bus.publish(SessionEvent.Tool.Input.Started, {
+      sessionID,
+      assistantMessageID: assistant,
+      id: "read",
+      name: "lookup",
+    })
+    yield* bus.publish(SessionEvent.Tool.Called, {
+      sessionID,
+      assistantMessageID: assistant,
+      id: "read",
+      input: {},
+      executed: false,
+    })
+    yield* bus.publish(SessionEvent.Tool.Success, {
+      sessionID,
+      assistantMessageID: assistant,
+      id: "read",
+      content: [{ type: "text", text: "file contents ".repeat(500) }],
+      executed: false,
+    })
+    yield* bus.publish(SessionEvent.Step.Ended, {
+      sessionID,
+      assistantMessageID: assistant,
+      finish: "tool-calls",
+      cost: Money.USD.make(0),
+      tokens: { input: 1_000, output: 30, reasoning: 0, cache: { read: 0, write: 0 } },
+    })
+
+    const context = yield* SessionContext.Service
+    const breakdown = yield* context.breakdown(sessionID)
+
+    // The provider counted the call but never saw its result, which the next request sends.
+    expect(breakdown.measured).toBe(1_030)
+    expect(breakdown.estimated).toBeGreaterThan(1_000)
+    expect(breakdown.used).toBe(breakdown.measured + breakdown.estimated)
+    const messages = breakdown.parts.find((part) => part.id === "messages")
+    expect(messages?.entries.find((entry) => entry.id === "tool")?.tokens).toBe(breakdown.estimated)
+    expect(messages?.entries.find((entry) => entry.id === "assistant")?.tokens).toBe(30)
   }),
 )
