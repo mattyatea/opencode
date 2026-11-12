@@ -216,9 +216,24 @@ describe("SessionStats", () => {
         totals: { calls: 3, succeeded: 1, failed: 1, unfinished: 1 },
       })
       expect(stats.activity).toEqual([
-        { date: "2026-01-02", steps: 1 },
-        { date: "2026-01-03", steps: 1 },
-        { date: "2026-01-05", steps: 1 },
+        {
+          date: "2026-01-02",
+          steps: 1,
+          tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 4, write: 1 } },
+          cost: Money.USD.make(1.5),
+        },
+        {
+          date: "2026-01-03",
+          steps: 1,
+          tokens: { input: 20, output: 10, reasoning: 4, cache: { read: 8, write: 2 } },
+          cost: Money.USD.make(3),
+        },
+        {
+          date: "2026-01-05",
+          steps: 1,
+          tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 4, write: 1 } },
+          cost: Money.USD.make(1.5),
+        },
       ])
       expect(stats.streak).toBe(2)
       expect(stats.models.map((model) => String(model.model.id))).toEqual(["large", "sonnet", "fork-new"])
@@ -277,7 +292,7 @@ describe("SessionStats", () => {
       expect(model.subagents).toBe(1)
       expect(model.sessions).toBe(0)
       expect(model.cost).toBe(Money.USD.make(3))
-      expect(model.activity).toEqual([{ date: "2026-01-03", steps: 1 }])
+      expect(model.activity).toMatchObject([{ date: "2026-01-03", steps: 1, cost: 3 }])
       expect(model.models.map((row) => row.model.id)).toEqual([Model.ID.make("large")])
       expect(model.sessionUsage).toMatchObject([{ sessionID: childID, steps: 1, cost: 3 }])
       expect(model.tools).toMatchObject({ mode: "detail", totals: { calls: 0 } })

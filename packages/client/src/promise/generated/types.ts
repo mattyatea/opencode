@@ -150,8 +150,6 @@ export type SessionStatsToolUsage = {
   durationP50?: number
 }
 
-export type SessionStatsActivity = { date: string; steps: number }
-
 export type SessionStatsSkillUsage = { id: string; calls: number }
 
 export type SessionContextBreakdownEntry = { id: string; tokens: number }
@@ -480,6 +478,8 @@ export type SessionTaskMessage = {
 export type UsageLimitsBudgetModel = { providerID: ProviderID; modelID: string; name: string; spent?: MoneyUSD }
 
 export type SessionGenerateResponse = { data: { text: string; tokens: TokenUsageInfo; cost: MoneyUSD } }
+
+export type SessionStatsActivity = { date: string; steps: number; tokens?: TokenUsageInfo; cost?: MoneyUSD }
 
 export type SessionStatsSessionUsage = {
   sessionID: SessionID

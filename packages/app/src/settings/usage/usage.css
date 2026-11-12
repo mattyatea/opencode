@@ -115,9 +115,109 @@
 }
 .usage-bar {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--usage-input);
   opacity: 0.65;
   border-radius: 3px 3px 0 0;
+}
+.usage-bar[data-metric="tokens"] {
+  background: transparent;
+  opacity: 0.85;
+}
+.usage-bar[data-metric="cost"] {
+  background: var(--usage-output);
+}
+.usage-day:hover .usage-bar {
+  opacity: 1;
+}
+.usage-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 28px;
+}
+.usage-search {
+  width: 220px;
+  max-width: 100%;
+}
+.usage-insights {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 24px;
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--v2-border-border-base);
+  border-radius: 12px;
+}
+.usage-insights > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.usage-insights dt {
+  color: var(--v2-text-text-muted);
+}
+.usage-insights dd {
+  margin: 0;
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+.usage-about summary,
+.usage-card details summary {
+  cursor: pointer;
+  color: var(--v2-text-text-muted);
+}
+.usage-about p {
+  margin-top: 8px;
+}
+.usage-sort,
+.usage-drill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.usage-bar > span {
+  display: block;
+  width: 100%;
+  flex: none;
+}
+.usage-sort:hover,
+.usage-drill:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.usage-sort > span {
+  min-width: 1ch;
+}
+.usage-share {
+  display: inline-flex;
+  align-items: center;
+  justify-content: end;
+  gap: 8px;
+}
+.usage-share-bar {
+  width: 56px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--v2-background-bg-layer-03);
+}
+.usage-share-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--usage-input);
 }
 .usage-days {
   display: grid;
@@ -166,7 +266,8 @@
 }
 
 @container settings-screen (max-width: 767px) {
-  .usage-summary {
+  .usage-summary,
+  .usage-insights {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

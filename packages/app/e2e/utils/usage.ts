@@ -29,6 +29,8 @@ export function usageStats(from: number, to: number): SessionStatsInfo {
       {
         date: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`,
         steps: 3,
+        tokens,
+        cost: 0.42,
       },
     ],
     models: [{ model: { providerID: "openai", id: "usage-model" }, steps: 3, tokens, cost: 0.42 }],
@@ -93,7 +95,7 @@ export function drilldownUsageStats(
     tokens,
     cost: 0.42 * factor,
     models: filter.model ? models.slice(0, 1) : filter.provider ? models.slice(0, 2) : models,
-    activity: base.activity.map((row) => ({ ...row, steps: 3 * factor })),
+    activity: base.activity.map((row) => ({ ...row, steps: 3 * factor, tokens, cost: 0.42 * factor })),
     sessionUsage: [
       {
         sessionID: "ses_drilldown",

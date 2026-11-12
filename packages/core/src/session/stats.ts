@@ -112,7 +112,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
   const toolMode = input.tools ?? "summary"
   const sessions = new Set<string>()
   const subagents = new Set<string>()
-  const activity = new Map<string, number>()
+  const activity = new Map<string, { steps: number; tokens: Tokens; cost: number }>()
   const models = new Map<string, ModelAggregate>()
   const tools = new Map<string, ToolAggregate>()
   const skills = new Map<string, number>()
@@ -196,8 +196,12 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
                 }
                 addTokens(totals.tokens, tokens)
                 totals.cost += row.cost ?? 0
-                const day = dateKey(row.timeCreated)
-                activity.set(day, (activity.get(day) ?? 0) + 1)
+                const date = dateKey(row.timeCreated)
+                const day = activity.get(date) ?? { steps: 0, tokens: emptyTokens(), cost: 0 }
+                activity.set(date, day)
+                day.steps++
+                day.cost += row.cost ?? 0
+                addTokens(day.tokens, tokens)
                 if (!row.providerID || !row.modelID) return
                 const key = `${row.providerID}/${row.modelID}#${row.variant ?? ""}`
                 const model = models.get(key) ?? {
@@ -423,7 +427,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
             },
     activeDays: days.length,
     streak: longestStreak(days.map(([date]) => date)),
-    activity: days.map(([date, steps]) => ({ date, steps })),
+    activity: days.map(([date, day]) => ({ date, ...day, cost: Money.USD.make(day.cost) })),
     models: [...models.values()]
       .sort((a, b) => TokenUsage.total(b.tokens) - TokenUsage.total(a.tokens))
       .map((model) => ({ ...model, cost: Money.USD.make(model.cost) })),

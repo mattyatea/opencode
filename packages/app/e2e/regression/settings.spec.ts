@@ -65,16 +65,78 @@ test("usage settings show recorded activity and switch reporting periods", async
   await settings.getByRole("tab", { name: "Usage", exact: true }).click()
   await expect(page).toHaveURL("/settings?tab=usage")
   await expect(
-    settings.getByRole("row", { name: "usage-model openai 3 1,200 300 100 400 0 $0.42", exact: true }),
+    settings.getByRole("row", { name: "usage-model openai 3 1,200 300 100 400 0 2,000 $0.42 100%", exact: true }),
   ).toBeVisible()
-  await expect(settings.getByRole("row", { name: "Weekly work 3 2,000 $0.42", exact: true })).toBeVisible()
-  await expect(settings.getByRole("row", { name: "effect 5", exact: true })).toBeVisible()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Session activity", exact: true })
+    .click()
+  await expect(settings.getByRole("row", { name: "Weekly work 3 1,200 300 100 400 0 2,000 $0.42 100%" })).toBeVisible()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Skills", exact: true })
+    .click()
+  await expect(settings.getByRole("row", { name: "effect 5 100%", exact: true })).toBeVisible()
   await expect(settings.getByRole("meter")).toHaveCount(0)
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Session activity", exact: true })
+    .click()
   await settings.getByRole("button", { name: "30 days", exact: true }).click()
-  await expect(settings.getByRole("row", { name: "Monthly work 3 2,000 $0.42", exact: true })).toBeVisible()
+  await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
   await expect(settings.getByText("Weekly work", { exact: true })).toHaveCount(0)
   await settings.getByRole("button", { name: "Refresh", exact: true }).click()
-  await expect(settings.getByRole("row", { name: "Monthly work 3 2,000 $0.42", exact: true })).toBeVisible()
+  await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
+})
+
+test("usage settings sort, filter and chart the breakdown the user asks for", async ({ page }) => {
+  const { settings } = await open(page, { sessionStats: drilldownUsageStats })
+  await settings.getByRole("tab", { name: "Usage", exact: true }).click()
+  await expect(settings.locator(".usage-insights dd")).toHaveText([
+    "25%",
+    "$0.14",
+    "$0.18",
+    "2",
+    "1 of 7 · 1 in a row",
+    "100%",
+  ])
+
+  const models = settings.getByRole("table", { name: "Models", exact: true })
+  const names = models.locator("tbody th")
+  const requests = models.getByRole("columnheader", { name: "Model requests", exact: true })
+  await requests.getByRole("button").click()
+  await expect(requests).toHaveAttribute("aria-sort", "descending")
+  await requests.getByRole("button").click()
+  await expect(requests).toHaveAttribute("aria-sort", "ascending")
+  await expect(models.getByRole("columnheader", { name: "Share of Model requests" })).toBeVisible()
+  await expect(names).toHaveText(["claude-modelanthropic", "other-modelopenai", "usage-modelopenai"])
+  await settings.getByRole("searchbox", { name: "Filter by name" }).fill("openai")
+  await expect(names).toHaveText(["other-modelopenai", "usage-modelopenai"])
+  await settings.getByRole("searchbox", { name: "Filter by name" }).fill("nothing")
+  await expect(settings.getByText("Nothing matches this filter.", { exact: true })).toBeVisible()
+  await settings.getByRole("searchbox", { name: "Filter by name" }).fill("")
+
+  const requested = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return url.pathname === "/api/experimental/session/stats" && url.searchParams.get("model") === "usage-model"
+  })
+  await models.getByRole("button", { name: "usage-model", exact: true }).click()
+  await requested
+  await expect(settings.locator('[data-component="select-v2"][aria-label="Model"]')).toHaveText("usage-model")
+
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Tools", exact: true })
+    .click()
+  await expect(
+    settings.getByRole("table", { name: "Tools", exact: true }).getByRole("row").nth(1),
+  ).toHaveAccessibleName("skill 5 100% 0 0 100%")
+
+  await settings.getByRole("button", { name: "Cost", exact: true }).click()
+  await expect(settings.getByRole("heading", { name: "Daily cost", exact: true })).toBeVisible()
+  await expect(settings.getByText(/^Busiest day: .+ \(\$0\.42\)$/)).toBeVisible()
+  await settings.getByRole("button", { name: "Today", exact: true }).click()
+  await expect(settings.getByRole("heading", { name: "Daily cost", exact: true })).toHaveCount(0)
 })
 
 test("usage settings can retry a failed read without leaving settings", async ({ page }) => {
@@ -88,7 +150,11 @@ test("usage settings can retry a failed read without leaving settings", async ({
   failed = false
   await settings.getByRole("button", { name: "Try again", exact: true }).click()
   await expect(settings.getByRole("table", { name: "Models", exact: true })).toBeVisible()
-  await expect(settings.getByRole("region", { name: "Skills", exact: true })).toContainText(
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Skills", exact: true })
+    .click()
+  await expect(settings.getByRole("region", { name: "Breakdown", exact: true })).toContainText(
     "No recorded activity in this period.",
   )
   await expect(settings.getByRole("alert")).toHaveCount(0)
@@ -110,6 +176,10 @@ test("usage settings use Japanese labels without loading provider limits", async
   await expect(settings.getByRole("button", { name: "7日間", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect(settings.getByRole("button", { name: "更新", exact: true })).toBeEnabled()
   await expect(settings.getByRole("table", { name: "モデル別", exact: true })).toContainText("usage-model")
+  await settings
+    .getByRole("region", { name: "内訳", exact: true })
+    .getByRole("tab", { name: "スキル別", exact: true })
+    .click()
   await expect(settings.getByRole("table", { name: "スキル別", exact: true })).toContainText("effect")
   await expect(settings.getByRole("meter")).toHaveCount(0)
   expect(requests).not.toContain("/api/experimental/usage/limits")
@@ -129,6 +199,10 @@ test("usage settings keep the selected period and data through health reconnects
     },
   })
   await settings.getByRole("tab", { name: "Usage", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Session activity", exact: true })
+    .click()
   await expect(settings.getByText("Weekly work", { exact: true })).toBeVisible()
   await settings.getByRole("button", { name: "30 days", exact: true }).click()
   await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
@@ -164,6 +238,10 @@ test("usage settings drill down by provider and model with distinct token colors
   await settings.getByRole("tab", { name: "Usage", exact: true }).click()
   const summary = settings.locator(".usage-summary .usage-total")
   await expect(summary).toHaveText(["9", "1", "6,000", "$1.26", "15", "15"])
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   const providers = settings.getByRole("table", { name: "Providers", exact: true })
   await expect(providers.getByRole("row")).toHaveCount(3)
   await expect(
@@ -171,13 +249,13 @@ test("usage settings drill down by provider and model with distinct token colors
       .getByRole("row")
       .filter({ has: page.getByRole("rowheader", { name: "openai", exact: true }) })
       .getByRole("cell"),
-  ).toHaveText(["6", "2,400", "600", "200", "800", "0", "$0.84"])
+  ).toHaveText(["6", "2,400", "600", "200", "800", "0", "4,000", "$0.84", "66.7%"])
   await expect(
     providers
       .getByRole("row")
       .filter({ has: page.getByRole("rowheader", { name: "anthropic", exact: true }) })
       .getByRole("cell"),
-  ).toHaveText(["3", "1,200", "300", "100", "400", "0", "$0.42"])
+  ).toHaveText(["3", "1,200", "300", "100", "400", "0", "2,000", "$0.42", "33.3%"])
   const provider = settings.locator('[data-component="select-v2"][aria-label="Provider"]')
   const model = settings.locator('[data-component="select-v2"][aria-label="Model"]')
   await expect(model).toHaveAttribute("data-disabled", "")
@@ -198,8 +276,26 @@ test("usage settings drill down by provider and model with distinct token colors
   await page.getByRole("option", { name: "usage-model", exact: true }).click()
   await requested
   await expect(summary).toHaveText(["3", "1", "2,000", "$0.42", "5", "5"])
-  await expect(providers.getByRole("cell")).toHaveText(["3", "1,200", "300", "100", "400", "0", "$0.42"])
+  await expect(providers.getByRole("cell")).toHaveText([
+    "3",
+    "1,200",
+    "300",
+    "100",
+    "400",
+    "0",
+    "2,000",
+    "$0.42",
+    "100%",
+  ])
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Session activity", exact: true })
+    .click()
   await expect(settings.getByRole("table", { name: "Session activity", exact: true })).toContainText("usage-model")
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Models", exact: true })
+    .click()
   await expect(settings.getByRole("table", { name: "Models", exact: true }).getByRole("row")).toHaveCount(2)
   const colors = await settings
     .locator(".usage-token-legend i")
@@ -637,7 +733,10 @@ test("several servers share one selected server across per-server pages", async 
   const switcher = settings.locator('[data-action="settings-server-select"]:visible')
   const connected = settings.locator('[data-component="connected-providers-section"]')
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   // The server the app runs beside is named by its hostname; only the menu that chooses a server adds "This computer".
   await expect(switcher).toHaveText("Serverhailmary")
   await expect(connected.getByText("No connected providers")).toBeVisible()
@@ -649,7 +748,10 @@ test("several servers share one selected server across per-server pages", async 
     (url) => url.searchParams.get("server") === REMOTE_SERVER && url.searchParams.get("tab") === "providers",
   )
 
-  await settings.getByRole("tab", { name: "Models", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Models", exact: true })
+    .click()
   await expect(switcher).toHaveText("ServerBuild server")
   await expect(settings.getByRole("switch", { name: "Kimi K2.5", exact: true })).toBeVisible()
 
@@ -1002,7 +1104,10 @@ test("project extensions link Console MCPs and skills and offer sign-in as the s
   await mcps.getByRole("button", { name: "Manage slack in Console", exact: true }).click()
   await expect(await manage).toHaveURL(`${consoleUrl}/org_acme/extensions/mcp/slack`)
 
-  await settings.getByRole("tab", { name: "Skills", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Skills", exact: true })
+    .click()
   const skills = settings.getByRole("tabpanel", { name: "Skills", exact: true })
   await skills.getByRole("button", { name: /^Shared/ }).click()
   await expect(skills.getByText("Code review", { exact: true })).toBeVisible()
@@ -1022,7 +1127,10 @@ test("a Console skill links to Console's home when no Console MCP names the work
   })
 
   await settings.getByRole("tab", { name: "Extensions", exact: true }).click()
-  await settings.getByRole("tab", { name: "Skills", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Skills", exact: true })
+    .click()
 
   const skill = page.waitForEvent("popup")
   await settings.getByRole("button", { name: "Manage Funnel analytics in Console", exact: true }).click()
@@ -1313,7 +1421,10 @@ test.describe("pages open before slow data", () => {
     await settings.getByRole("tab", { name: "MCPs", exact: true }).click()
     await expect(settings.getByRole("switch", { name: "demo-mcp" })).toBeChecked()
     // Without a Console sign-in, a virtual skill is never linked to Console.
-    await settings.getByRole("tab", { name: "Skills", exact: true }).click()
+    await settings
+      .getByRole("region", { name: "Breakdown", exact: true })
+      .getByRole("tab", { name: "Skills", exact: true })
+      .click()
     await expect(settings.getByText("OpenCode", { exact: true })).toBeVisible()
     await expect(settings.getByText("Plugin skill", { exact: true })).toBeVisible()
     await expect(settings.getByRole("button", { name: /in Console$/ })).toHaveCount(0)
@@ -1452,7 +1563,10 @@ test.describe("pages open before slow data", () => {
     await expect(toggle).not.toBeChecked()
 
     // One sorted list: only a skill Console delivers links to Console, filtered to that skill.
-    await settings.getByRole("tab", { name: "Skills", exact: true }).click()
+    await settings
+      .getByRole("region", { name: "Breakdown", exact: true })
+      .getByRole("tab", { name: "Skills", exact: true })
+      .click()
     await expect(settings.locator(".settings-extension-name")).toHaveText([
       "Browser",
       "Code review",
@@ -1906,7 +2020,10 @@ for (const row of [
       ],
     })
 
-    await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+    await settings
+      .getByRole("region", { name: "Breakdown", exact: true })
+      .getByRole("tab", { name: "Providers", exact: true })
+      .click()
     await expect(settings.getByRole("heading", { name: "Popular providers" })).toBeVisible()
     const connected = settings.locator('[data-component="connected-providers-section"]')
 
@@ -1937,7 +2054,10 @@ test("providers: OpenCode Console signs in from its method list", async ({ page,
   await context.route("https://auth.example.test/**", (route) => route.fulfill({ body: "Sign in" }))
   const { settings } = await open(page, { integrations: consoleIntegrations, onIntegrationOAuth: () => ({ url }) })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await settings
     .locator(".settings-provider-row", { hasText: "OpenCode Console" })
     .getByRole("button", { name: "Connect", exact: true })
@@ -1970,7 +2090,10 @@ test("providers: OpenCode Go connects with its own methods, not the Console sign
     },
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await settings
     .locator(".settings-provider-row", { hasText: "OpenCode Go" })
     .getByRole("button", { name: "Connect", exact: true })
@@ -1992,7 +2115,10 @@ test("providers: a rejected API key shows the server error and can be sent again
     },
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await settings
     .locator(".settings-provider-row", { hasText: "OpenRouter" })
     .getByRole("button", { name: "Connect", exact: true })
@@ -2029,7 +2155,10 @@ test("providers: Back during a pending API key request does not report the provi
   })
 
   const held = await holdRoute(page, /\/api\/integration\/openrouter\/connect\/key(\?|$)/, { method: "POST" })
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await settings
     .locator(".settings-provider-row", { hasText: "OpenRouter" })
     .getByRole("button", { name: "Connect", exact: true })
@@ -2120,7 +2249,10 @@ test("providers: the connect dialog lists connected providers and manages their 
     },
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await settings.getByRole("button", { name: "Show more providers", exact: true }).click()
   const dialog = page.getByRole("dialog")
   const openai = dialog.locator('[data-provider-id="openai"]')
@@ -2210,7 +2342,10 @@ test("providers: adding an account starts a lone method once", async ({ page, co
     },
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await settings.getByRole("button", { name: "Show more providers", exact: true }).click()
   const dialog = page.getByRole("dialog")
   await dialog.locator('[data-provider-id="opencode-go"]').click()
@@ -2249,7 +2384,10 @@ test("providers: Back from a pending sign-in cancels it and lets a backdrop clic
     onIntegrationOAuthCancel: (attemptID) => cancelled.push(attemptID),
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await settings.getByRole("button", { name: "Show more providers", exact: true }).click()
   const dialog = page.getByRole("dialog")
   const popup = page.waitForEvent("popup")
@@ -2279,7 +2417,10 @@ test("providers: Back from a Claude Agent check started by Add account returns t
   })
 
   const held = await holdRoute(page, /\/api\/integration\/claude-agent\/connect\/external(\?|$)/, { method: "POST" })
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await settings.getByRole("button", { name: "Show more providers", exact: true }).click()
   const dialog = page.getByRole("dialog")
   await dialog.locator('[data-provider-id="claude-agent"]').click()
@@ -2322,7 +2463,10 @@ test("providers: Back from a Console connection without models returns to its si
     },
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await settings
     .locator(".settings-provider-row", { hasText: "OpenCode Console" })
     .getByRole("button", { name: "Connect", exact: true })
@@ -2368,7 +2512,10 @@ test("providers: the account options rename and remove the active account", asyn
     if (request.method() === "DELETE" && path.startsWith("/api/credential/")) removed.push(path.split("/").at(-1)!)
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   const trigger = settings.getByRole("button", { name: "Manage OpenAI accounts", exact: true })
   await expect(trigger).toHaveText("Work")
 
@@ -2398,7 +2545,10 @@ test("providers: the account options rename and remove the active account", asyn
   await settings.getByRole("button", { name: "Team options", exact: true }).click()
   await page.getByRole("menuitem", { name: "Rename", exact: true }).click()
   await name.fill("Shared")
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   await expect(trigger).toHaveText("Shared")
 
   await settings.getByRole("button", { name: "Shared options", exact: true }).click()
@@ -2413,7 +2563,10 @@ test("providers: a disconnect that finds no stored credentials keeps the provide
     integrations: [],
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   const connected = settings.locator('[data-component="connected-providers-section"]')
   const disconnect = connected.getByRole("button", { name: "Disconnect", exact: true })
   await expect(connected.getByText("OpenRouter", { exact: true })).toBeVisible()
@@ -2467,7 +2620,10 @@ test("providers: switching to a Zen API key does not wait for a Console workspac
     },
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   const trigger = settings.getByRole("button", { name: "Manage OpenCode Console accounts", exact: true })
   await expect(trigger).toHaveText("Anomaly")
   await trigger.click()
@@ -2534,7 +2690,10 @@ test("providers: adding a Console account keeps the Console row in place", async
     },
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   const connected = settings.locator('[data-component="connected-providers-section"]')
   await expect(connected.getByText("OpenCode Console", { exact: true })).toBeVisible()
   await connected.evaluate((element) => {
@@ -2602,7 +2761,10 @@ test("providers: switching Console accounts keeps the list until the new workspa
     },
   })
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   const connected = settings.locator('[data-component="connected-providers-section"]')
   const trigger = connected.getByRole("button", { name: "Manage OpenCode Console accounts", exact: true })
   await expect(trigger).toHaveText("Clara")
@@ -2658,11 +2820,17 @@ test("models: a Console provider picked on Providers opens its collapsed group, 
     .locator('[data-component="settings-models-console"]')
     .getByRole("button", { name: /^OpenCode Console/ })
 
-  await settings.getByRole("tab", { name: "Models", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Models", exact: true })
+    .click()
   await group.click()
   await expect(group).toHaveAttribute("aria-expanded", "false")
 
-  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .getByRole("region", { name: "Breakdown", exact: true })
+    .getByRole("tab", { name: "Providers", exact: true })
+    .click()
   const connected = settings.locator('[data-component="connected-providers-section"]')
   await connected.getByRole("button", { name: "2 providers available", exact: true }).click()
   await connected.getByRole("button", { name: "Google", exact: true }).click()

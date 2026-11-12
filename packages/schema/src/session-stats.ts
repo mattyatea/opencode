@@ -10,6 +10,10 @@ import { Session } from "./session.js"
 export const Activity = Schema.Struct({
   date: Schema.String,
   steps: NonNegativeInt,
+  /** Model step tokens recorded on this day, excluding auxiliary compaction usage. */
+  tokens: TokenUsage.Info.pipe(optional),
+  /** Model step cost recorded on this day, excluding auxiliary compaction usage. */
+  cost: Money.USD.pipe(optional),
 }).annotate({ identifier: "SessionStats.Activity" })
 export type Activity = typeof Activity.Type
 
