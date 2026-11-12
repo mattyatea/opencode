@@ -114,6 +114,7 @@ export function createComposerEditor(input: {
   attachments?: ComposerAttachmentConfig
 }) {
   let editor: HTMLElement | undefined
+  let submitGuard: (() => Promise<void> | undefined) | undefined
   let fileInput: HTMLInputElement | undefined
   let focusFrame: number | undefined
   let focusCursor: number | undefined
@@ -634,6 +635,20 @@ export function createComposerEditor(input: {
     })
   }
 
+  function submit(options?: { alternate?: boolean; first?: boolean }) {
+    if (input.view.submit.available?.() === false) return
+
+    if (input.view.draftOnly) return
+
+    if (attachments?.pending().length) return
+    // Dictation in progress ends first, so the send carries its final transcript instead of racing it.
+    const settling = submitGuard?.()
+
+    if (settling) return void settling.then(() => submit(options))
+    input.view.submit.onSubmit(options)
+    dispatch({ type: "popover.close" })
+  }
+
   return {
     state,
     mode,
@@ -647,6 +662,17 @@ export function createComposerEditor(input: {
     /** The editable element once mounted, as dictation marks where its words may still change. */
     editorElement() {
       return editor
+    },
+    /**
+     * Registers work that must finish before a submit goes through, such as dictation. The guard returns a promise
+     * while it is still settling, and nothing once the submit may proceed. Returns its unregister function.
+     */
+    guardSubmit(guard: () => Promise<void> | undefined) {
+      submitGuard = guard
+
+      return () => {
+        if (submitGuard === guard) submitGuard = undefined
+      }
     },
     /** The draft being edited; another replaces it when the composer moves to a different session. */
     draft() {
@@ -762,15 +788,7 @@ export function createComposerEditor(input: {
     openShell() {
       dispatch({ type: "mode.shell" })
     },
-    submit(options?: { alternate?: boolean; first?: boolean }) {
-      if (input.view.submit.available?.() === false) return
-
-      if (input.view.draftOnly) return
-
-      if (attachments?.pending().length) return
-      input.view.submit.onSubmit(options)
-      dispatch({ type: "popover.close" })
-    },
+    submit,
     stop() {
       input.view.submit.onStop()
     },

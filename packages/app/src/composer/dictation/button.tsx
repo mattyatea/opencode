@@ -43,7 +43,7 @@ export function ComposerDictation(props: { controller: ComposerEditorModel }) {
   const [phase, setPhase] = createSignal<Phase>("idle")
   const [meter, setMeter] = createSignal(0)
 
-  const state: { stop?: (cleanup: boolean) => Promise<void>; abort?: () => void } = {}
+  const state: { stop?: (cleanup: boolean) => Promise<void>; abort?: () => void; done?: Promise<void> } = {}
 
   // A cleanup button beside stop replaces cleanup on stop.
   const cleanupButton = createMemo(() => settings.dictation.cleanup() && settings.dictation.trigger() === "button")
@@ -175,9 +175,15 @@ export function ComposerDictation(props: { controller: ComposerEditorModel }) {
       reset()
     }
 
-    const stop = async (cleanup: boolean) => {
-      if (progress.ended) return
+    const stop = (cleanup: boolean) => {
+      if (progress.ended) return state.done ?? Promise.resolve()
       progress.ended = true
+      state.done = finish(cleanup)
+
+      return state.done
+    }
+
+    const finish = async (cleanup: boolean) => {
       release()
       setPhase("finishing")
 
@@ -239,6 +245,7 @@ export function ComposerDictation(props: { controller: ComposerEditorModel }) {
   const reset = () => {
     state.stop = undefined
     state.abort = undefined
+    state.done = undefined
     setPhase("idle")
   }
 
@@ -252,6 +259,20 @@ export function ComposerDictation(props: { controller: ComposerEditorModel }) {
     if (current === "listening")
       return void state.stop?.(untrack(() => settings.dictation.cleanup() && settings.dictation.trigger() === "stop"))
   }
+
+  // Send ends dictation like the stop button, then goes out once the final transcript is written.
+  onCleanup(
+    props.controller.guardSubmit(() => {
+      const current = phase()
+
+      if (current === "preparing") return void state.abort?.()
+
+      if (current === "listening")
+        return state.stop?.(untrack(() => settings.dictation.cleanup() && settings.dictation.trigger() === "stop"))
+
+      if (current === "finishing" || current === "cleaning") return state.done
+    }),
+  )
 
   onCleanup(() => state.abort?.())
 
