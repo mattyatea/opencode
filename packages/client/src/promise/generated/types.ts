@@ -2622,6 +2622,7 @@ export type ConfigEntry =
           json_read?: boolean
           codemode_tools?: boolean
           paste_files?: boolean
+          short_context_compaction?: boolean
           portable_shell_scanner?: boolean
           all_flags?: boolean
           todo?: boolean

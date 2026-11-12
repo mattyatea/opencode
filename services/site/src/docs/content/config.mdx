@@ -659,6 +659,11 @@ automatic compaction doesn't pause the session. Defaults to `false`. See
 }
 ```
 
+### Short context compaction
+
+Set `short_context_compaction` to `true` to compact as if every model with a larger or unknown window had a
+48,000-token window. Defaults to `false`. See [Compaction](/compaction#short-context) for the trade-offs.
+
 ### Image generation
 
 `image_generate` sets the default model for the [`experimental_image_generate`](/tools#image-generate) tool, as

@@ -43,6 +43,11 @@ export type Settings = {
   auto: boolean
   /** Room kept free below the model's limits before compacting: a share such as "20%", or tokens. Unset keeps 15%, and at least 16k, free. */
   buffer?: number | string
+  /**
+   * The window, in tokens, the buffer is taken from when it is smaller than the model's own. It also applies to models
+   * whose window is unknown. Unset uses the model's window.
+   */
+  limit?: number
   /** Tokens of recent conversation kept verbatim beside the summary. */
   keep: number
   /** Summarize in the background as the context nears the threshold, so automatic compaction can swap it in. */
@@ -287,7 +292,7 @@ export const layer = Layer.effect(
     /** The model that writes the summary, and the request size it aims for. */
     const selectModel = Effect.fnUntraced(function* (
       context: SessionContext.Loaded,
-      buffer: Settings["buffer"],
+      settings: Pick<Settings, "buffer" | "limit">,
       useCurrent: boolean,
     ) {
       const agent = useCurrent ? undefined : yield* agents.get(Agent.ID.make("compaction"))
@@ -300,11 +305,11 @@ export const layer = Layer.effect(
             })
             .pipe(Effect.orElseSucceed(() => undefined)))) ??
         context.model
-      const ceiling = calculateCeiling(model.limit, buffer)
+      const ceiling = calculateCeiling(model.limit, settings)
       // An unknown window never triggers auto compaction, but the compaction request still needs a size to aim for.
       const cap = Number.isFinite(ceiling)
         ? ceiling
-        : calculateCeiling({ ...model.limit, context: UNKNOWN_WINDOW }, buffer)
+        : calculateCeiling({ ...model.limit, context: UNKNOWN_WINDOW }, settings)
       return { context: model === context.model ? context : { ...context, model }, cap }
     })
 
@@ -316,7 +321,7 @@ export const layer = Layer.effect(
       if (trigger.reason !== "manual" && !settings.auto) return { status: "skipped" }
       if (
         trigger.reason === "auto" &&
-        !due(context, calculateCeiling(context.model.limit, settings.buffer), trigger.estimate)
+        !due(context, calculateCeiling(context.model.limit, settings), trigger.estimate)
       )
         return { status: "skipped" }
       const held = precomputed.get(context.session.id)
@@ -334,7 +339,7 @@ export const layer = Layer.effect(
       const handoff = target !== undefined
       const native = !handoff && context.model.compaction?.type === "native"
       // Handoffs reuse the current provider's cache and must not produce a provider-specific native window.
-      const model = yield* selectModel(context, settings.buffer, native || handoff)
+      const model = yield* selectModel(context, settings, native || handoff)
       // The provider just rejected this context, so the estimate ran low; the first attempt already aims below it.
       const budget =
         trigger.reason === "overflow"
@@ -378,7 +383,7 @@ export const layer = Layer.effect(
       if (!settings.precompute || !settings.auto) return
       const context = yield* load
       if (context.model.compaction?.type === "native") return
-      const ceiling = calculateCeiling(context.model.limit, settings.buffer)
+      const ceiling = calculateCeiling(context.model.limit, settings)
       if (!Number.isFinite(ceiling)) return
       const estimate = given ?? estimatePrompt(context)
       if (due(context, ceiling, estimate)) return
@@ -410,7 +415,7 @@ export const layer = Layer.effect(
       const age = (yield* Clock.currentTimeMillis) - DateTime.toEpochMillis(anchor.time.created)
       if (age > cacheLifetime(context.model.cache?.ttl) - CACHE_MARGIN) return
 
-      const model = yield* selectModel(context, settings.buffer, false)
+      const model = yield* selectModel(context, settings, false)
       const usage: SessionUsage.Recorded[] = []
       const fiber = yield* summarize({ reason: "auto", context: model.context }, model.cap, settings.keep, {
         messages: context.messages.slice(0, anchorIndex),
@@ -1189,13 +1194,21 @@ export const estimatePrompt = (context: SessionContext.Loaded): Estimate => {
 /**
  * The largest request the model takes while leaving room for its reply: `RESERVE_SHARE` of the window, or
  * `RESERVE_MIN` when that is more. A summary request that must be shrunk is aimed at the same size. A window too small
- * to give up `RESERVE_MIN` keeps `RESERVE_SHARE`.
+ * to give up `RESERVE_MIN` keeps `RESERVE_SHARE`. A configured `limit` below the model's window, or in place of an
+ * unknown one, is the window these are taken from.
  */
-const calculateCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer: Settings["buffer"]) => {
+const calculateCeiling = (
+  limit: SessionContext.Loaded["model"]["limit"],
+  settings: Pick<Settings, "buffer" | "limit">,
+) => {
+  const model = inputWindow(limit)
+  const window = settings.limit === undefined || (model > 0 && model < settings.limit) ? model : settings.limit
   // With no window at all, only a provider rejection can limit the request.
-  const window = inputWindow(limit)
   if (window <= 0) return Number.POSITIVE_INFINITY
-  const tokens = typeof buffer === "string" ? Math.round((window * Number.parseFloat(buffer)) / 100) : buffer
+  const tokens =
+    typeof settings.buffer === "string"
+      ? Math.round((window * Number.parseFloat(settings.buffer)) / 100)
+      : settings.buffer
   // A buffer that leaves no room, such as one set for a larger model, is ignored.
   if (tokens !== undefined && tokens < window) return window - tokens
   return window - Math.max(Math.floor(window * RESERVE_SHARE), window >= 2 * RESERVE_MIN ? RESERVE_MIN : 0)

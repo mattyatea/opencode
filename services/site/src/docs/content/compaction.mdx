@@ -153,6 +153,52 @@ and the threshold.
 | Skipped | Not used for native compaction, right after a model switch, or when a provider rejects a request as too long. After a break longer than the prompt cache lifetime, it starts from the next response instead. |
 | Storage | Held summaries live in memory and are lost on restart. |
 
+## Short context
+
+On a large window, the default buffer lets the conversation grow long before compaction: about 170k tokens on a 200k
+window and 850k on a 1M window. Every request resends that conversation, which uses up usage-based plans quickly.
+
+Without experimental settings, a larger `buffer` compacts earlier. `"buffer": "75%"` compacts at about 25% of each
+model's window.
+
+<Callout type="warning">
+  Experimental. This may change, break, or be removed in any release without notice.
+</Callout>
+
+`short_context_compaction` sizes automatic compaction for a 48,000-token window on every model with a larger or
+unknown window:
+
+```jsonc title="opencode.jsonc"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "short_context_compaction": true,
+  },
+}
+```
+
+| Rule | Behavior |
+| --- | --- |
+| Threshold | `buffer` is taken from 48k instead of the model's window: about 32k by default, 36k with `"25%"`. |
+| Smaller windows | A model whose window is under 48k keeps its own. |
+| Not a cap | Fixed instructions, tool schemas, and the recent conversation kept beside the summary still go out in full, so a request can exceed 48k. |
+| Trade-off | Requests stay smaller, but compaction runs more often, sends more uncached input, takes longer, and keeps fewer exact details. It is off by default for that reason. |
+
+Other experimental settings that send fewer tokens can be combined with it:
+
+```jsonc title="opencode.jsonc"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "compaction": { "buffer": "25%" },
+  "experimental": {
+    "short_context_compaction": true,
+    "codemode_tools": true,
+    "json_read": true,
+    "paste_files": true,
+  },
+}
+```
+
 ## Providers
 
 Some providers can compact the conversation on their side instead. Enable it per
