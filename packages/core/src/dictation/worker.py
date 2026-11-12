@@ -71,11 +71,22 @@ def frames_rms(audio):
     return np.sqrt(np.mean(framed * framed, axis=1))
 
 
-def echoes_hotwords(text):
-    # On very little speech the model can answer with the hotword list it was prompted with.
-    words = [word for word in re.split(r"[\s,、，。.]+", text) if word]
-    hotwords = {word.lower() for word in HOTWORDS}
-    return bool(words) and all(word.lower() in hotwords for word in words) and len(words) > 1
+# The model sometimes writes back the hotword list it was prompted with, alone or around the speech: several hotwords
+# in a row joined by commas. Speech rarely lists three of them that way; two may well be meant.
+HOTWORD_ECHO = (
+    re.compile(
+        r"(?:{0})(?:\s*[,、，]\s*(?:{0})){{{1},}}[,、，。.]?\s*".format(
+            "|".join(re.escape(word) for word in sorted(HOTWORDS, key=len, reverse=True)), min(len(HOTWORDS), 3) - 1
+        ),
+        re.IGNORECASE,
+    )
+    if len(HOTWORDS) > 1
+    else None
+)
+
+
+def strip_hotwords(text):
+    return HOTWORD_ECHO.sub("", text).strip() if HOTWORD_ECHO else text
 
 
 def decode(audio, language, draft=False):
@@ -85,7 +96,7 @@ def decode(audio, language, draft=False):
     if draft and DRAFT_MODEL and language in DRAFT_LANGUAGES:
         return load(DRAFT_MODEL).generate(audio).text.strip()
     text = load().generate(audio, language=language, hotwords=HOTWORDS or None, temperature=0.0).text.strip()
-    return "" if echoes_hotwords(text) else text
+    return strip_hotwords(text)
 
 
 def join(parts):
