@@ -23,6 +23,10 @@ export async function make(
       // Claude schedules read-only MCP tools concurrently, so each handler matches its own call by name and input.
       // Everything else stays serial, which keeps writes and commands one at a time.
       annotations: { readOnlyHint: tool.readOnly === true },
+      // Every opencode tool reaches Claude through this server, so Claude Code's tool search would hide all of them
+      // (ENABLE_TOOL_SEARCH is also off in query-options.ts). This list is only the direct tools and `execute`;
+      // MCP tools stay behind Code Mode's own search unless a server sets `codemode: false`.
+      // The result size is a ceiling only: outputs reach Claude already truncated by opencode's ToolOutput.
       _meta: { "anthropic/alwaysLoad": true, "anthropic/maxResultSizeChars": 500_000 },
     }),
   )
