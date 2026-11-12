@@ -17,6 +17,7 @@ import { Tool } from "../../tool.js"
 import { ToolOutput } from "../../tool-output.js"
 import { QuestionTool } from "../../tool/plugin/question.js"
 import { StepFailedError } from "../error.js"
+import { SessionEstimate } from "../estimate.js"
 import { SessionEvent } from "../event.js"
 import { SessionMessage } from "../message.js"
 import { SessionModelRequest } from "../model-request.js"
@@ -90,6 +91,9 @@ export const make = Effect.gen(function* () {
       ...modelAttributes,
       "gen_ai.agent.name": input.agent,
       ...(input.retryAttempt === undefined ? {} : { "opencode.retry.attempt": input.retryAttempt }),
+      // The character estimate of the whole request as sent, so it compares one to one with the provider's
+      // `gen_ai.usage.input_tokens`, which includes cache reads and writes. Measures the estimate's error (#20).
+      "opencode.request.estimated_input_tokens": SessionEstimate.estimateRequest(input.prepared.request),
     })
     const publisher = createLLMEventPublisher(bus, {
       sessionID: input.sessionID,
