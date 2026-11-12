@@ -259,6 +259,8 @@ function PartRow(props: {
 }) {
   const [open, setOpen] = createSignal(false)
   const expandable = () => props.entries.length > 1
+  // Largest first, so the entries that matter are on top instead of buried in alphabetical noise.
+  const sorted = createMemo(() => props.entries.toSorted((a, b) => b.tokens - a.tokens))
 
   return (
     <>
@@ -284,7 +286,7 @@ function PartRow(props: {
         </span>
       </button>
       <Show when={expandable() && open()}>
-        <For each={props.entries}>
+        <For each={sorted()}>
           {(entry) => (
             <div class="flex h-6 min-w-0 items-center gap-2.5 ps-6 text-12-regular text-text-weak">
               <span class="min-w-0 truncate" title={entry.id}>
