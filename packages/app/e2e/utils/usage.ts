@@ -68,3 +68,46 @@ export function emptyUsageStats(from: number, to: number): SessionStatsInfo {
     tools: { mode: "detail", totals: { calls: 0, succeeded: 0, failed: 0, unfinished: 0 }, usage: [] },
   }
 }
+
+export function drilldownUsageStats(
+  from: number,
+  to: number,
+  filter: { provider?: string; model?: string },
+): SessionStatsInfo {
+  const base = usageStats(from, to)
+  const factor = filter.model ? 1 : filter.provider ? 2 : 3
+  const tokens = {
+    input: 1200 * factor,
+    output: 300 * factor,
+    reasoning: 100 * factor,
+    cache: { read: 400 * factor, write: 0 },
+  }
+  const models = [
+    { model: { providerID: "openai", id: "usage-model" }, steps: 3, tokens: base.tokens, cost: 0.42 },
+    { model: { providerID: "openai", id: "other-model" }, steps: 3, tokens: base.tokens, cost: 0.42 },
+    { model: { providerID: "anthropic", id: "claude-model" }, steps: 3, tokens: base.tokens, cost: 0.42 },
+  ]
+  return {
+    ...base,
+    steps: 3 * factor,
+    tokens,
+    cost: 0.42 * factor,
+    models: filter.model ? models.slice(0, 1) : filter.provider ? models.slice(0, 2) : models,
+    activity: base.activity.map((row) => ({ ...row, steps: 3 * factor })),
+    sessionUsage: [
+      {
+        sessionID: "ses_drilldown",
+        title: filter.model || filter.provider || "All-provider work",
+        steps: 3 * factor,
+        tokens,
+        cost: 0.42 * factor,
+      },
+    ],
+    skills: [{ id: "effect", calls: 5 * factor }],
+    tools: {
+      mode: "detail",
+      totals: { calls: 5 * factor, succeeded: 5 * factor, failed: 0, unfinished: 0 },
+      usage: [{ name: "skill", calls: 5 * factor, succeeded: 5 * factor, failed: 0, unfinished: 0 }],
+    },
+  }
+}

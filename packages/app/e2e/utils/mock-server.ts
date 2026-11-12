@@ -82,7 +82,11 @@ export interface MockServerConfig {
   // directory it resolves.
   onLocationGet?: (directory: string) => void
   sessions: MockSession[]
-  sessionStats?: (from: number, to: number) => SessionStatsInfo | undefined
+  sessionStats?: (
+    from: number,
+    to: number,
+    filter: { provider?: string; model?: string },
+  ) => SessionStatsInfo | undefined
   usageLimits?: UsageLimitsInfo
   pageMessages: (
     sessionId: string,
@@ -857,16 +861,16 @@ function mockHandlers(
           config.infoFailures?.()
             ? Effect.fail(new MockInternal({ message: "Server temporarily unavailable" }))
             : Effect.succeed({
-            version: "2.0.0",
-            pid: 1,
-            hostname: config.hostname,
-            urls: config.server ? [config.server] : [],
-            paths: { tmp: "/tmp/opencode" },
-            capabilities:
-              state.persistentPty.capability === undefined
-                ? undefined
-                : { persistentPty: state.persistentPty.capability },
-          }),
+                version: "2.0.0",
+                pid: 1,
+                hostname: config.hostname,
+                urls: config.server ? [config.server] : [],
+                paths: { tmp: "/tmp/opencode" },
+                capabilities:
+                  state.persistentPty.capability === undefined
+                    ? undefined
+                    : { persistentPty: state.persistentPty.capability },
+              }),
         config: () => Effect.succeed(configEntries),
         reference: () => Effect.succeed({ location: location(config), data: [] }),
         // `beforeAgentsResponse` holds the Location's agent list, as a cold Location does while its plugins activate.
@@ -1014,7 +1018,10 @@ function mockHandlers(
         usageLimits: () => Effect.succeed({ location: location(config), data: config.usageLimits ?? null }),
         sessionStats: (ctx) => {
           const query = new URL(ctx.request.url, config.server ?? SERVER).searchParams
-          const stats = config.sessionStats?.(Number(query.get("from")), Number(query.get("to")))
+          const stats = config.sessionStats?.(Number(query.get("from")), Number(query.get("to")), {
+            provider: query.get("provider") ?? undefined,
+            model: query.get("model") ?? undefined,
+          })
           return stats ? Effect.succeed({ data: stats }) : unsupported("session statistics", "sessionStats")
         },
         worktreeList: () =>

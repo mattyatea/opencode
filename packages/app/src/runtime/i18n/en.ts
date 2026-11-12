@@ -59,6 +59,13 @@ export const dict = {
   "settings.usage.sevenDays": "7 days",
   "settings.usage.thirtyDays": "30 days",
   "settings.usage.refresh": "Refresh",
+  "settings.usage.provider": "Provider",
+  "settings.usage.model": "Model",
+  "settings.usage.allProviders": "All providers",
+  "settings.usage.allModels": "All models",
+  "settings.usage.tokenBreakdown": "Token breakdown",
+  "settings.usage.filteredNote":
+    "All statistics below use the selected provider and model. Costs are catalog estimates, not invoices. Compaction usage is excluded because it does not record its model.",
   "settings.usage.limits": "Plan limits",
   "settings.usage.limitsNote":
     "Provider allowances are separate from local statistics. OpenCode cannot attribute a subscription limit's consumption to individual models or sessions.",
@@ -76,6 +83,7 @@ export const dict = {
   "settings.usage.skills": "Skill calls",
   "settings.usage.activity": "Daily model activity",
   "settings.usage.models": "Models",
+  "settings.usage.providers": "Providers",
   "settings.usage.sessionBreakdown": "Session activity",
   "settings.usage.skillBreakdown": "Skills",
   "settings.usage.toolBreakdown": "Tools",

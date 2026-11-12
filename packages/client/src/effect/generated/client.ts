@@ -820,6 +820,8 @@ const EndpointExperimentalSessionStats =
           project: input?.["project"],
           timezone: input?.["timezone"],
           tools: input?.["tools"],
+          provider: input?.["provider"],
+          model: input?.["model"],
         },
       }).pipe(
         Effect.mapError(mapClientError),
