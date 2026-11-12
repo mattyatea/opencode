@@ -5,6 +5,12 @@ import source from "./worker.py" with { type: "text" }
 
 /** The speech model unless `OPENCODE_DICTATION_MODEL` names another. Chosen by measurement on an M3 Pro. */
 export const DEFAULT_MODEL = "mlx-community/Qwen3-ASR-0.6B-8bit"
+/**
+ * Draws the words still being spoken unless `OPENCODE_DICTATION_DRAFT_MODEL` names another or is empty. About 12 times
+ * faster than the main model with similar accuracy on everyday Japanese, but it spells English terms out in kana and
+ * takes no hotwords, so committed text always comes from the main model.
+ */
+export const DEFAULT_DRAFT_MODEL = "ibm-granite/granite-speech-5.0-470m-turboctc"
 /** The mlx-audio release the worker is tested with. */
 export const MLX_AUDIO = "mlx-audio==0.6.5"
 
@@ -13,6 +19,8 @@ export interface Config {
   readonly executable: string
   readonly args: readonly string[]
   readonly model: string
+  /** Empty when partial passes use the main model too. */
+  readonly draftModel: string
   readonly hotwords: readonly string[]
 }
 
@@ -40,6 +48,7 @@ export function config(env: Record<string, string | undefined> = process.env): C
       ? ["-c", source]
       : ["run", "--no-project", "--python", "3.12", "--with", MLX_AUDIO, "python", "-c", source],
     model: env.OPENCODE_DICTATION_MODEL || DEFAULT_MODEL,
+    draftModel: env.OPENCODE_DICTATION_DRAFT_MODEL ?? DEFAULT_DRAFT_MODEL,
     // No default: a hotword pulls similar-sounding speech toward itself ("useEffect" came back as "OpenCode").
     hotwords: (env.OPENCODE_DICTATION_HOTWORDS ?? "")
       .split(",")
@@ -84,6 +93,7 @@ export function createWorker(input: Config) {
         ...process.env,
         PYTHONUNBUFFERED: "1",
         OPENCODE_DICTATION_MODEL: input.model,
+        OPENCODE_DICTATION_DRAFT_MODEL: input.draftModel,
         OPENCODE_DICTATION_HOTWORDS: input.hotwords.join("\n"),
       },
       stdio: ["pipe", "pipe", "pipe"],

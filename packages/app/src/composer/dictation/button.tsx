@@ -11,10 +11,10 @@ import { encodeChunks, level, RATE, toPcm16, withTranscript } from "./pcm"
 import "./dictation.css"
 
 /**
- * How often a new partial transcript is requested. A tick while a pass runs is skipped, so passes run back to back and
- * each one only waits for the previous decode (about 0.1–0.3 s).
+ * How often a new partial transcript is requested. A tick while a pass runs is skipped, so a slow pass, such as one that
+ * commits a phrase with the main model (about 0.3–0.6 s), delays only the next tick. Draft passes take about 30 ms.
  */
-const PARTIAL_MS = 250
+const PARTIAL_MS = 150
 
 /** A model that has not answered `prepare` by then is loading or downloading; say so. */
 const LOADING_TOAST_MS = 1500
