@@ -19,6 +19,10 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
     description:
       "Upload large text pastes as readable paste.txt references instead of sending their contents inline. Defaults to false.",
   }),
+  short_context_compaction: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Size automatic compaction for a 48,000-token window on every model whose window is larger or unknown, so long sessions resend less conversation. compaction.buffer is taken from that window. Summaries keep fewer exact details and compact more often. Defaults to false.",
+  }),
   portable_shell_scanner: Schema.Boolean.pipe(optional).annotate({
     description: "Deprecated: the built-in shell permission scanner is now always enabled.",
   }),

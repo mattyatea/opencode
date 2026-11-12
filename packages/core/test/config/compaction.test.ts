@@ -18,6 +18,7 @@ import { Location } from "@opencode/core/location"
 import { Project } from "@opencode/core/project"
 import { AbsolutePath } from "@opencode/core/schema"
 import { ConfigCompaction } from "@opencode/schema/config/compaction"
+import { ConfigExperimental } from "@opencode/schema/config/experimental"
 import { Document, Event, Info } from "@opencode/schema/config"
 import { Money } from "@opencode/schema/money"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -141,6 +142,38 @@ describe("ConfigCompactionPlugin.Plugin", () => {
         yield* Effect.sleep("10 millis")
       }
       yield* Effect.die(new Error("Timed out waiting for compaction config reload"))
+    }),
+  )
+
+  it.live("sizes compaction for 48k tokens with experimental.short_context_compaction", () =>
+    Effect.gen(function* () {
+      const compaction = yield* SessionCompaction.Service
+      const due = (input: typeof nearInput) =>
+        compaction
+          .compact({ reason: "auto", context: input.context })
+          .pipe(Effect.map((outcome) => outcome.status !== "skipped"))
+      const config = yield* Config.Test
+      const bus = yield* Bus.Service
+      const shortContext = (enabled: boolean) =>
+        new Document({
+          type: "document",
+          info: new Info({ experimental: new ConfigExperimental.Info({ short_context_compaction: enabled }) }),
+        })
+      yield* config.setEntries([shortContext(true)])
+      yield* ConfigCompactionPlugin.Plugin.effect(host({ event: { subscribe: () => bus.subscribe(Event.Updated) } }))
+
+      // 48k less the 16k reserve.
+      expect(yield* due(input(31_999))).toBe(false)
+      expect(yield* due(input(32_000))).toBe(true)
+
+      yield* config.setEntries([shortContext(false)])
+      yield* bus.publish(Event.Updated, {})
+      const deadline = Date.now() + 10_000
+      while (yield* due(input(32_000))) {
+        if (Date.now() > deadline) return yield* Effect.die(new Error("Timed out waiting for compaction config reload"))
+        yield* Effect.sleep("10 millis")
+      }
+      expect(yield* due(bufferedInput)).toBe(true)
     }),
   )
 })

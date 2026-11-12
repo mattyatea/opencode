@@ -15,7 +15,12 @@ export const Plugin = define({
     const flags = yield* Flag.Service
     const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, compaction.reload())
     yield* compaction.transform((editor) => {
-      editor.configure({ precompute: flags.resolve(loaded.entries).background_compaction.enabled })
+      editor.configure({
+        precompute: flags.resolve(loaded.entries).background_compaction.enabled,
+        // Opt-in only: in one measured session it cut the largest request from ~121k to ~25k tokens, but sent more
+        // uncached input, ran slower, and kept fewer exact details (mattyatea/opencode#3).
+        limit: Config.latest(loaded.entries, "experimental")?.short_context_compaction === true ? 48_000 : undefined,
+      })
       for (const entry of loaded.entries) {
         if (entry.type !== "document" || !entry.info.compaction) continue
         editor.configure({

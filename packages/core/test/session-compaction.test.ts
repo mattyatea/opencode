@@ -483,6 +483,22 @@ it.effect("auto compaction estimates current content against the buffered prompt
       }),
     )
 
+    // A configured limit is the window for larger and unknown windows; a smaller model window still wins.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* compaction.transform((editor) => editor.configure({ limit: 48_000 }))
+        expect(yield* due(input(31_999, contextLimited))).toBe(false)
+        expect(yield* due(input(32_000, contextLimited))).toBe(true)
+        expect(yield* due(input(31_999, { context: 0, output: 0 }))).toBe(false)
+        expect(yield* due(input(32_000, { context: 0, output: 0 }))).toBe(true)
+        expect(yield* due(input(25_499, { context: 30_000, output: 4_000 }))).toBe(false)
+        expect(yield* due(input(25_500, { context: 30_000, output: 4_000 }))).toBe(true)
+        yield* compaction.transform((editor) => editor.configure({ buffer: "25%" }))
+        expect(yield* due(input(35_999, contextLimited))).toBe(false)
+        expect(yield* due(input(36_000, contextLimited))).toBe(true)
+      }),
+    )
+
     const assistant = input(89_000, contextLimited).messages[0]
     const tool = SessionMessage.AssistantTool.make({
       type: "tool",
