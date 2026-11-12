@@ -1,7 +1,7 @@
 export * as Session from "./session.js"
 export * from "./session/schema.js"
 
-import { Clock, DateTime, Effect, Layer, Context, Option, Schema, Stream } from "effect"
+import { Cause, Clock, DateTime, Effect, Layer, Context, Option, Schema, Stream } from "effect"
 import { LLMClient } from "@opencode/ai/effect"
 import { ListAnchor, ListCursor, ListFilter } from "@opencode/schema/session"
 import { and, desc, eq, inArray, sql } from "drizzle-orm"
@@ -367,7 +367,13 @@ const layer = Layer.effect(
         const existing = input.id ? yield* store.get(input.id) : undefined
         if (existing && existing.experimental?.taskParentID !== parent.id)
           return yield* new TaskRelationError({ message: "Session ID already belongs to another task." })
-        return yield* result.create({ id: input.id, title: input.title.trim(), taskParentID: parent.id })
+        // Without the parent's model the task would resolve the default model, ignoring the parent's model selection.
+        return yield* result.create({
+          id: input.id,
+          title: input.title.trim(),
+          taskParentID: parent.id,
+          model: parent.model,
+        })
       }),
       taskTree: Effect.fn("Session.taskTree")(function* (sessionID) {
         const current = yield* result.get(sessionID)
@@ -692,6 +698,29 @@ const layer = Layer.effect(
         commit: (sessionID) => sessions.forSession(sessionID).revert.commit(),
       },
     })
+
+    // A persistent child task has no reader besides its owner, so its failed run is reported to the parent.
+    yield* bus.subscribe(SessionEvent.Execution.Failed).pipe(
+      Stream.runForEach((event) =>
+        Effect.gen(function* () {
+          const task = yield* store.get(event.data.sessionID)
+          const parentID = task?.experimental?.taskParentID
+          if (!task || !parentID) return
+          yield* result.taskMessage({
+            sessionID: task.id,
+            targetID: parentID,
+            text: `This task's run failed and stopped.\nError: ${event.data.error.message}\nOpen the task to inspect it, or send it a message to retry.`,
+          })
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.void
+              : Effect.logWarning("Failed to report task failure to parent", cause),
+          ),
+        ),
+      ),
+      Effect.forkScoped,
+    )
 
     return result
   }),

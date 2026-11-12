@@ -78,7 +78,8 @@ export function ProjectSidebar() {
 
         const sessions = connection.ctx.data.session
           .apply(mergeHomeSessionIndex(queries[index]?.data?.() ?? [], connection.ctx.data.session.list()))
-          .filter((session) => !session.parentID && !session.time.archived)
+          // Persistent tasks render nested under their root session, never as rows of their own.
+          .filter((session) => !session.parentID && !session.experimental?.taskParentID && !session.time.archived)
 
         return connection.ctx.projects.unique().map((project) => ({
           ...connection,
