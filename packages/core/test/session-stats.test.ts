@@ -253,6 +253,55 @@ describe("SessionStats", () => {
       expect(summary.sessionUsage).toBeUndefined()
       expect(summary.skills).toBeUndefined()
 
+      const provider = yield* SessionStats.get({
+        from: Date.UTC(2026, 0, 1),
+        to: Date.UTC(2026, 1, 1),
+        providerID: Provider.ID.make("anthropic"),
+        tools: "detail",
+        timezone: "UTC",
+      })
+      expect(provider.steps).toBe(3)
+      expect(provider.cost).toBe(Money.USD.make(6))
+      expect(provider.tokens.input).toBe(40)
+      expect(provider.skills).toEqual([{ id: "effect", calls: 1 }])
+
+      const model = yield* SessionStats.get({
+        from: Date.UTC(2026, 0, 1),
+        to: Date.UTC(2026, 1, 1),
+        providerID: Provider.ID.make("anthropic"),
+        modelID: Model.ID.make("large"),
+        tools: "detail",
+        timezone: "UTC",
+      })
+      expect(model.steps).toBe(1)
+      expect(model.subagents).toBe(1)
+      expect(model.sessions).toBe(0)
+      expect(model.cost).toBe(Money.USD.make(3))
+      expect(model.activity).toEqual([{ date: "2026-01-03", steps: 1 }])
+      expect(model.models.map((row) => row.model.id)).toEqual([Model.ID.make("large")])
+      expect(model.sessionUsage).toMatchObject([{ sessionID: childID, steps: 1, cost: 3 }])
+      expect(model.tools).toMatchObject({ mode: "detail", totals: { calls: 0 } })
+      expect(model.skills).toEqual([])
+
+      const filteredSummary = yield* SessionStats.get({
+        from: Date.UTC(2026, 0, 1),
+        to: Date.UTC(2026, 1, 1),
+        providerID: Provider.ID.make("anthropic"),
+        modelID: Model.ID.make("large"),
+        tools: "summary",
+      })
+      expect(filteredSummary.tools).toMatchObject({ mode: "summary", totals: { calls: 0 } })
+
+      const missingProvider = yield* SessionStats.get({
+        from: Date.UTC(2026, 0, 1),
+        to: Date.UTC(2026, 1, 1),
+        providerID: Provider.ID.make("openai"),
+        tools: "detail",
+      })
+      expect(missingProvider.steps).toBe(0)
+      expect(missingProvider.cost).toBe(Money.USD.make(0))
+      expect(missingProvider.sessionUsage).toEqual([])
+
       const withoutTools = yield* SessionStats.get({
         from: Date.UTC(2026, 0, 1),
         to: Date.UTC(2026, 1, 1),
@@ -298,6 +347,15 @@ describe("SessionStats", () => {
         { id: "legacy-skill", calls: 1 },
       ])
       expect(split.tools).toMatchObject({ totals: { calls: 4, succeeded: 1, failed: 2, unfinished: 1 } })
+      const splitModel = yield* SessionStats.get({
+        from: Date.UTC(2026, 0, 1),
+        to: Date.UTC(2026, 1, 1),
+        providerID: Provider.ID.make("anthropic"),
+        modelID: Model.ID.make("large"),
+        tools: "detail",
+      })
+      expect(splitModel.skills).toEqual([{ id: "legacy-skill", calls: 1 }])
+      expect(splitModel.tools).toMatchObject({ totals: { calls: 1, succeeded: 0, failed: 1, unfinished: 0 } })
     }),
   )
 

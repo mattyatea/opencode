@@ -6,7 +6,7 @@ import { mockRemoteServer, mockWorkspace, openSession, openSettings, type Worksp
 import { CONSOLE_URL, consoleGateway, consoleSignIn } from "../utils/console"
 import { recordNotifications } from "../utils/notifications"
 import { installSseTransport } from "../utils/sse-transport"
-import { emptyUsageStats, usageLimits, usageStats } from "../utils/usage"
+import { drilldownUsageStats, emptyUsageStats, usageLimits, usageStats } from "../utils/usage"
 
 const directory = "C:/Projects/settings-demo"
 
@@ -134,25 +134,81 @@ test("usage settings keep the selected period and data through health reconnects
   await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
 
   failed = true
-  const offline = page.waitForResponse((response) => response.url() === `${SERVER}/api/info` && response.status() === 500)
+  const offline = page.waitForResponse(
+    (response) => response.url() === `${SERVER}/api/info` && response.status() === 500,
+  )
   await page.clock.fastForward(10_000)
   await offline
   const switcher = settings.locator('[data-action="settings-server-select"]:visible')
   await switcher.click()
   await expect(page.getByRole("menuitemradio", { name: /usage-host/ })).toContainText("Unreachable")
-  await page.keyboard.press("Escape")
+  await settings.getByRole("heading", { name: "Usage", exact: true }).click()
   await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
   await expect(settings.getByRole("button", { name: "30 days", exact: true })).toHaveAttribute("aria-pressed", "true")
 
   failed = false
-  const online = page.waitForResponse((response) => response.url() === `${SERVER}/api/info` && response.status() === 200)
+  const online = page.waitForResponse(
+    (response) => response.url() === `${SERVER}/api/info` && response.status() === 200,
+  )
   await page.clock.fastForward(10_000)
   await online
   await switcher.click()
   await expect(page.getByRole("menuitemradio", { name: /usage-host/ })).not.toContainText("Unreachable")
-  await page.keyboard.press("Escape")
+  await settings.getByRole("heading", { name: "Usage", exact: true }).click()
   await expect(settings.getByText("Monthly work", { exact: true })).toBeVisible()
   expect(reads).toBe(2)
+})
+
+test("usage settings drill down by provider and model with distinct token colors", async ({ page }) => {
+  const { settings } = await open(page, { sessionStats: drilldownUsageStats })
+  await settings.getByRole("tab", { name: "Usage", exact: true }).click()
+  const summary = settings.locator(".usage-summary .usage-total")
+  await expect(summary).toHaveText(["9", "1", "6,000", "$1.26", "15", "15"])
+  const providers = settings.getByRole("table", { name: "Providers", exact: true })
+  await expect(providers.getByRole("row")).toHaveCount(3)
+  await expect(
+    providers
+      .getByRole("row")
+      .filter({ has: page.getByRole("rowheader", { name: "openai", exact: true }) })
+      .getByRole("cell"),
+  ).toHaveText(["6", "2,400", "600", "200", "800", "0", "$0.84"])
+  await expect(
+    providers
+      .getByRole("row")
+      .filter({ has: page.getByRole("rowheader", { name: "anthropic", exact: true }) })
+      .getByRole("cell"),
+  ).toHaveText(["3", "1,200", "300", "100", "400", "0", "$0.42"])
+  const provider = settings.locator('[data-component="select-v2"][aria-label="Provider"]')
+  const model = settings.locator('[data-component="select-v2"][aria-label="Model"]')
+  await expect(model).toHaveAttribute("data-disabled", "")
+  await provider.click()
+  await page.getByRole("option", { name: "openai", exact: true }).click()
+  await expect(summary).toHaveText(["6", "1", "4,000", "$0.84", "10", "10"])
+  await expect(providers.getByRole("row")).toHaveCount(2)
+  await model.click()
+  await expect(page.getByRole("option")).toHaveText(["All models", "other-model", "usage-model"])
+  const requested = page.waitForRequest((request) => {
+    const url = new URL(request.url())
+    return (
+      url.pathname === "/api/experimental/session/stats" &&
+      url.searchParams.get("provider") === "openai" &&
+      url.searchParams.get("model") === "usage-model"
+    )
+  })
+  await page.getByRole("option", { name: "usage-model", exact: true }).click()
+  await requested
+  await expect(summary).toHaveText(["3", "1", "2,000", "$0.42", "5", "5"])
+  await expect(providers.getByRole("cell")).toHaveText(["3", "1,200", "300", "100", "400", "0", "$0.42"])
+  await expect(settings.getByRole("table", { name: "Session activity", exact: true })).toContainText("usage-model")
+  await expect(settings.getByRole("table", { name: "Models", exact: true }).getByRole("row")).toHaveCount(2)
+  const colors = await settings
+    .locator(".usage-token-legend i")
+    .evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).backgroundColor))
+  expect(new Set(colors).size).toBe(5)
+  await provider.click()
+  await page.getByRole("option", { name: "All providers", exact: true }).click()
+  await expect(summary).toHaveText(["9", "1", "6,000", "$1.26", "15", "15"])
+  await expect(model).toHaveText("All models")
 })
 
 test("settings has its own route and returns through app history", async ({ page }) => {

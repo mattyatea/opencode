@@ -33,6 +33,7 @@ import {
 import { Agent } from "@opencode/schema/agent"
 import { Skill } from "@opencode/schema/skill"
 import { Model } from "@opencode/schema/model"
+import { Provider } from "@opencode/schema/provider"
 import { Permission } from "@opencode/schema/permission"
 import { Location } from "@opencode/schema/location"
 import { SessionEvent } from "@opencode/schema/session-event"
@@ -174,6 +175,8 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           project: Project.ID.pipe(Schema.optional),
           timezone: Schema.String.pipe(Schema.optional),
           tools: SessionStats.ToolMode.pipe(Schema.optional),
+          provider: Provider.ID.pipe(Schema.optional),
+          model: Schema.String.pipe(Schema.optional),
         }),
         success: Schema.Struct({ data: SessionStats.Info }),
         error: InvalidRequestError,

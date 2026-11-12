@@ -3880,6 +3880,8 @@ export type ExperimentalSessionStatsInput = {
   readonly project?: string | undefined
   readonly timezone?: string | undefined
   readonly tools?: "none" | "summary" | "detail" | undefined
+  readonly provider?: string | undefined
+  readonly model?: string | undefined
 }
 
 export type ExperimentalSessionStatsOutput = { data: SessionStatsInfo }["data"]
