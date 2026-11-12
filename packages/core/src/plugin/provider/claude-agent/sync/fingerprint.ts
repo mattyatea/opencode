@@ -91,22 +91,26 @@ export function groups(prompt: LanguageModelV3Prompt, prefix: readonly { readonl
     if (message.role === "system") continue
     const parts = visible(message)
     if (parts.length === 0) continue
-    const members = [hash(parts)]
-    // Consecutive user messages hash without order on purpose. Plan mode splices its reminder before the user's
-    // prompt in the current request but persists it as a synthetic message after that prompt, so the next request
-    // carries the same user group in the opposite order.
     if (message.role === "user") {
+      const messages = [{ hash: hash(parts), reminder: isReminder(message) }]
       while (i < prompt.length) {
         // A submitted input remains a boundary even when a later user message arrives without a visible reply.
         const checkpoint = prefix[groups.length]
-        if (checkpoint && hash({ role: message.role, members: members.toSorted() }) === checkpoint.hash) break
+        if (checkpoint && hash({ role: message.role, members: userMembers(messages) }) === checkpoint.hash) break
         const next = prompt[i]!
         if (next.role !== "user") break
-        members.push(hash(visible(next)))
+        messages.push({ hash: hash(visible(next)), reminder: isReminder(next) })
         i++
       }
-      members.sort()
+      groups.push({
+        hash: hash({ role: message.role, members: userMembers(messages) }),
+        role: message.role,
+        start,
+        end: i,
+      })
+      continue
     }
+    const members = [hash(parts)]
     if (message.role === "tool") {
       const next = prompt[i]
       if (next && next.role === "user" && isToolMedia(next)) {
@@ -117,4 +121,27 @@ export function groups(prompt: LanguageModelV3Prompt, prefix: readonly { readonl
     groups.push({ hash: hash({ role: message.role, members }), role: message.role, start, end: i })
   }
   return groups
+}
+
+// Plan mode splices its reminder before the user's prompt in the current request but persists it as a synthetic
+// message after that prompt, so the next request carries the reminder on the other side. Reminders therefore hash
+// without order, while real inputs keep theirs. A single-message group hashes the same as before.
+function userMembers(messages: readonly { hash: string; reminder: boolean }[]) {
+  return [
+    ...messages.filter((message) => !message.reminder).map((message) => message.hash),
+    ...messages
+      .filter((message) => message.reminder)
+      .map((message) => message.hash)
+      .toSorted(),
+  ]
+}
+
+function isReminder(message: LanguageModelV3Message) {
+  if (message.role !== "user") return false
+  if (!message.content.every((part) => part.type === "text")) return false
+  const text = message.content
+    .map((part) => part.text)
+    .join("")
+    .trim()
+  return text.startsWith("<system-reminder>") && text.endsWith("</system-reminder>")
 }

@@ -81,11 +81,12 @@ describe("history reconciliation", () => {
     expect(SyncDecision.decide([...past, user("Next")], { claudeSessionID: "old" }).kind).toBe("fresh")
   })
 
-  test("ignores thinking, metadata and reordered user notes, but notices changed visible text", () => {
-    const original: LanguageModelV3Prompt = [user("Plan reminder"), ...past]
+  test("ignores thinking, metadata and reordered reminders, but notices changed visible text", () => {
+    const reminder = user("<system-reminder>\nYou are in Plan mode.\n</system-reminder>")
+    const original: LanguageModelV3Prompt = [reminder, ...past]
     const changed: LanguageModelV3Prompt = [
       past[0]!,
-      user("Plan reminder"),
+      reminder,
       {
         role: "assistant",
         content: [
@@ -97,7 +98,27 @@ describe("history reconciliation", () => {
     ]
     const hashes = (prompt: LanguageModelV3Prompt) => Fingerprint.groups(prompt).map((group) => group.hash)
     expect(hashes(changed)).toEqual(hashes(original))
-    expect(hashes([user("Changed reminder"), ...past])).not.toEqual(hashes(original))
+    expect(hashes([user("<system-reminder>\nChanged\n</system-reminder>"), ...past])).not.toEqual(hashes(original))
+  })
+
+  test("notices reordered user inputs and keeps the Plan reminder placement from changing history", () => {
+    const reminder = user("<system-reminder>\nYou are in Plan mode.\n</system-reminder>")
+    const sent = [...past, user("First"), user("Second")]
+    const saved = { claudeSessionID: "claude-a", history: Fingerprint.groups(sent) }
+    expect(SyncDecision.decide([...past, user("Second"), user("First")], saved).kind).toBe("changed")
+
+    // Plan mode sends the reminder before the prompt, then persists it after the prompt.
+    const planned = {
+      claudeSessionID: "claude-a",
+      history: Fingerprint.groups([...past, reminder, user("Next"), assistant("Plan")]),
+    }
+    expect(SyncDecision.decide([...past, user("Next"), reminder, assistant("Plan"), user("Go")], planned)).toEqual({
+      kind: "continue",
+      start: 5,
+    })
+    expect(SyncDecision.decide([...past, user("Other"), reminder, assistant("Plan"), user("Go")], planned).kind).toBe(
+      "changed",
+    )
   })
 
   test("compares tool inputs independent of key order and keeps tool images with their result", () => {
