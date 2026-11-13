@@ -89,6 +89,8 @@ export type ComposerEditorProps = {
   borderUnderlay?: boolean
   class?: string
   modelControl?: JSX.Element
+  /** Controls after the model and variant selects, such as plugin contributions. */
+  extraControls?: JSX.Element
   modelControlsVisible?: boolean
   /** Controls before the send button, such as dictation. */
   actions?: JSX.Element
@@ -508,6 +510,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
                   )}
                 </Show>
               </Show>
+              {props.extraControls}
             </div>
           </div>
           <Show when={!touch()}>

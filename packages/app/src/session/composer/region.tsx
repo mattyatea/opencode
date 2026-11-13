@@ -52,6 +52,7 @@ import { createSessionRequestModel } from "../requests/model"
 import type { Region } from "@/runtime/plugin/panels"
 import { SessionLocationMissing } from "./location-missing"
 import { SessionPluginPills } from "./plugin-pills"
+import { PluginSlot } from "@/runtime/plugin/render"
 import { createTimelineActions, type TimelineActionsView, type TimelinePendingActions } from "./timeline-actions"
 import type { MountedSession, SessionScreen } from "@opencode/plugin/gui"
 
@@ -614,6 +615,7 @@ export function ActiveSessionComposerRegion(props: {
                   readOnly={props.model.queue.undoing()}
                   suggestionBoundary={props.suggestionBoundary}
                   actions={<ComposerDictation controller={props.model.composer} />}
+                  extraControls={<PluginSlot at="composer.controls" input={{}} />}
                 />
               </VoiceComposer>
             </div>

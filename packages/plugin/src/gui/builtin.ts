@@ -98,6 +98,12 @@ export const BuiltinPanel = Registry.define<BuiltinPanel>("panel")
 
 /** The slots of `SlotMap`, and those only built-ins fill. */
 export interface BuiltinSlotMap extends SlotMap {
+  /**
+   * Controls after the composer's agent, model and variant selects, in the same scrolling row. Rendered on the new
+   * session page and in sessions alike, so it has no session input. Keep each control 28px tall; menus must portal out
+   * of the row, which clips overflow.
+   */
+  readonly "composer.controls": Record<string, never>
   /** Items after Copy branch name in the branch submenu. Only rendered for a named branch with an owning screen. */
   readonly "session.location.branch.menu": SlotMap["session.location.menu"]
   /** Items after the host's copy and reveal actions in the session directory's path submenu. Requires an owning screen. */

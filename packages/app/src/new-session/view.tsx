@@ -51,6 +51,7 @@ import {
   transitionWordmark,
   type WordmarkEvent,
 } from "./wordmark-machine"
+import { PluginSlot } from "@/runtime/plugin/render"
 
 const providerTipDismissalDuration = 30 * 24 * 60 * 60 * 1000
 
@@ -125,7 +126,11 @@ export function NewSessionView(props: {
             <div class="mt-8 flex flex-col gap-3">
               <div data-slot="new-session-composer" class="flex flex-col gap-1">
                 <div class="relative z-10">
-                  <Composer model={props.composer} actions={<ComposerDictation controller={props.composer} />} />
+                  <Composer
+                    model={props.composer}
+                    actions={<ComposerDictation controller={props.composer} />}
+                    extraControls={<PluginSlot at="composer.controls" input={{}} />}
+                  />
                 </div>
                 <Show when={props.project.selected()}>
                   {(project) => (
