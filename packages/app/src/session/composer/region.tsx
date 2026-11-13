@@ -615,7 +615,16 @@ export function ActiveSessionComposerRegion(props: {
                   readOnly={props.model.queue.undoing()}
                   suggestionBoundary={props.suggestionBoundary}
                   actions={<ComposerDictation controller={props.model.composer} />}
-                  extraControls={<PluginSlot at="composer.controls" input={{}} />}
+                  extraControls={
+                    <PluginSlot
+                      at="composer.controls"
+                      input={{
+                        get providerID() {
+                          return props.model.composer.model.selection.key()?.providerID
+                        },
+                      }}
+                    />
+                  }
                 />
               </VoiceComposer>
             </div>

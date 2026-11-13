@@ -103,7 +103,10 @@ export interface BuiltinSlotMap extends SlotMap {
    * session page and in sessions alike, so it has no session input. Keep each control 28px tall; menus must portal out
    * of the row, which clips overflow.
    */
-  readonly "composer.controls": Record<string, never>
+  readonly "composer.controls": {
+    /** The provider of the composer's selected model; undefined while none is selected. A reactive getter. */
+    readonly providerID: string | undefined
+  }
   /** Items after Copy branch name in the branch submenu. Only rendered for a named branch with an owning screen. */
   readonly "session.location.branch.menu": SlotMap["session.location.menu"]
   /** Items after the host's copy and reveal actions in the session directory's path submenu. Requires an owning screen. */

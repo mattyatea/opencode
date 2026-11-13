@@ -129,7 +129,16 @@ export function NewSessionView(props: {
                   <Composer
                     model={props.composer}
                     actions={<ComposerDictation controller={props.composer} />}
-                    extraControls={<PluginSlot at="composer.controls" input={{}} />}
+                    extraControls={
+                      <PluginSlot
+                        at="composer.controls"
+                        input={{
+                          get providerID() {
+                            return props.composer.model.selection.key()?.providerID
+                          },
+                        }}
+                      />
+                    }
                   />
                 </div>
                 <Show when={props.project.selected()}>
