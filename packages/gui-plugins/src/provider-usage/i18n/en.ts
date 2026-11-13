@@ -1,0 +1,15 @@
+export default {
+  title: "Plan usage limits",
+  empty: "Usage",
+  refresh: "Refresh",
+  "mode.used": "Used",
+  "mode.remaining": "Left",
+  "mode.toggle": "Switch between used and remaining",
+  signedOut: "Not signed in",
+  unavailable: "Unavailable",
+  loading: "Loading usage…",
+  failed: "Couldn't load usage",
+  resetsAt: "Resets {{time}}",
+  reset: "Reset",
+  checkedAt: "Updated {{time}}",
+}

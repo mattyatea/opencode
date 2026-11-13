@@ -29,6 +29,8 @@ export function Composer(props: {
   suggestionBoundary?: () => HTMLElement | undefined
   /** Controls before the send button, such as dictation. */
   actions?: JSX.Element
+  /** Controls after the model and variant selects. */
+  extraControls?: JSX.Element
 }) {
   const dialog = useDialog()
   const command = useCommand()
@@ -74,6 +76,7 @@ export function Composer(props: {
         exitShellKeybind={[formatKeybind("esc", language.t)]}
         suggestionBoundary={props.suggestionBoundary}
         actions={props.actions}
+        extraControls={props.extraControls}
         modelControl={
           <ComposerModelControl
             loading={props.model.model.loading}

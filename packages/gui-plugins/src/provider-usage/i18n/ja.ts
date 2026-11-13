@@ -1,0 +1,15 @@
+export default {
+  title: "プランの使用量上限",
+  empty: "使用量",
+  refresh: "更新",
+  "mode.used": "使用量",
+  "mode.remaining": "残量",
+  "mode.toggle": "使用量と残量を切り替え",
+  signedOut: "未ログイン",
+  unavailable: "取得できない",
+  loading: "使用量を読み込み中…",
+  failed: "使用量を取得できなかった",
+  resetsAt: "{{time}}にリセット",
+  reset: "リセット済み",
+  checkedAt: "{{time}} に更新",
+}
