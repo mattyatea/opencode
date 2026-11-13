@@ -13,9 +13,26 @@ type Tone = "warn" | "hot" | "full" | undefined
 
 const REFRESH_EVERY = 300_000
 
+/** The usage entry (`ProviderUsage.Provider.id`) behind a model provider; undefined for providers without one. */
+function usageFor(providerID: string) {
+  switch (providerID) {
+    case "claude-agent":
+    case "anthropic":
+      return "claude"
+    case "opencode-go":
+      return "opencode"
+    case "openai":
+      return "openai"
+    case "xai":
+      return "xai"
+    default:
+      return undefined
+  }
+}
+
 /**
- * Subscription usage of the signed-in providers beside the composer's model and variant selects: a ring per provider
- * with its most-used limit, and a popover with every limit, its reset time and a refresh. The server's provider usage
+ * Subscription usage of the composer's selected model beside its model and variant selects: a ring with the most-used
+ * limit of that model's provider, and a popover with every limit, its reset time and a refresh. The server's provider usage
  * plugin reads the providers and caches them for five minutes.
  */
 const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
@@ -79,44 +96,49 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
       draft.mode = draft.mode === "used" ? "remaining" : "used"
     })
 
-  const rings = () =>
-    (state.snapshot?.providers ?? []).flatMap((provider) => {
-      const top = provider.meters.toSorted((a, b) => b.usedPercent - a.usedPercent)[0]
+  // The usage of the subscription behind the composer's selected model; none for providers without one.
+  const routed = (providerID: string | undefined) => {
+    const id = providerID === undefined ? undefined : usageFor(providerID)
 
-      return top ? [{ provider, meter: top }] : []
-    })
+    if (!id) return undefined
+
+    return state.snapshot?.providers.find((provider) => provider.id === id && provider.state !== "signed-out")
+  }
+
+  const topMeter = (provider: ProviderUsage.Provider) =>
+    provider.meters.toSorted((a, b) => b.usedPercent - a.usedPercent)[0]
 
   ctx.add(Style, css)
   ctx.add(BuiltinSlot, {
     at: "composer.controls",
     order: 10,
-    render: () => (
-      <Show when={rings().length > 0 || state.loading || state.failed}>
-        <Popover
-          placement="top-end"
-          gutter={8}
-          overflowPadding={16}
-          open={state.open}
-          onOpenChange={(open) => {
-            setState("open", open)
+    render: (input) => (
+      <Show when={routed(input.providerID)}>
+        {(provider) => (
+          <Popover
+            placement="top-end"
+            gutter={8}
+            overflowPadding={16}
+            open={state.open}
+            onOpenChange={(open) => {
+              setState("open", open)
 
-            if (open) load(false)
-          }}
-        >
-          <Popover.Trigger
-            as="button"
-            type="button"
-            data-slot="provider-usage-trigger"
-            aria-label={ctx.t("title")}
-            title={rings()
-              .map((row) => `${row.provider.name}・${row.meter.label} ${percentText(row.meter.usedPercent, mode())}`)
-              .join("\n")}
-            onMouseDown={(event: MouseEvent) => event.preventDefault()}
+              if (open) load(false)
+            }}
           >
-            <Show when={rings().length > 0} fallback={<span>{ctx.t("empty")}</span>}>
-              <For each={rings()}>
-                {(row) => (
-                  <span data-slot="provider-usage-ring" data-tone={tone(row.meter.usedPercent, mode())}>
+            <Popover.Trigger
+              as="button"
+              type="button"
+              data-slot="provider-usage-trigger"
+              aria-label={ctx.t("title")}
+              title={provider()
+                .meters.map((meter) => `${meter.label} ${percentText(meter.usedPercent, mode())}`)
+                .join("\n")}
+              onMouseDown={(event: MouseEvent) => event.preventDefault()}
+            >
+              <Show when={topMeter(provider())} fallback={<span>{ctx.t("empty")}</span>}>
+                {(meter) => (
+                  <span data-slot="provider-usage-ring" data-tone={tone(meter().usedPercent, mode())}>
                     <svg viewBox="0 0 20 20" aria-hidden="true">
                       <circle class="track" cx="10" cy="10" r="8" stroke-width="3" />
                       <circle
@@ -126,75 +148,64 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
                         r="8"
                         stroke-width="3"
                         pathLength="100"
-                        stroke-dasharray={`${shown(row.meter.usedPercent, mode())} 100`}
+                        stroke-dasharray={`${shown(meter().usedPercent, mode())} 100`}
                       />
                     </svg>
-                    {shortName(row.provider)}
+                    {percentText(meter().usedPercent, mode())}
                   </span>
                 )}
-              </For>
-            </Show>
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Content data-slot="provider-usage-panel" aria-label={ctx.t("title")}>
-              <Show
-                when={state.snapshot}
-                fallback={<div class="muted">{ctx.t(state.failed ? "failed" : "loading")}</div>}
-              >
-                {(snapshot) => (
-                  <>
-                    <For each={snapshot().providers.filter((provider) => provider.state !== "signed-out")}>
-                      {(provider) => (
-                        <section>
-                          <div class="head">
-                            <span>
-                              <strong>{provider.name}</strong>
-                              <Show when={provider.state === "ready" && provider.detail}>
-                                {(plan) => <span> · {capitalize(plan())}</span>}
-                              </Show>
-                            </span>
-                            <Show when={provider.state === "unavailable"}>
-                              <span class="muted">{provider.detail ?? ctx.t("unavailable")}</span>
-                            </Show>
-                          </div>
-                          <For each={provider.meters}>
-                            {(meter) => (
-                              <div class="row" data-tone={tone(meter.usedPercent, mode())}>
-                                <div class="line">
-                                  <span>{meter.label}</span>
-                                  <span class="meta">
-                                    <Show when={meter.resetsAt}>{(at) => <span>{resetText(at())}</span>}</Show>
-                                    <span class="value">{percentText(meter.usedPercent, mode())}</span>
-                                  </span>
-                                </div>
-                                <div class="bar">
-                                  <div class="fill" style={{ width: `${shown(meter.usedPercent, mode())}%` }} />
-                                </div>
-                              </div>
-                            )}
-                          </For>
-                        </section>
-                      )}
-                    </For>
-                    <footer>
-                      <span>
-                        {ctx.t(state.failed ? "failed" : "checkedAt", { time: clock(snapshot().checkedAt) })}
-                      </span>
-                      <span class="actions">
-                        <button type="button" title={ctx.t("mode.toggle")} onClick={toggleMode}>
-                          {ctx.t(mode() === "used" ? "mode.used" : "mode.remaining")}
-                        </button>
-                        <button type="button" disabled={state.loading} onClick={() => load(true)}>
-                          {ctx.t("refresh")}
-                        </button>
-                      </span>
-                    </footer>
-                  </>
-                )}
               </Show>
-            </Popover.Content>
-          </Popover.Portal>
-        </Popover>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content data-slot="provider-usage-panel" aria-label={ctx.t("title")}>
+                <section>
+                  <div class="head">
+                    <span>
+                      <strong>{ctx.t("title")}</strong>
+                      <Show when={provider().state === "ready" && provider().detail}>
+                        {(plan) => <span> · {capitalize(plan())}</span>}
+                      </Show>
+                    </span>
+                    <Show when={provider().state === "unavailable"}>
+                      <span class="muted">{provider().detail ?? ctx.t("unavailable")}</span>
+                    </Show>
+                  </div>
+                  <For each={provider().meters}>
+                    {(meter) => (
+                      <div class="row" data-tone={tone(meter.usedPercent, mode())}>
+                        <div class="line">
+                          <span>{meter.label}</span>
+                          <span class="meta">
+                            <Show when={meter.resetsAt}>{(at) => <span>{resetText(at())}</span>}</Show>
+                            <span class="value">{percentText(meter.usedPercent, mode())}</span>
+                          </span>
+                        </div>
+                        <div class="bar">
+                          <div class="fill" style={{ width: `${shown(meter.usedPercent, mode())}%` }} />
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </section>
+                <footer>
+                  <span>
+                    {state.failed
+                      ? ctx.t("failed")
+                      : ctx.t("checkedAt", { time: clock(state.snapshot?.checkedAt ?? Date.now()) })}
+                  </span>
+                  <span class="actions">
+                    <button type="button" title={ctx.t("mode.toggle")} onClick={toggleMode}>
+                      {ctx.t(mode() === "used" ? "mode.used" : "mode.remaining")}
+                    </button>
+                    <button type="button" disabled={state.loading} onClick={() => load(true)}>
+                      {ctx.t("refresh")}
+                    </button>
+                  </span>
+                </footer>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover>
+        )}
       </Show>
     ),
   })
@@ -228,12 +239,6 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
 }
 
 export default setup
-
-function shortName(provider: ProviderUsage.Provider) {
-  if (provider.id === "opencode") return "Go"
-
-  return provider.name
-}
 
 function capitalize(text: string) {
   return text.charAt(0).toUpperCase() + text.slice(1)
