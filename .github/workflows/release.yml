@@ -1,8 +1,9 @@
 name: release
-run-name: "release ${{ inputs.version || github.ref_name }}"
+run-name: "release ${{ inputs.version || (github.ref_type == 'tag' && github.ref_name) || format('auto from {0}', github.ref_name) }}"
 
 # Builds the CLI for every target and the desktop app for macOS arm64, and publishes them to a GitHub release.
-# Trigger it by dispatching with a version, or by pushing a v<version> tag.
+# Trigger it by dispatching (the version is optional), or by pushing a v<version> tag.
+# A dispatch without a version releases <packages/cli version>-fork.<run number>, for example 2.2.7-fork.12.
 # Nothing is notarized, and nothing is published to npm, Docker or package managers.
 # The CLI binaries are unsigned; the macOS desktop app is signed ad hoc only.
 
@@ -12,8 +13,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release, without the leading v (for example 2.2.8)"
-        required: true
+        description: "Version to release, without the leading v. Leave empty for <cli version>-fork.<run number>"
+        required: false
         type: string
       prerelease:
         description: "Mark the release as a pre-release"
@@ -22,7 +23,8 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.version || github.ref_name }}
+  # Runs for the same version queue; automatic versions are unique per run.
+  group: ${{ github.workflow }}-${{ inputs.version || (github.ref_type == 'tag' && github.ref_name) || github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -33,16 +35,53 @@ defaults:
     shell: bash
 
 jobs:
+  # Resolves the version once for every job: the dispatched input, the pushed tag, or <cli version>-fork.<run number>.
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          sparse-checkout: packages/cli/package.json
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve
+        id: resolve
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="$(jq -r .version packages/cli/package.json)-fork.$GITHUB_RUN_NUMBER"
+          fi
+          version="${version#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Not a semver version: $version"
+            exit 1
+          fi
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release v$version already exists"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing \`v$version\` from \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+
   build:
+    needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      OPENCODE_VERSION: ${{ inputs.version || github.ref_name }}
+      OPENCODE_VERSION: ${{ needs.version.outputs.version }}
       OPENCODE_CHANNEL: latest
     steps:
-      - name: Normalize version
-        run: echo "OPENCODE_VERSION=${OPENCODE_VERSION#v}" >> "$GITHUB_ENV"
-
       - name: Check out
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -93,16 +132,14 @@ jobs:
 
   # Desktop app for macOS arm64 only. It bundles the CLI for its own target, so the CLI is built here for that target.
   desktop-mac-arm64:
+    needs: version
     runs-on: macos-26
     timeout-minutes: 60
     env:
-      OPENCODE_VERSION: ${{ inputs.version || github.ref_name }}
+      OPENCODE_VERSION: ${{ needs.version.outputs.version }}
       OPENCODE_CHANNEL: latest
       OPENCODE_TARGET: darwin-arm64
     steps:
-      - name: Normalize version
-        run: echo "OPENCODE_VERSION=${OPENCODE_VERSION#v}" >> "$GITHUB_ENV"
-
       - name: Check out
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -153,7 +190,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [build, desktop-mac-arm64]
+    needs: [version, build, desktop-mac-arm64]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -170,12 +207,12 @@ jobs:
 
       - name: Publish
         run: |
-          tag="v${VERSION#v}"
+          tag="v$VERSION"
           flags=(--repo "$GITHUB_REPOSITORY" --title "$tag" --generate-notes)
           [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then flags+=(--target "$GITHUB_SHA"); fi
           gh release create "$tag" out/* "${flags[@]}"
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version || github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
