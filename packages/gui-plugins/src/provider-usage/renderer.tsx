@@ -1,4 +1,4 @@
-import { Popover } from "@kobalte/core/popover"
+import { HoverCard } from "@kobalte/core/hover-card"
 import { createKeyed, Style, type Plugin } from "@opencode/plugin/gui"
 import { BuiltinSlot } from "@opencode/plugin/gui/builtin"
 import { ProviderUsage } from "@opencode/schema/provider-usage"
@@ -12,6 +12,9 @@ type Mode = "used" | "remaining"
 type Tone = "warn" | "hot" | "full" | undefined
 
 const REFRESH_EVERY = 300_000
+
+// A failed fetch, as when the window starts before its server answers, retries after 5 s, doubling up to the refresh.
+const RETRY_FIRST = 5_000
 
 /** The usage entry (`ProviderUsage.Provider.id`) behind a model provider; undefined for providers without one. */
 function usageFor(providerID: string) {
@@ -40,8 +43,7 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
     snapshot?: ProviderUsage.Snapshot
     failed: boolean
     loading: boolean
-    open: boolean
-  }>({ failed: false, loading: false, open: false })
+  }>({ failed: false, loading: false })
 
   const mode = (): Mode => ctx.stores.display.value.mode
 
@@ -57,10 +59,16 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
       .find((ref) => ref?.builtin)
   }
 
+  let retryTimer: ReturnType<typeof setTimeout> | undefined
+  let retryDelay = RETRY_FIRST
+
+  onCleanup(() => clearTimeout(retryTimer))
+
   const load = (fresh: boolean) => {
     const ref = server()
 
     if (!ref?.connected || state.loading) return
+    clearTimeout(retryTimer)
     setState("loading", true)
     void ref.client
       .rpc(ProviderUsage.Definition)
@@ -68,11 +76,14 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
       .then(
         (snapshot) => {
           if (ctx.signal.aborted) return
+          retryDelay = RETRY_FIRST
           setState({ snapshot, failed: false, loading: false })
         },
         () => {
           if (ctx.signal.aborted) return
           setState({ failed: true, loading: false })
+          retryTimer = setTimeout(() => load(false), retryDelay)
+          retryDelay = Math.min(retryDelay * 2, REFRESH_EVERY)
         },
       )
   }
@@ -115,28 +126,25 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
     render: (input) => (
       <Show when={routed(input.providerID)}>
         {(provider) => (
-          <Popover
+          // The card opens on hover or focus, like a tooltip, and stays open while the pointer is over it.
+          <HoverCard
             placement="top-end"
             gutter={8}
             overflowPadding={16}
-            open={state.open}
+            openDelay={150}
+            closeDelay={200}
             onOpenChange={(open) => {
-              setState("open", open)
-
               if (open) load(false)
             }}
           >
-            <Popover.Trigger
+            <HoverCard.Trigger
               as="button"
               type="button"
               data-slot="provider-usage-trigger"
               aria-label={ctx.t("title")}
-              title={provider()
-                .meters.map((meter) => `${meter.label} ${percentText(meter.usedPercent, mode())}`)
-                .join("\n")}
               onMouseDown={(event: MouseEvent) => event.preventDefault()}
             >
-              <Show when={topMeter(provider())} fallback={<span>{ctx.t("empty")}</span>}>
+              <Show when={topMeter(provider())}>
                 {(meter) => (
                   <span data-slot="provider-usage-ring" data-tone={tone(meter().usedPercent, mode())}>
                     <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -151,13 +159,12 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
                         stroke-dasharray={`${shown(meter().usedPercent, mode())} 100`}
                       />
                     </svg>
-                    {percentText(meter().usedPercent, mode())}
                   </span>
                 )}
               </Show>
-            </Popover.Trigger>
-            <Popover.Portal>
-              <Popover.Content data-slot="provider-usage-panel" aria-label={ctx.t("title")}>
+            </HoverCard.Trigger>
+            <HoverCard.Portal>
+              <HoverCard.Content data-slot="provider-usage-panel" aria-label={ctx.t("title")}>
                 <section>
                   <div class="head">
                     <span>
@@ -202,9 +209,9 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
                     </button>
                   </span>
                 </footer>
-              </Popover.Content>
-            </Popover.Portal>
-          </Popover>
+              </HoverCard.Content>
+            </HoverCard.Portal>
+          </HoverCard>
         )}
       </Show>
     ),
