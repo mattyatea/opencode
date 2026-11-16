@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { createInterface } from "node:readline"
+import path from "node:path"
+import { which } from "../util/which.js"
 // Imported as text so compiled binaries carry the worker; it runs through `python -c`.
 import source from "./worker.py" with { type: "text" }
 
@@ -45,8 +47,11 @@ type Reply = { readonly id: number; readonly error?: string } & Record<string, u
  */
 export function config(env: Record<string, string | undefined> = process.env): Config {
   const python = env.OPENCODE_DICTATION_PYTHON || undefined
+  const fallback = env.HOME
+    ? [path.join(env.HOME, ".local/bin"), path.join(env.HOME, ".local/share/mise/shims")].join(path.delimiter)
+    : undefined
   return {
-    executable: python ?? (env.OPENCODE_DICTATION_UV || "uv"),
+    executable: python ?? (env.OPENCODE_DICTATION_UV || which("uv", env, fallback) || "uv"),
     args: python
       ? ["-c", source]
       : ["run", "--no-project", "--python", "3.12", "--with", MLX_AUDIO, "python", "-c", source],
