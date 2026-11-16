@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { DictationWorker } from "../src/dictation/index.js"
 
 // The real worker needs a Python with numpy (and mlx-audio to transcribe speech). Silence and protocol errors are
@@ -36,12 +39,28 @@ test("rejects pending requests when the worker cannot start", async () => {
 })
 
 test("builds the Python environment with uv unless a Python is configured", () => {
-  const config = DictationWorker.config({ OPENCODE_DICTATION_HOTWORDS: "OpenCode, MLX ," })
+  const config = DictationWorker.config({ PATH: "/nonexistent", OPENCODE_DICTATION_HOTWORDS: "OpenCode, MLX ," })
   expect(config.executable).toBe("uv")
   expect(config.args).toContain(DictationWorker.MLX_AUDIO)
   expect(config.model).toBe(DictationWorker.DEFAULT_MODEL)
   expect(config.hotwords).toEqual(["OpenCode", "MLX"])
   expect(config.fastModel).toBe(DictationWorker.DEFAULT_FAST_MODEL)
+})
+
+test.skipIf(process.platform === "win32")("finds uv in mise shims when the service PATH omits it", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "dictation-uv-"))
+  try {
+    const shim = path.join(home, ".local/share/mise/shims/uv")
+    await mkdir(path.dirname(shim), { recursive: true })
+    await writeFile(shim, "#!/bin/sh\n")
+    await chmod(shim, 0o755)
+    expect(DictationWorker.config({ HOME: home, PATH: "/usr/bin:/bin" }).executable).toBe(shim)
+    expect(DictationWorker.config({ HOME: home, PATH: "/usr/bin:/bin", OPENCODE_DICTATION_UV: "custom" }).executable).toBe(
+      "custom",
+    )
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
 })
 
 test("turns the fast model off when it is set empty", () => {
