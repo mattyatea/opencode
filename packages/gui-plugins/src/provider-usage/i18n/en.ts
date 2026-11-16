@@ -1,5 +1,6 @@
 export default {
   title: "Plan usage limits",
+  otherProviders: "Other providers",
   empty: "Usage",
   refresh: "Refresh",
   "mode.used": "Used",

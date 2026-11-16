@@ -119,6 +119,25 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
   const topMeter = (provider: ProviderUsage.Provider) =>
     provider.meters.toSorted((a, b) => b.usedPercent - a.usedPercent)[0]
 
+  const Meters = (props: { provider: ProviderUsage.Provider }) => (
+    <For each={props.provider.meters}>
+      {(meter) => (
+        <div class="row" data-tone={tone(meter.usedPercent, mode())}>
+          <div class="line">
+            <span>{meter.label}</span>
+            <span class="meta">
+              <Show when={meter.resetsAt}>{(at) => <span>{resetText(at())}</span>}</Show>
+              <span class="value">{percentText(meter.usedPercent, mode())}</span>
+            </span>
+          </div>
+          <div class="bar">
+            <div class="fill" style={{ width: `${shown(meter.usedPercent, mode())}%` }} />
+          </div>
+        </div>
+      )}
+    </For>
+  )
+
   ctx.add(Style, css)
   ctx.add(BuiltinSlot, {
     at: "composer.controls",
@@ -177,23 +196,39 @@ const setup: Plugin.Setup<typeof ProviderUsageDefinition> = (ctx) => {
                       <span class="muted">{provider().detail ?? ctx.t("unavailable")}</span>
                     </Show>
                   </div>
-                  <For each={provider().meters}>
-                    {(meter) => (
-                      <div class="row" data-tone={tone(meter.usedPercent, mode())}>
-                        <div class="line">
-                          <span>{meter.label}</span>
-                          <span class="meta">
-                            <Show when={meter.resetsAt}>{(at) => <span>{resetText(at())}</span>}</Show>
-                            <span class="value">{percentText(meter.usedPercent, mode())}</span>
-                          </span>
-                        </div>
-                        <div class="bar">
-                          <div class="fill" style={{ width: `${shown(meter.usedPercent, mode())}%` }} />
-                        </div>
-                      </div>
-                    )}
-                  </For>
+                  <Meters provider={provider()} />
                 </section>
+                <Show
+                  when={state.snapshot?.providers.filter(
+                    (other) => other.id !== provider().id && other.state !== "signed-out",
+                  )}
+                >
+                  {(others) => (
+                    <Show when={others().length > 0}>
+                      <details class="other-providers">
+                        <summary>{ctx.t("otherProviders")}</summary>
+                        <For each={others()}>
+                          {(other) => (
+                            <section>
+                              <div class="head">
+                                <span>
+                                  <strong>{other.name}</strong>
+                                  <Show when={other.state === "ready" && other.detail}>
+                                    {(plan) => <span> · {capitalize(plan())}</span>}
+                                  </Show>
+                                </span>
+                                <Show when={other.state === "unavailable"}>
+                                  <span class="muted">{other.detail ?? ctx.t("unavailable")}</span>
+                                </Show>
+                              </div>
+                              <Meters provider={other} />
+                            </section>
+                          )}
+                        </For>
+                      </details>
+                    </Show>
+                  )}
+                </Show>
                 <footer>
                   <span>
                     {state.failed
