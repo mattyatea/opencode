@@ -5,6 +5,9 @@ import { which } from "../../../../util/which.js"
 import { ClaudeFork } from "./fork.js"
 import { ClaudeSDK } from "./sdk.js"
 
+export const MISSING_EXECUTABLE =
+  "Claude Code executable was not found. Add claude to the OpenCode server's PATH or set OPENCODE_CLAUDE_PATH."
+
 // Everything that reaches outside opencode. Tests swap it for a fake `claude`.
 export interface Interface {
   // Undefined uses the SDK's own spawn

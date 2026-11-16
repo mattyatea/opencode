@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Fiber, Logger, References } from "effect"
+import { Effect, Fiber, Logger, References, SubscriptionRef } from "effect"
 import { TestClock } from "effect/testing"
 import { ClaudeSessions } from "@opencode/core/plugin/provider/claude-agent/claude/sessions"
 import { ClaudeAgentLanguageModel } from "@opencode/core/plugin/provider/claude-agent/language-model/claude-agent-language-model"
@@ -15,6 +15,36 @@ import { Recorder } from "../lib/recorder"
 const first = TestSessions.prompt("Remember the marker COPPER-OTTER. Reply only with that marker.")
 
 describe("Claude sessions", () => {
+  it.effect("reports an executable lookup failure, not a login failure, after a registry restart", () =>
+    Effect.gen(function* () {
+      const claude = FakeClaude.make([
+        FakeClaude.expectStartup(),
+        FakeClaude.expectTurn(),
+        FakeClaude.expectInterrupt(),
+      ])
+      const test = yield* TestSessions.start(claude)
+      yield* TestSessions.reply(test.model, first)
+      const saved = yield* SessionRecord.make(test.storage).get("session-a")
+      yield* test.registry.close()
+
+      const registry = ClaudeSessions.registry()
+      yield* Effect.addFinalizer(() => registry.close())
+      const sessions = yield* registry.attach({
+        ...test.input,
+        io: { ...test.input.io, which: () => undefined },
+      })
+      const model = yield* TestSessions.model(sessions)
+      const error = yield* TestSessions.reply(model, TestSessions.followup()).pipe(Effect.flip)
+      expect(String(error.cause)).toContain("Claude Code executable was not found")
+      expect(String(error.cause)).toContain("OPENCODE_CLAUDE_PATH")
+      expect(String(error.cause)).not.toContain("claude auth login")
+      expect(yield* SubscriptionRef.get(test.input.status.state)).toEqual({ type: "missing" })
+      expect(yield* SessionRecord.make(test.storage).get("session-a")).toEqual(saved)
+      expect(claude.runs).toHaveLength(1)
+      claude.check()
+    }),
+  )
+
   it.effect("streams consecutive turns once, on one process, with per-turn usage", () =>
     Effect.gen(function* () {
       const claude = FakeClaude.make([
