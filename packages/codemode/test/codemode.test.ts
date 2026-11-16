@@ -883,6 +883,33 @@ describe("CodeMode public contract", () => {
     if (exact.ok) expect(exact.value).toMatchObject({ remaining: 0, next: null })
   })
 
+  test("ranks the tool whose path a query fragment names first", async () => {
+    const tool = (description: string) =>
+      Tool.make({
+        description,
+        input: Schema.Struct({}),
+        output: Schema.Struct({}),
+        execute: () => Effect.succeed({}),
+      })
+    const runtime = CodeMode.make({
+      tools: {
+        browser: {
+          snapshot: tool("Read an accessibility snapshot of a tab. Lists every element with a ref for click and fill."),
+          tabs: {
+            list: tool("List this session's browser tabs and the focused tab."),
+            open: tool("Open a browser tab and select it."),
+          },
+        },
+      },
+    })
+    const first = (query: string) =>
+      Effect.runPromise(runtime.execute(`return (await search({ query: ${JSON.stringify(query)} })).items[0].path`))
+
+    expect(await first("tabs.list snapshot")).toMatchObject({ ok: true, value: "tools.browser.tabs.list" })
+    expect(await first("browser tabs list")).toMatchObject({ ok: true, value: "tools.browser.tabs.list" })
+    expect(await first("snapshot")).toMatchObject({ ok: true, value: "tools.browser.snapshot" })
+  })
+
   test("uses one ranked search returning complete tools for large catalogs", async () => {
     const upload = Tool.make({
       description: "Upload one readable local file to the current Discord thread",
