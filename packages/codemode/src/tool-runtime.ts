@@ -438,17 +438,45 @@ const rank = (
     }
     for (const [position, score] of best) scores.set(position, (scores.get(position) ?? 0) + score)
   }
+  // A path fragment such as `tabs.list` or `slack_search`, or several words that join into one, names a tool more
+  // precisely than its words do: alone, those words let a tool that mentions them more often outrank it.
+  const phrases = pathPhrases(query)
+  const named = new Set(
+    phrases.length === 0
+      ? []
+      : entries
+          .filter((entry) => phrases.some((phrase) => pathKey(entry.description.path).includes(phrase)))
+          .map((entry) => entry.position),
+  )
+  for (const position of named) if (!scores.has(position)) scores.set(position, 0)
   return [...scores]
     .map(([position, score]) => ({
       entry: index[position]!,
+      named: named.has(position),
       score: score * (1 + brevityBoost / Math.max(1, index[position]!.nameLength)),
     }))
     .sort(
       (left, right) =>
-        right.score - left.score || compareText(left.entry.description.path, right.entry.description.path),
+        Number(right.named) - Number(left.named) ||
+        right.score - left.score ||
+        compareText(left.entry.description.path, right.entry.description.path),
     )
     .map(({ entry }) => entry)
 }
+
+/** A path or fragment with every run of non-alphanumerics as one `_`: `browser.tabs.list` → `browser_tabs_list`. */
+const pathKey = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "")
+
+/** Identifier fragments in the query, plus the whole query when it has several words. */
+const pathPhrases = (query: string) =>
+  Array.from(query.matchAll(/[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)+/g), (match) => match[0])
+    .concat(query.trim().split(/\s+/).length > 1 ? [query] : [])
+    .map(pathKey)
+    .filter((phrase) => phrase.includes("_"))
 
 const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Tool => ({
   _tag: "CodeModeTool",
