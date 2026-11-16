@@ -283,13 +283,16 @@ describe("ClaudeAgentPlugin models", () => {
 })
 
 describe("ClaudeAgentPlugin connection", () => {
-  it.live("connecting without claude installed asks the user to install it", () =>
+  it.live("connecting without a discoverable executable asks the user to check the server PATH", () =>
     Effect.gen(function* () {
       const claude = FakeClaude.make([])
       yield* addPlugin({ ...FakeIO.make({ claude }), which: () => undefined })
       yield* connect
       const status = yield* eventually(connectionStatus, (status) => status !== undefined)
       expect(status).toMatchObject({ status: "needs_auth", url: "https://code.claude.com/docs/en/setup" })
+      expect(status?.message).toContain("Claude Code executable was not found")
+      expect(status?.message).toContain("OPENCODE_CLAUDE_PATH")
+      expect(status?.message).not.toContain("claude auth login")
       expect(yield* claudeModels).toEqual([])
       expect(claude.runs).toHaveLength(0)
     }),

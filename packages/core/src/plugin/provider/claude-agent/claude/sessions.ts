@@ -167,7 +167,7 @@ export function registry() {
             const executable = input.io.which()
             if (!executable) {
               yield* input.status.report({ type: "missing" })
-              return yield* Effect.fail(new Error("Install Claude Code and run `claude auth login` first"))
+              return yield* Effect.fail(new Error(ClaudeIO.MISSING_EXECUTABLE))
             }
             const pending = PendingTools.make()
             const session = yield* attempt(async () =>

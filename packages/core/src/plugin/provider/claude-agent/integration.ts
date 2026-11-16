@@ -4,6 +4,7 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import { Effect, Stream, SubscriptionRef } from "effect"
 import type { IntegrationConnection } from "../../../integration/connection.js"
 import { ProviderRefresh } from "../refresh.js"
+import { ClaudeIO } from "./claude/io.js"
 import { ClaudeProbe } from "./claude/probe.js"
 import type { ClaudeStatus } from "./claude/status.js"
 import { ClaudeProvider } from "./provider.js"
@@ -51,7 +52,7 @@ function problem(state: ClaudeStatus.State): IntegrationConnection.Status | unde
   if (state.type === "missing")
     return {
       status: "needs_auth",
-      message: "Claude Code is not installed. Install it, then run `claude auth login`.",
+      message: ClaudeIO.MISSING_EXECUTABLE,
       url: "https://code.claude.com/docs/en/setup",
     }
   // The message already says what went wrong with Claude Code.
