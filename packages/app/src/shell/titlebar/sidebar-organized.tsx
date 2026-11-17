@@ -98,11 +98,11 @@ export function SidebarOrganized(props: {
     )
   }
 
-  const [state, setState, , ready] = persisted(Persist.global("sidebar.organize"), SidebarState, {
-    projectsCollapsed: false,
-    expanded: {},
-    order: {},
-  })
+  const global = useGlobal()
+  const initial = { projectsCollapsed: false, expanded: {}, order: {} }
+  const [state, setState, , ready] = persisted(Persist.global("sidebar.organize"), SidebarState, initial)
+
+  global.share({ key: "sidebar.organize", schema: SidebarState, initial, store: state, setStore: setState, ready })
 
   const isOpenTab = (server: ServerConnection.Key, sessionId: string) =>
     tabs.store.some((tab) => tab.type === "session" && tab.server === server && tab.sessionId === sessionId)

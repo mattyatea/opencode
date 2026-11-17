@@ -75,7 +75,10 @@ export function RecentSessions() {
   const dialog = useDialog()
   const queryClient = useQueryClient()
 
-  const [state, setState, , ready] = persisted(Persist.global("sidebar.recent"), RecentSidebarState, { pins: [] })
+  const initial = { pins: [] }
+  const [state, setState, , ready] = persisted(Persist.global("sidebar.recent"), RecentSidebarState, initial)
+
+  global.share({ key: "sidebar.recent", schema: RecentSidebarState, initial, store: state, setStore: setState, ready })
 
   const [pages, setPages] = createStore<Record<string, RecentPageState>>({})
 

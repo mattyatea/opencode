@@ -40,13 +40,16 @@ export function ProjectSidebar() {
   const queryClient = useQueryClient()
   const platform = usePlatform()
 
-  const [state, setState, , ready] = persisted(Persist.global("sidebar.project-sections"), ProjectSectionsState, {
-    sections: [],
-    order: [],
-    projects: [],
-    assignments: {},
-    collapsed: {},
-    sessions: {},
+  const initial = { sections: [], order: [], projects: [], assignments: {}, collapsed: {}, sessions: {} }
+  const [state, setState, , ready] = persisted(Persist.global("sidebar.project-sections"), ProjectSectionsState, initial)
+
+  global.share({
+    key: "sidebar.project-sections",
+    schema: ProjectSectionsState,
+    initial,
+    store: state,
+    setStore: setState,
+    ready,
   })
 
   const [visible, setVisible] = createStore<Record<string, number>>({})

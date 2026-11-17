@@ -290,6 +290,10 @@ import type {
   ExperimentalArtifactsViewOutput,
   ExperimentalJobListInput,
   ExperimentalJobListOutput,
+  ExperimentalPreferenceGetInput,
+  ExperimentalPreferenceGetOutput,
+  ExperimentalPreferenceSetInput,
+  ExperimentalPreferenceSetOutput,
   ShellListInput,
   ShellListOutput,
   ShellCreateInput,
@@ -1857,6 +1861,31 @@ export function make(options: ClientOptions) {
             },
             requestOptions,
           ).then((value) => value.data),
+      },
+      preference: {
+        get: (input: ExperimentalPreferenceGetInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalPreferenceGetOutput }>(
+            {
+              method: "GET",
+              path: `/api/experimental/preference/${encodeURIComponent(input.key)}`,
+              successStatus: 200,
+              declaredStatuses: [400, 401],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        set: (input: ExperimentalPreferenceSetInput, requestOptions?: RequestOptions) =>
+          request<ExperimentalPreferenceSetOutput>(
+            {
+              method: "PUT",
+              path: `/api/experimental/preference/${encodeURIComponent(input.key)}`,
+              body: { value: input["value"] },
+              successStatus: 204,
+              declaredStatuses: [400, 401],
+              empty: true,
+            },
+            requestOptions,
+          ),
       },
       migration: {
         v1: {

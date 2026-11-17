@@ -1,3 +1,4 @@
+import type { Schema } from "effect"
 import { createSimpleContext } from "@opencode/ui/context"
 import {
   Accessor,
@@ -38,6 +39,7 @@ import { useTabs } from "@/shell/tabs/tabs"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import { createDesktopData } from "./data"
 import { ModelState } from "./persistence"
+import { createSharedPreference } from "./shared-preference"
 import { useLanguage } from "@/runtime/i18n/language"
 import { showToast } from "@/shell/notifications/toast"
 import { formatServerError } from "./errors"
@@ -52,8 +54,6 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
   name: "Global",
   init: () => {
     const server = useServers()
-    const models = createGlobalModels()
-    const sessionPreferences = createSessionPreferences()
     const notificationCoordinator = createNotificationCoordinator()
     const owner = getOwner()
 
@@ -111,6 +111,21 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
 
     onCleanup(() => dispatch({ type: "disposed" }))
 
+    // The server this client belongs to (the sidecar, or the one that served the web app) keeps the settings every
+    // client of it shares.
+    const sharedApi = () => {
+      const conn = server.list.find(server.current)
+
+      if (!conn) return
+      const ctx = selectServerCtx(controllers(), ServerConnection.key(conn))
+
+      return ctx?.sdk.connection.status() === "connected" ? ctx.sdk.api : undefined
+    }
+
+    const share: SharePreference = (input) => createSharedPreference({ ...input, api: sharedApi })
+    const models = createGlobalModels(share)
+    const sessionPreferences = createSessionPreferences()
+
     createEffect(() => {
       for (const conn of server.list) {
         const key = ServerConnection.key(conn)
@@ -128,6 +143,8 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
       },
       models,
       sessionPreferences,
+      /** Keeps a persisted store in step with the current server's copy, so every client of it shares the setting. */
+      share,
       /** Runs each keyed sound and system notification once across windows; notifications only while none has focus. */
       notifications: notificationCoordinator,
       /** The live controller of a server, or undefined while it is unlisted or rejects our credentials. Reactive. */
@@ -142,13 +159,15 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
   },
 })
 
-function createGlobalModels() {
-  const [store, setStore, _, ready] = persisted(Persist.global("model"), ModelState, {
-    user: [],
-    recent: [],
-    favorite: [],
-    variant: {},
-  })
+type SharePreference = <S extends Schema.ConstraintCodec<object, unknown>>(
+  input: Omit<Parameters<typeof createSharedPreference<S>>[0], "api">,
+) => void
+
+function createGlobalModels(share: SharePreference) {
+  const initial = { user: [], recent: [], favorite: [], variant: {} }
+  const [store, setStore, _, ready] = persisted(Persist.global("model"), ModelState, initial)
+
+  share({ key: "model", schema: ModelState, initial, store, setStore, ready })
 
   // Suspend readers only until persisted state loads. Refetching on every change would put the
   // session route into its Suspense fallback, detaching the screen and resetting the timeline scroll.

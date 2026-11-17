@@ -26,6 +26,7 @@ import { displayName } from "@opencode/ui/project-avatar"
 import { useServers } from "@/runtime/server/registry"
 import { useLanguage } from "@/runtime/i18n/language"
 import { Persist, persisted } from "@/runtime/persistence/storage"
+import { useGlobal } from "@/runtime/server/runtime"
 import { SessionTabAvatarView } from "@/shell/layout/session-tab-avatar"
 import type { LocalProject } from "@/shell/state/layout"
 import { sessionTabTitle } from "./tab-title"
@@ -50,14 +51,15 @@ export function SidebarInbox() {
   const language = useLanguage()
   const dialog = useDialog()
   const servers = useServers()
+  const global = useGlobal()
   const inbox = createSessionInbox({ archived: true })
 
   const exporter = createSessionExporter()
 
-  const [state, setState, , ready] = persisted(Persist.global("sidebar.inbox"), InboxState, {
-    workingExpanded: true,
-    recentExpanded: false,
-  })
+  const initial = { workingExpanded: true, recentExpanded: false }
+  const [state, setState, , ready] = persisted(Persist.global("sidebar.inbox"), InboxState, initial)
+
+  global.share({ key: "sidebar.inbox", schema: InboxState, initial, store: state, setStore: setState, ready })
 
   const [announcement, setAnnouncement] = createStore({ text: "" })
 

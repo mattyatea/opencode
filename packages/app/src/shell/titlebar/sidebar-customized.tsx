@@ -119,11 +119,21 @@ export function SidebarCustomized(props: {
 
   createSidebarActivityListener()
 
-  const [view, setView] = persisted(Persist.global("sidebar.view"), ViewState, {
+  const initial = {
     grouping: "project",
     ordering: "manual",
     show: { recent: true, subagents: false, serverLabels: true },
     collapsed: {},
+  } as const
+  const [view, setView, , viewReady] = persisted(Persist.global("sidebar.view"), ViewState, initial)
+
+  global.share({
+    key: "sidebar.view",
+    schema: ViewState,
+    initial,
+    store: view,
+    setStore: setView,
+    ready: viewReady,
   })
 
   // Filters narrow the list for this window only; they reset on reload.
