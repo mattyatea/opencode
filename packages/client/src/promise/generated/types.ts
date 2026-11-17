@@ -4892,6 +4892,31 @@ export type ExperimentalJobListInput = {
 
 export type ExperimentalJobListOutput = { data: Array<JobInfo> }["data"]
 
+export type ExperimentalPreferenceGetInput = {
+  readonly key:
+    | "model"
+    | "sidebar.organize"
+    | "sidebar.project-sections"
+    | "sidebar.recent"
+    | "sidebar.view"
+    | "sidebar.inbox"
+}
+
+export type ExperimentalPreferenceGetOutput = { data: JsonValue | null }["data"]
+
+export type ExperimentalPreferenceSetInput = {
+  readonly key:
+    | "model"
+    | "sidebar.organize"
+    | "sidebar.project-sections"
+    | "sidebar.recent"
+    | "sidebar.view"
+    | "sidebar.inbox"
+  readonly value: JsonValue
+}
+
+export type ExperimentalPreferenceSetOutput = void
+
 export type ShellListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 
 export type ShellListOutput = { location: LocationPublicRef; data: Array<ShellInfo1> }

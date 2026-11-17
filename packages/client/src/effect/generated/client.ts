@@ -288,6 +288,10 @@ import type {
   ExperimentalArtifactsDeleteOutput,
   ExperimentalJobListInput,
   ExperimentalJobListOutput,
+  ExperimentalPreferenceGetInput,
+  ExperimentalPreferenceGetOutput,
+  ExperimentalPreferenceSetInput,
+  ExperimentalPreferenceSetOutput,
   ShellListInput,
   ShellListOutput,
   ShellCreateInput,
@@ -1863,6 +1867,23 @@ const EndpointExperimentalJobList = (raw: RawClient["server.experimental"]) => (
     ),
   )
 
+const EndpointExperimentalPreferenceGet =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalPreferenceGetInput) =>
+    preserveEffect<ExperimentalPreferenceGetOutput>()(
+      raw["preference.get"]({ params: { key: input["key"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalPreferenceSet =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalPreferenceSetInput) =>
+    preserveEffect<ExperimentalPreferenceSetOutput>()(
+      raw["preference.set"]({ params: { key: input["key"] }, payload: { value: input["value"] } }).pipe(
+        Effect.mapError(mapClientError),
+      ),
+    )
+
 const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
   persistentPty: {
     read: EndpointExperimentalPersistentPtyRead(raw),
@@ -1893,6 +1914,7 @@ const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
     delete: EndpointExperimentalArtifactsDelete(raw),
   },
   job: { list: EndpointExperimentalJobList(raw) },
+  preference: { get: EndpointExperimentalPreferenceGet(raw), set: EndpointExperimentalPreferenceSet(raw) },
 })
 
 const EndpointShellList = (raw: RawClient["server.shell"]) => (input?: ShellListInput) =>

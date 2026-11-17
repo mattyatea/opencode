@@ -2708,6 +2708,35 @@ export type ExperimentalJobListOperation<E = never> = (
   input?: ExperimentalJobListInput,
 ) => Effect.Effect<ExperimentalJobListOutput, E>
 
+export type ExperimentalPreferenceGetInput = {
+  readonly key:
+    | "model"
+    | "sidebar.organize"
+    | "sidebar.project-sections"
+    | "sidebar.recent"
+    | "sidebar.view"
+    | "sidebar.inbox"
+}
+export type ExperimentalPreferenceGetOutput = Schema.Json | null
+export type ExperimentalPreferenceGetOperation<E = never> = (
+  input: ExperimentalPreferenceGetInput,
+) => Effect.Effect<ExperimentalPreferenceGetOutput, E>
+
+export type ExperimentalPreferenceSetInput = {
+  readonly key:
+    | "model"
+    | "sidebar.organize"
+    | "sidebar.project-sections"
+    | "sidebar.recent"
+    | "sidebar.view"
+    | "sidebar.inbox"
+  readonly value: Schema.Json
+}
+export type ExperimentalPreferenceSetOutput = void
+export type ExperimentalPreferenceSetOperation<E = never> = (
+  input: ExperimentalPreferenceSetInput,
+) => Effect.Effect<ExperimentalPreferenceSetOutput, E>
+
 export interface ExperimentalApi<E = never> {
   readonly persistentPty: {
     readonly read: ExperimentalPersistentPtyReadOperation<E>
@@ -2738,6 +2767,10 @@ export interface ExperimentalApi<E = never> {
     readonly delete: ExperimentalArtifactsDeleteOperation<E>
   }
   readonly job: { readonly list: ExperimentalJobListOperation<E> }
+  readonly preference: {
+    readonly get: ExperimentalPreferenceGetOperation<E>
+    readonly set: ExperimentalPreferenceSetOperation<E>
+  }
 }
 
 export type ShellListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }

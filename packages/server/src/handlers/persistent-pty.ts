@@ -20,6 +20,7 @@ import { CorsConfig, isAllowedRequestOrigin } from "../cors"
 import { makeArtifact } from "./artifact"
 import { makeJob } from "./job"
 import { makeMediaGet } from "./media"
+import { makePreference } from "./preference"
 import { type Outbound, runPtySocket } from "./pty-socket"
 import { makeSchedule } from "./schedule"
 
@@ -32,9 +33,12 @@ export const PersistentPtyHandler = HttpApiBuilder.group(Api, "server.experiment
     const job = yield* makeJob
     const mediaGet = yield* makeMediaGet
     const schedule = yield* makeSchedule
+    const preference = yield* makePreference
 
     return handlers
       .handleRaw("media.get", (ctx) => mediaGet(ctx.params.hash, ctx.request))
+      .handle("preference.get", (ctx) => preference.get(ctx.params.key))
+      .handle("preference.set", (ctx) => preference.set(ctx.params.key, ctx.payload.value))
       .handle("job.list", (ctx) => job.list(ctx.query))
       .handle("artifacts.providers", (ctx) => artifact.providers(ctx.query, ctx.request))
       .handle("artifacts.list", (ctx) => artifact.list(ctx.query, ctx.request))

@@ -40,13 +40,20 @@ export function ProjectSidebar() {
   const queryClient = useQueryClient()
   const platform = usePlatform()
 
-  const [state, setState, , ready] = persisted(Persist.global("sidebar.project-sections"), ProjectSectionsState, {
-    sections: [],
-    order: [],
-    projects: [],
-    assignments: {},
-    collapsed: {},
-    sessions: {},
+  const initial = { sections: [], order: [], projects: [], assignments: {}, collapsed: {}, sessions: {} }
+  const [state, setState, , ready] = persisted(
+    Persist.global("sidebar.project-sections"),
+    ProjectSectionsState,
+    initial,
+  )
+
+  global.share({
+    key: "sidebar.project-sections",
+    schema: ProjectSectionsState,
+    initial,
+    store: state,
+    setStore: setState,
+    ready,
   })
 
   const [visible, setVisible] = createStore<Record<string, number>>({})
@@ -104,7 +111,9 @@ export function ProjectSidebar() {
   createEffect(() => {
     if (!ready()) return
     const saved = new Set(state.projects)
-    const added = projects().map((project) => project.key).filter((key) => !saved.has(key))
+    const added = projects()
+      .map((project) => project.key)
+      .filter((key) => !saved.has(key))
     if (added.length) setState("projects", (order) => [...order, ...added])
   })
 
@@ -412,7 +421,8 @@ export function ProjectSidebar() {
                         const list = ordered()
                         const route = layout.route()
 
-                        const current = route.type === "session" && route.server === item().server ? route.sessionId : undefined
+                        const current =
+                          route.type === "session" && route.server === item().server ? route.sessionId : undefined
                         let root = current
                         while (root) {
                           const parent = item().ctx.data.session.get(root)?.experimental?.taskParentID
@@ -443,7 +453,9 @@ export function ProjectSidebar() {
                               const source = state.projects.indexOf(drag.project)
                               const target = state.projects.indexOf(key)
                               if (source < 0 || target < 0) return
-                              setState("projects", (order) => order.toSpliced(source, 1).toSpliced(target, 0, drag.project))
+                              setState("projects", (order) =>
+                                order.toSpliced(source, 1).toSpliced(target, 0, drag.project),
+                              )
                               setDrag({ project: "", target: undefined })
                             }}
                           >

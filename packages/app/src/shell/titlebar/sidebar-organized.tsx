@@ -98,11 +98,11 @@ export function SidebarOrganized(props: {
     )
   }
 
-  const [state, setState, , ready] = persisted(Persist.global("sidebar.organize"), SidebarState, {
-    projectsCollapsed: false,
-    expanded: {},
-    order: {},
-  })
+  const global = useGlobal()
+  const initial = { projectsCollapsed: false, expanded: {}, order: {} }
+  const [state, setState, , ready] = persisted(Persist.global("sidebar.organize"), SidebarState, initial)
+
+  global.share({ key: "sidebar.organize", schema: SidebarState, initial, store: state, setStore: setState, ready })
 
   const isOpenTab = (server: ServerConnection.Key, sessionId: string) =>
     tabs.store.some((tab) => tab.type === "session" && tab.server === server && tab.sessionId === sessionId)
@@ -222,9 +222,10 @@ function ProjectList(props: {
     const key = server()
 
     if (!props.ready || !servers.hydrated() || !key || !ctx()?.sync.project.ready()) return
-    const ids = projects().map((project) => project.id)
-
     const saved = props.state.order[key] ?? []
+    // The order is shared with other clients, so ids this client has not used stay where they are saved.
+    const visible = projects().map((project) => project.id)
+    const ids = [...visible, ...saved.filter((id) => !visible.includes(id))]
 
     if (ids.length === saved.length && ids.every((id, index) => id === saved[index])) return
     untrack(() => props.onReorder(key, ids))
