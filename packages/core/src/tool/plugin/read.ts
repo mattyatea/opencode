@@ -62,7 +62,7 @@ export const Plugin = {
         const json = Config.latest(loaded.entries, "experimental")?.json_read === true
         editor.add({
           name,
-          options: { codemode: codeMode, readOnly: true },
+          options: codeMode ? { codemode: true, pinned: true, readOnly: true } : { codemode: false, readOnly: true },
           description: [
             "Read the contents of a file or directory. Supports text files, images, and PDFs.",
             ...(codeMode
