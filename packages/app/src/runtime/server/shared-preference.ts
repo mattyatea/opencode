@@ -7,6 +7,22 @@ import type { ServerApi } from "./api"
 
 const PUSH_DELAY = 500
 
+// What this page knows about each key outlives the component that shares it: a remount must neither forget an edit
+// not yet sent nor mistake the server's older copy for a first contact. `active` serializes the requests of one key.
+type Target = { api: ServerApi; synced: string | undefined; active: Promise<void> }
+
+const targets = new Map<PreferenceKey, Target>()
+
+function targetFor(key: PreferenceKey, api: ServerApi) {
+  const current = targets.get(key)
+
+  if (current?.api === api) return current
+  const next: Target = { api, synced: undefined, active: Promise.resolve() }
+  targets.set(key, next)
+
+  return next
+}
+
 type PreferenceKey = ExperimentalPreferenceGetInput["key"]
 
 type Decision = "adopt" | "push" | "none"
@@ -32,8 +48,8 @@ export function decideSharedPreference(input: {
 
 /**
  * Keeps a persisted store in step with the server's copy, so every client of that server shares it. The server's copy
- * wins on first contact; after that the latest edit wins. Failures leave the local copy in place and retry on the next
- * focus or reconnect.
+ * wins on first contact; after that the latest edit wins. Failures keep the local copy and retry on the next focus or
+ * reconnect.
  */
 export function createSharedPreference<S extends Schema.ConstraintCodec<object, unknown>>(input: {
   api: Accessor<ServerApi | undefined>
@@ -53,55 +69,75 @@ export function createSharedPreference<S extends Schema.ConstraintCodec<object, 
   // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- see SAFETY above
   const replace = input.setStore as unknown as (value: ReturnType<typeof reconcile>) => void
 
-  let synced: string | undefined
   let attempt = 0
   let timer: ReturnType<typeof setTimeout> | undefined
 
   const local = createMemo(() => (input.ready() ? serialize(input.store) : undefined))
 
-  const push = (api: ServerApi, value: string, current: number) =>
-    api.experimental.preference
-      .set({ key: input.key, value: JSON.parse(value) })
-      .then(() => {
-        if (current === attempt) synced = value
-      })
-      .catch(() => undefined)
+  // Runs after the key's earlier requests, so a slow request can never land after a newer one.
+  const enqueue = (target: Target, run: () => Promise<void>) => {
+    target.active = target.active.then(run, run).catch(() => undefined)
 
-  const pull = (api: ServerApi, current: number) =>
-    api.experimental.preference
-      .get({ key: input.key })
-      .then((data) => {
-        if (current !== attempt) return
-        const value = untrack(local)
+    return target.active
+  }
 
-        if (value === undefined) return
-        const remote = data === null ? undefined : Option.getOrUndefined(decode(JSON.stringify(data)))
-        const normalized = remote === undefined ? undefined : serialize(remote)
-        const decision = decideSharedPreference({ local: value, remote: normalized, synced, initial })
+  // Sends the latest local value, read when its turn comes, so edits made while a request ran go out as one.
+  const send = (target: Target) =>
+    enqueue(target, async () => {
+      const value = input.ready() ? serialize(input.store) : undefined
 
-        if (decision === "adopt" && remote !== undefined) {
-          replace(reconcile(remote))
-          synced = normalized
+      if (value === undefined || target.synced === undefined || value === target.synced) return
+      await target.api.experimental.preference.set({ key: input.key, value: JSON.parse(value) })
+      target.synced = value
+    }).then(() => schedule(target))
 
-          return
-        }
+  const schedule = (target: Target) => {
+    clearTimeout(timer)
+    const value = untrack(local)
 
-        if (decision === "push") return push(api, value, current)
+    if (value === undefined || target.synced === undefined || value === target.synced) return
+    timer = setTimeout(() => void send(target), PUSH_DELAY)
+  }
 
-        synced = value
-      })
-      .catch(() => undefined)
+  const pull = (target: Target, current: number) =>
+    enqueue(target, async () => {
+      const data = await target.api.experimental.preference.get({ key: input.key })
+
+      if (current !== attempt) return
+      const value = untrack(local)
+
+      if (value === undefined) return
+      const remote = data === null ? undefined : Option.getOrUndefined(decode(JSON.stringify(data)))
+      const normalized = remote === undefined ? undefined : serialize(remote)
+      const decision = decideSharedPreference({ local: value, remote: normalized, synced: target.synced, initial })
+
+      if (decision === "adopt" && remote !== undefined) {
+        replace(reconcile(remote))
+        target.synced = normalized
+
+        return
+      }
+
+      if (decision === "push") {
+        await target.api.experimental.preference.set({ key: input.key, value: JSON.parse(value) })
+        target.synced = value
+
+        return
+      }
+
+      target.synced = value
+    }).then(() => schedule(target))
 
   createEffect(() => {
     const api = input.api()
 
     if (!api || !input.ready()) return
+    const target = targetFor(input.key, api)
     const current = ++attempt
-    synced = undefined
-    void pull(api, current)
+    void pull(target, current)
 
     const refresh = () => {
-      if (document.visibilityState === "visible") void pull(api, current)
+      if (document.visibilityState === "visible") void pull(target, current)
     }
 
     window.addEventListener("focus", refresh)
@@ -114,15 +150,17 @@ export function createSharedPreference<S extends Schema.ConstraintCodec<object, 
   })
 
   createEffect(() => {
-    const value = local()
+    local()
     const api = input.api()
 
-    clearTimeout(timer)
-
-    if (!api || value === undefined || synced === undefined || value === synced) return
-    const current = attempt
-    timer = setTimeout(() => void push(api, value, current), PUSH_DELAY)
+    if (api) schedule(targetFor(input.key, api))
   })
 
-  onCleanup(() => clearTimeout(timer))
+  // An edit still waiting for its timer goes out now: this owner may be the last to see it.
+  onCleanup(() => {
+    clearTimeout(timer)
+    const api = untrack(input.api)
+
+    if (api) void send(targetFor(input.key, api))
+  })
 }

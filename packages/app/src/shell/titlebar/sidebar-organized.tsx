@@ -222,9 +222,10 @@ function ProjectList(props: {
     const key = server()
 
     if (!props.ready || !servers.hydrated() || !key || !ctx()?.sync.project.ready()) return
-    const ids = projects().map((project) => project.id)
-
     const saved = props.state.order[key] ?? []
+    // The order is shared with other clients, so ids this client has not used stay where they are saved.
+    const visible = projects().map((project) => project.id)
+    const ids = [...visible, ...saved.filter((id) => !visible.includes(id))]
 
     if (ids.length === saved.length && ids.every((id, index) => id === saved[index])) return
     untrack(() => props.onReorder(key, ids))

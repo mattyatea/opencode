@@ -63,6 +63,21 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
     // controller from this state and never start one themselves.
     const [controllers, setControllers] = createSignal(createServerControllersState<ServerCtx>())
 
+    // The server this client belongs to (the sidecar, or the one that served the web app) keeps the settings every
+    // client of it shares.
+    const sharedApi = () => {
+      const conn = server.list.find(server.current)
+
+      if (!conn) return
+      const ctx = selectServerCtx(controllers(), ServerConnection.key(conn))
+
+      return ctx?.sdk.connection.status() === "connected" ? ctx.sdk.api : undefined
+    }
+
+    const share: SharePreference = (input) => createSharedPreference({ ...input, api: sharedApi })
+    const models = createGlobalModels(share)
+    const sessionPreferences = createSessionPreferences()
+
     const dispatch = (event: ServerControllersEvent<ServerCtx>) =>
       batch(() => {
         const result = transitionServerControllers(untrack(controllers), event)
@@ -110,21 +125,6 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
     })
 
     onCleanup(() => dispatch({ type: "disposed" }))
-
-    // The server this client belongs to (the sidecar, or the one that served the web app) keeps the settings every
-    // client of it shares.
-    const sharedApi = () => {
-      const conn = server.list.find(server.current)
-
-      if (!conn) return
-      const ctx = selectServerCtx(controllers(), ServerConnection.key(conn))
-
-      return ctx?.sdk.connection.status() === "connected" ? ctx.sdk.api : undefined
-    }
-
-    const share: SharePreference = (input) => createSharedPreference({ ...input, api: sharedApi })
-    const models = createGlobalModels(share)
-    const sessionPreferences = createSessionPreferences()
 
     createEffect(() => {
       for (const conn of server.list) {
