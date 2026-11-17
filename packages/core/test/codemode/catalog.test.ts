@@ -100,10 +100,10 @@ describe("CodeModeCatalog.summarize", () => {
     expect(catalog.namespaces[0]?.entries[0]?.line).toEndWith("// Summary")
   })
 
-  test("limits inline descriptions to 120 characters", () => {
-    const catalog = CodeModeCatalog.summarize({ tools: [entry("alpha.one", "x".repeat(121))] })
+  test("limits inline descriptions to 500 characters", () => {
+    const catalog = CodeModeCatalog.summarize({ tools: [entry("alpha.one", "x".repeat(501))] })
     const description = catalog.namespaces[0]?.entries[0]?.line.split(" // ")[1]
-    expect(description).toHaveLength(120)
+    expect(description).toHaveLength(500)
     expect(description).toEndWith("...")
   })
 
@@ -154,7 +154,8 @@ describe("CodeModeInstructions.render", () => {
     expect(instructions).toContain("## Code Mode tools (call only inside `execute`)")
     expect(instructions).toContain("- orders (1 tool)")
     expect(instructions).toContain(`  - ${lookup.signature} // Look up an order by ID`)
-    expect(instructions).not.toContain("search")
+    expect(instructions).not.toContain("global `search(...)` function")
+    expect(instructions).not.toContain("- search(query:")
     expect(instructions).toContain(
       "The tools listed below cannot be called directly: they only work as JavaScript inside the `execute` tool. Every other tool you have is a normal tool call: call it directly, never inside `execute`.",
     )
@@ -171,7 +172,7 @@ describe("CodeModeInstructions.render", () => {
     expect(partial).toContain(
       "The catalog is partial. Before calling a tool that is not listed below, find it with the global `search(...)` function. Do not guess tool names.",
     )
-    expect(partial).toContain("- search({")
+    expect(partial).toContain("- search(query: string | {")
     expect(partial).toContain("  /** @integer @exclusiveMinimum 0 */\n  limit?: number,")
     expect(partial).toContain("  /** @integer @minimum 0 */\n  offset?: number,")
     expect(partial).not.toContain("tools.orders.lookup(input:")
@@ -304,7 +305,7 @@ describe("CodeModeInstructions.update", () => {
     const text = update([echo], [echo, ...wide])
     expect(text).toStartWith("The Code Mode tool catalog has changed.\n\nNew tools are available:\n- bulk (200 tools")
     expect(text).toContain("You can also look up tools that aren't listed with the global `search(...)` function")
-    expect(text).toContain("- search({")
+    expect(text).toContain("- search(query: string | {")
     expect(update([echo, ...wide], [echo, ...wide, entry("bulk.more", "More")])).not.toContain("search(")
     expect(update([echo, ...wide], [echo])).not.toContain("search(")
   })

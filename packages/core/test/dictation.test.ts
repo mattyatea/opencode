@@ -12,6 +12,7 @@ const generate = (reply: Effect.Effect<string, Generate.Error>) =>
   Layer.succeed(
     Generate.Service,
     Generate.Service.of({
+      video: { start: () => Effect.never, status: () => Effect.never, result: () => Effect.never },
       text: (input) => {
         prompts.push(input)
         return reply

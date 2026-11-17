@@ -123,6 +123,10 @@ import type {
   ExperimentalGenerateTextOutput,
   ExperimentalGenerateImageInput,
   ExperimentalGenerateImageOutput,
+  ExperimentalGenerateVideoCreateInput,
+  ExperimentalGenerateVideoCreateOutput,
+  ExperimentalGenerateVideoGetInput,
+  ExperimentalGenerateVideoGetOutput,
   ExperimentalGenerateDecisionsInput,
   ExperimentalGenerateDecisionsOutput,
   ExperimentalVoiceModelsOutput,
@@ -262,18 +266,20 @@ import type {
   ExperimentalPersistentPtyConnectTokenOutput,
   ExperimentalMediaGetInput,
   ExperimentalMediaGetOutput,
-  ExperimentalScheduleCreateInput,
-  ExperimentalScheduleCreateOutput,
-  ExperimentalScheduleListInput,
-  ExperimentalScheduleListOutput,
-  ExperimentalScheduleGetInput,
-  ExperimentalScheduleGetOutput,
-  ExperimentalSchedulePauseInput,
-  ExperimentalSchedulePauseOutput,
-  ExperimentalScheduleResumeInput,
-  ExperimentalScheduleResumeOutput,
-  ExperimentalScheduleDeleteInput,
-  ExperimentalScheduleDeleteOutput,
+  ExperimentalBlobGetInput,
+  ExperimentalBlobGetOutput,
+  ExperimentalAutomationCreateInput,
+  ExperimentalAutomationCreateOutput,
+  ExperimentalAutomationListInput,
+  ExperimentalAutomationListOutput,
+  ExperimentalAutomationGetInput,
+  ExperimentalAutomationGetOutput,
+  ExperimentalAutomationPauseInput,
+  ExperimentalAutomationPauseOutput,
+  ExperimentalAutomationResumeInput,
+  ExperimentalAutomationResumeOutput,
+  ExperimentalAutomationDeleteInput,
+  ExperimentalAutomationDeleteOutput,
   ExperimentalArtifactsProvidersInput,
   ExperimentalArtifactsProvidersOutput,
   ExperimentalArtifactsListInput,
@@ -1289,6 +1295,41 @@ export function make(options: ClientOptions) {
             },
             requestOptions,
           ).then((value) => value.data),
+        video: {
+          create: (input: ExperimentalGenerateVideoCreateInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalGenerateVideoCreateOutput }>(
+              {
+                method: "POST",
+                path: `/api/experimental/generate/video`,
+                body: {
+                  model: input["model"],
+                  prompt: input["prompt"],
+                  start: input["start"],
+                  end: input["end"],
+                  references: input["references"],
+                  duration: input["duration"],
+                  aspect: input["aspect"],
+                  resolution: input["resolution"],
+                  sound: input["sound"],
+                },
+                successStatus: 200,
+                declaredStatuses: [400, 401, 403, 404, 422, 502, 503],
+                empty: false,
+              },
+              requestOptions,
+            ).then((value) => value.data),
+          get: (input: ExperimentalGenerateVideoGetInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalGenerateVideoGetOutput }>(
+              {
+                method: "GET",
+                path: `/api/experimental/generate/video/${encodeURIComponent(input.id)}`,
+                successStatus: 200,
+                declaredStatuses: [400, 401, 403, 404],
+                empty: false,
+              },
+              requestOptions,
+            ).then((value) => value.data),
+        },
         decisions: (input: ExperimentalGenerateDecisionsInput, requestOptions?: RequestOptions) =>
           request<{ readonly data: ExperimentalGenerateDecisionsOutput }>(
             {
@@ -1665,20 +1706,33 @@ export function make(options: ClientOptions) {
             requestOptions,
           ),
       },
-      schedule: {
-        create: (input: ExperimentalScheduleCreateInput, requestOptions?: RequestOptions) =>
-          request<{ readonly data: ExperimentalScheduleCreateOutput }>(
+      blob: {
+        get: (input: ExperimentalBlobGetInput, requestOptions?: RequestOptions) =>
+          request<ExperimentalBlobGetOutput>(
+            {
+              method: "GET",
+              path: `/api/experimental/blob/${encodeURIComponent(input.id)}`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+              binary: true,
+            },
+            requestOptions,
+          ),
+      },
+      automation: {
+        create: (input: ExperimentalAutomationCreateInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalAutomationCreateOutput }>(
             {
               method: "POST",
-              path: `/api/experimental/schedule`,
+              path: `/api/experimental/automation`,
               body: {
                 sessionID: input["sessionID"],
+                directory: input["directory"],
                 name: input["name"],
-                when: input["when"],
-                if: input["if"],
-                until: input["until"],
-                ends: input["ends"],
-                prompt: input["prompt"],
+                trigger: input["trigger"],
+                action: input["action"],
+                expires: input["expires"],
               },
               successStatus: 200,
               declaredStatuses: [400, 401, 403, 404],
@@ -1686,56 +1740,56 @@ export function make(options: ClientOptions) {
             },
             requestOptions,
           ).then((value) => value.data),
-        list: (input: ExperimentalScheduleListInput, requestOptions?: RequestOptions) =>
-          request<{ readonly data: ExperimentalScheduleListOutput }>(
+        list: (input?: ExperimentalAutomationListInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalAutomationListOutput }>(
             {
               method: "GET",
-              path: `/api/experimental/schedule`,
-              query: { sessionID: input["sessionID"] },
+              path: `/api/experimental/automation`,
+              query: { sessionID: input?.["sessionID"], directory: input?.["directory"] },
               successStatus: 200,
               declaredStatuses: [400, 401, 403, 404],
               empty: false,
             },
             requestOptions,
           ).then((value) => value.data),
-        get: (input: ExperimentalScheduleGetInput, requestOptions?: RequestOptions) =>
-          request<{ readonly data: ExperimentalScheduleGetOutput }>(
+        get: (input: ExperimentalAutomationGetInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalAutomationGetOutput }>(
             {
               method: "GET",
-              path: `/api/experimental/schedule/${encodeURIComponent(input.scheduleID)}`,
+              path: `/api/experimental/automation/${encodeURIComponent(input.automationID)}`,
               successStatus: 200,
               declaredStatuses: [400, 401, 403, 404],
               empty: false,
             },
             requestOptions,
           ).then((value) => value.data),
-        pause: (input: ExperimentalSchedulePauseInput, requestOptions?: RequestOptions) =>
-          request<{ readonly data: ExperimentalSchedulePauseOutput }>(
+        pause: (input: ExperimentalAutomationPauseInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalAutomationPauseOutput }>(
             {
               method: "POST",
-              path: `/api/experimental/schedule/${encodeURIComponent(input.scheduleID)}/pause`,
+              path: `/api/experimental/automation/${encodeURIComponent(input.automationID)}/pause`,
               successStatus: 200,
               declaredStatuses: [400, 401, 403, 404],
               empty: false,
             },
             requestOptions,
           ).then((value) => value.data),
-        resume: (input: ExperimentalScheduleResumeInput, requestOptions?: RequestOptions) =>
-          request<{ readonly data: ExperimentalScheduleResumeOutput }>(
+        resume: (input: ExperimentalAutomationResumeInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalAutomationResumeOutput }>(
             {
               method: "POST",
-              path: `/api/experimental/schedule/${encodeURIComponent(input.scheduleID)}/resume`,
+              path: `/api/experimental/automation/${encodeURIComponent(input.automationID)}/resume`,
               successStatus: 200,
               declaredStatuses: [400, 401, 403, 404],
               empty: false,
             },
             requestOptions,
           ).then((value) => value.data),
-        delete: (input: ExperimentalScheduleDeleteInput, requestOptions?: RequestOptions) =>
-          request<ExperimentalScheduleDeleteOutput>(
+        delete: (input: ExperimentalAutomationDeleteInput, requestOptions?: RequestOptions) =>
+          request<ExperimentalAutomationDeleteOutput>(
             {
               method: "DELETE",
-              path: `/api/experimental/schedule/${encodeURIComponent(input.scheduleID)}`,
+              path: `/api/experimental/automation/${encodeURIComponent(input.automationID)}`,
               successStatus: 204,
               declaredStatuses: [400, 401, 403, 404],
               empty: true,
@@ -2888,8 +2942,6 @@ export function make(options: ClientOptions) {
       skill: client.experimental.session.skill,
       /** @deprecated Use `client.experimental.session.wait`. Removed in the next minor. */
       wait: client.experimental.session.wait,
-      /** @deprecated Use `client.experimental.session.contextBreakdown`. Removed in the next minor. */
-      contextBreakdown: client.experimental.session.contextBreakdown,
       /** @deprecated Use `client.experimental.session.instructions`. Removed in the next minor. */
       instructions: {
         /** @deprecated Use `client.experimental.session.instructions.entry`. Removed in the next minor. */
@@ -2901,17 +2953,6 @@ export function make(options: ClientOptions) {
           /** @deprecated Use `client.experimental.session.instructions.entry.remove`. Removed in the next minor. */
           remove: client.experimental.session.instructions.entry.remove,
         },
-      },
-      /** @deprecated Use `client.experimental.session.tasks`. Removed in the next minor. */
-      tasks: {
-        /** @deprecated Use `client.experimental.session.tasks.tree`. Removed in the next minor. */
-        tree: client.experimental.session.tasks.tree,
-        /** @deprecated Use `client.experimental.session.tasks.create`. Removed in the next minor. */
-        create: client.experimental.session.tasks.create,
-        /** @deprecated Use `client.experimental.session.tasks.messages`. Removed in the next minor. */
-        messages: client.experimental.session.tasks.messages,
-        /** @deprecated Use `client.experimental.session.tasks.send`. Removed in the next minor. */
-        send: client.experimental.session.tasks.send,
       },
       /** @deprecated Use `client.experimental.session.log`. Removed in the next minor. */
       log: client.experimental.session.log,
@@ -2931,21 +2972,6 @@ export function make(options: ClientOptions) {
       models: client.experimental.voice.models,
       /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
       session: client.experimental.voice.session,
-    },
-    /** @deprecated Use `client.experimental.dictation`. Removed in the next minor. */
-    dictation: {
-      /** @deprecated Use `client.experimental.dictation.status`. Removed in the next minor. */
-      status: client.experimental.dictation.status,
-      /** @deprecated Use `client.experimental.dictation.languages`. Removed in the next minor. */
-      languages: client.experimental.dictation.languages,
-      /** @deprecated Use `client.experimental.dictation.prepare`. Removed in the next minor. */
-      prepare: client.experimental.dictation.prepare,
-      /** @deprecated Use `client.experimental.dictation.transcribe`. Removed in the next minor. */
-      transcribe: client.experimental.dictation.transcribe,
-      /** @deprecated Use `client.experimental.dictation.cancel`. Removed in the next minor. */
-      cancel: client.experimental.dictation.cancel,
-      /** @deprecated Use `client.experimental.dictation.cleanup`. Removed in the next minor. */
-      cleanup: client.experimental.dictation.cleanup,
     },
     integration: {
       ...client.integration,

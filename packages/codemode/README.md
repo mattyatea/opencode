@@ -223,8 +223,9 @@ that returns a Promise or an Effect, so a denied call rejects its promise like a
 Extension.make({ name: "web", globals: { fetch: Extension.async((url: string) => globalThis.fetch(url)) } })
 ```
 
-A global may return a value, a Promise, or an Effect. An Effect's requirements join the runtime's environment the same
-way a tool's do, so the host can provide per-execution services such as the calling session:
+A global may return a value, a Promise, or an Effect. A synchronous global's Effect runs to completion before the call
+returns, so the host can offer blocking calls such as `fs.readFileSync`. An Effect's requirements join the runtime's
+environment the same way a tool's do, so the host can provide per-execution services such as the calling session:
 
 ```ts
 const web = Extension.make({
@@ -250,7 +251,7 @@ Every value crossing in either direction is converted, never shared: arguments c
 copies, and a function inside a result is callable the same way. A global that shadows a built-in or another
 extension throws at `CodeMode.make`.
 
-Functions inside a result have no data form, so a suspended VM run loses them by default: after a resume, calling one
+Functions inside a result have no data form, so a suspended run loses them by default: after a resume, calling one
 throws a `TypeError`. An extension can preserve them across suspend and resume with `snapshot` hooks. `encode` receives
 a value one of the extension's functions returned, as the host function returned it, and returns plain data (JSON
 values and `Uint8Array`s); on resume, `decode` receives that data once per value and returns a host value of the same
@@ -368,7 +369,8 @@ and `CodeMode.toolExpression(path)` supply the exact callable forms.
 The synchronous `search(...)` built-in is always available. It supports exact-path lookup, namespace-scoped search,
 empty-query browsing, and pagination, and returns callable paths with full signatures. Its result can be used directly,
 awaited, or chained with `then`, `catch`, and `finally`, so programs work whichever way they treat it. Search counts toward
-`maxToolCalls`. Search also matches descriptions from enclosing `Namespace` values.
+`maxToolCalls`. Search also matches descriptions from enclosing `Namespace` values. A plain string is the query:
+`search("issues")` is `search({ query: "issues" })`.
 
 For broad discovery, `search({ namespace: "orders", query: "lookup", detail: "summary", limit: 3 })`
 returns complete descriptions and callable paths without rendering signatures. Retrieve the selected path with

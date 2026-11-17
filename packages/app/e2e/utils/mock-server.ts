@@ -633,6 +633,7 @@ function mockHandlers(
   },
 ) {
   const taskMessages = config.taskMessages ?? []
+  const preferences = new Map<string, unknown>()
   const noContent = Effect.succeed(HttpApiSchema.NoContent.make())
   const configEntries = config.configEntries ?? []
 
@@ -1203,6 +1204,13 @@ function mockHandlers(
           }),
         // Like the server, which also answers 204 for a shell that already ended.
         shellRemove: () => noContent,
+        dictationStatus: () => Effect.succeed({ data: { available: false, reason: "unsupported" } }),
+        preferenceGet: (ctx) => Effect.succeed({ data: preferences.get(ctx.params.key) ?? null }),
+        preferenceSet: (ctx) =>
+          Effect.sync(() => {
+            preferences.set(ctx.params.key, ctx.payload.value)
+            return HttpApiSchema.NoContent.make()
+          }),
         persistentPtyList: (ctx) =>
           persistentPtyEnabled.pipe(
             Effect.andThen(() =>

@@ -37,7 +37,7 @@ import type { FileSystem } from "@opencode/schema/filesystem"
 import type { Command } from "@opencode/schema/command"
 import type { OpenCodeEvent } from "@opencode/protocol/groups/event"
 import type { Pty } from "@opencode/schema/pty"
-import type { Schedule } from "@opencode/schema/schedule"
+import type { Automation } from "@opencode/schema/automation"
 import type { Artifact } from "@opencode/schema/artifact"
 import type { Job } from "@opencode/schema/job"
 import type { Reference } from "@opencode/schema/reference"
@@ -467,9 +467,6 @@ export interface SessionApi<E = never> {
   /** @deprecated Use `client.experimental.session.wait`. Removed in the next minor. */
   readonly wait: ExperimentalSessionWaitOperation<E>
 
-  /** @deprecated Use `client.experimental.session.contextBreakdown`. Removed in the next minor. */
-  readonly contextBreakdown: ExperimentalSessionContextBreakdownOperation<E>
-
   /** @deprecated Use `client.experimental.session.instructions`. Removed in the next minor. */
   readonly instructions: {
     /** @deprecated Use `client.experimental.session.instructions.entry`. Removed in the next minor. */
@@ -483,21 +480,6 @@ export interface SessionApi<E = never> {
       /** @deprecated Use `client.experimental.session.instructions.entry.remove`. Removed in the next minor. */
       readonly remove: ExperimentalSessionInstructionsEntryRemoveOperation<E>
     }
-  }
-
-  /** @deprecated Use `client.experimental.session.tasks`. Removed in the next minor. */
-  readonly tasks: {
-    /** @deprecated Use `client.experimental.session.tasks.tree`. Removed in the next minor. */
-    readonly tree: ExperimentalSessionTasksTreeOperation<E>
-
-    /** @deprecated Use `client.experimental.session.tasks.create`. Removed in the next minor. */
-    readonly create: ExperimentalSessionTasksCreateOperation<E>
-
-    /** @deprecated Use `client.experimental.session.tasks.messages`. Removed in the next minor. */
-    readonly messages: ExperimentalSessionTasksMessagesOperation<E>
-
-    /** @deprecated Use `client.experimental.session.tasks.send`. Removed in the next minor. */
-    readonly send: ExperimentalSessionTasksSendOperation<E>
   }
 
   /** @deprecated Use `client.experimental.session.log`. Removed in the next minor. */
@@ -1647,6 +1629,28 @@ export type ExperimentalGenerateImageOperation<E = never> = (
   input: ExperimentalGenerateImageInput,
 ) => Effect.Effect<ExperimentalGenerateImageOutput, E>
 
+export type ExperimentalGenerateVideoCreateInput = {
+  readonly model: Model.Ref
+  readonly prompt: string
+  readonly start?: Generate.ImageFile | undefined
+  readonly end?: Generate.ImageFile | undefined
+  readonly references?: ReadonlyArray<Generate.File> | undefined
+  readonly duration?: number | undefined
+  readonly aspect?: Generate.VideoAspect | undefined
+  readonly resolution?: Generate.VideoResolution | undefined
+  readonly sound?: boolean | undefined
+}
+export type ExperimentalGenerateVideoCreateOutput = Generate.VideoRunning
+export type ExperimentalGenerateVideoCreateOperation<E = never> = (
+  input: ExperimentalGenerateVideoCreateInput,
+) => Effect.Effect<ExperimentalGenerateVideoCreateOutput, E>
+
+export type ExperimentalGenerateVideoGetInput = { readonly id: Generate.VideoID }
+export type ExperimentalGenerateVideoGetOutput = Generate.VideoJob
+export type ExperimentalGenerateVideoGetOperation<E = never> = (
+  input: ExperimentalGenerateVideoGetInput,
+) => Effect.Effect<ExperimentalGenerateVideoGetOutput, E>
+
 export type ExperimentalGenerateDecisionsInput = {
   readonly model: Model.Ref
   readonly input: ReadonlyArray<Generate.DecisionPart>
@@ -1660,6 +1664,10 @@ export type ExperimentalGenerateDecisionsOperation<E = never> = (
 export interface ExperimentalGenerateApi<E = never> {
   readonly text: ExperimentalGenerateTextOperation<E>
   readonly image: ExperimentalGenerateImageOperation<E>
+  readonly video: {
+    readonly create: ExperimentalGenerateVideoCreateOperation<E>
+    readonly get: ExperimentalGenerateVideoGetOperation<E>
+  }
   readonly decisions: ExperimentalGenerateDecisionsOperation<E>
 }
 
@@ -2585,49 +2593,51 @@ export type ExperimentalPersistentPtyConnectTokenOperation<E = never> = (
   input: ExperimentalPersistentPtyConnectTokenInput,
 ) => Effect.Effect<ExperimentalPersistentPtyConnectTokenOutput, E>
 
-export type ExperimentalScheduleCreateInput = {
-  readonly sessionID: Session.ID
-  readonly name?: string | undefined
-  readonly when?: Schedule.WhenInput | undefined
-  readonly if?: Schedule.ConditionInput | undefined
-  readonly until?: Schedule.ConditionInput | undefined
-  readonly ends?: Schedule.Ends | undefined
-  readonly prompt: string
+export type ExperimentalAutomationCreateInput = {
+  readonly sessionID?: Session.ID | undefined
+  readonly directory?: string | undefined
+  readonly name: string
+  readonly trigger: Automation.Trigger
+  readonly action: Automation.ActionInput
+  readonly expires?: string | undefined
 }
-export type ExperimentalScheduleCreateOutput = Schedule.Info
-export type ExperimentalScheduleCreateOperation<E = never> = (
-  input: ExperimentalScheduleCreateInput,
-) => Effect.Effect<ExperimentalScheduleCreateOutput, E>
+export type ExperimentalAutomationCreateOutput = Automation.Info
+export type ExperimentalAutomationCreateOperation<E = never> = (
+  input: ExperimentalAutomationCreateInput,
+) => Effect.Effect<ExperimentalAutomationCreateOutput, E>
 
-export type ExperimentalScheduleListInput = { readonly sessionID: Session.ID }
-export type ExperimentalScheduleListOutput = ReadonlyArray<Schedule.Info>
-export type ExperimentalScheduleListOperation<E = never> = (
-  input: ExperimentalScheduleListInput,
-) => Effect.Effect<ExperimentalScheduleListOutput, E>
+export type ExperimentalAutomationListInput = {
+  readonly sessionID?: Session.ID | undefined
+  readonly directory?: string | undefined
+}
+export type ExperimentalAutomationListOutput = ReadonlyArray<Automation.Info>
+export type ExperimentalAutomationListOperation<E = never> = (
+  input?: ExperimentalAutomationListInput,
+) => Effect.Effect<ExperimentalAutomationListOutput, E>
 
-export type ExperimentalScheduleGetInput = { readonly scheduleID: Schedule.ID }
-export type ExperimentalScheduleGetOutput = Schedule.Info
-export type ExperimentalScheduleGetOperation<E = never> = (
-  input: ExperimentalScheduleGetInput,
-) => Effect.Effect<ExperimentalScheduleGetOutput, E>
+export type ExperimentalAutomationGetInput = { readonly automationID: Automation.ID }
+export type ExperimentalAutomationGetOutput = Automation.Info
+export type ExperimentalAutomationGetOperation<E = never> = (
+  input: ExperimentalAutomationGetInput,
+) => Effect.Effect<ExperimentalAutomationGetOutput, E>
 
-export type ExperimentalSchedulePauseInput = { readonly scheduleID: Schedule.ID }
-export type ExperimentalSchedulePauseOutput = Schedule.Info
-export type ExperimentalSchedulePauseOperation<E = never> = (
-  input: ExperimentalSchedulePauseInput,
-) => Effect.Effect<ExperimentalSchedulePauseOutput, E>
+export type ExperimentalAutomationPauseInput = { readonly automationID: Automation.ID }
+export type ExperimentalAutomationPauseOutput = Automation.Info
+export type ExperimentalAutomationPauseOperation<E = never> = (
+  input: ExperimentalAutomationPauseInput,
+) => Effect.Effect<ExperimentalAutomationPauseOutput, E>
 
-export type ExperimentalScheduleResumeInput = { readonly scheduleID: Schedule.ID }
-export type ExperimentalScheduleResumeOutput = Schedule.Info
-export type ExperimentalScheduleResumeOperation<E = never> = (
-  input: ExperimentalScheduleResumeInput,
-) => Effect.Effect<ExperimentalScheduleResumeOutput, E>
+export type ExperimentalAutomationResumeInput = { readonly automationID: Automation.ID }
+export type ExperimentalAutomationResumeOutput = Automation.Info
+export type ExperimentalAutomationResumeOperation<E = never> = (
+  input: ExperimentalAutomationResumeInput,
+) => Effect.Effect<ExperimentalAutomationResumeOutput, E>
 
-export type ExperimentalScheduleDeleteInput = { readonly scheduleID: Schedule.ID }
-export type ExperimentalScheduleDeleteOutput = void
-export type ExperimentalScheduleDeleteOperation<E = never> = (
-  input: ExperimentalScheduleDeleteInput,
-) => Effect.Effect<ExperimentalScheduleDeleteOutput, E>
+export type ExperimentalAutomationDeleteInput = { readonly automationID: Automation.ID }
+export type ExperimentalAutomationDeleteOutput = void
+export type ExperimentalAutomationDeleteOperation<E = never> = (
+  input: ExperimentalAutomationDeleteInput,
+) => Effect.Effect<ExperimentalAutomationDeleteOutput, E>
 
 export type ExperimentalArtifactsProvidersInput = {
   readonly location?: { readonly directory?: string | undefined } | undefined
@@ -2750,13 +2760,13 @@ export interface ExperimentalApi<E = never> {
     readonly remove: ExperimentalPersistentPtyRemoveOperation<E>
     readonly connectToken: ExperimentalPersistentPtyConnectTokenOperation<E>
   }
-  readonly schedule: {
-    readonly create: ExperimentalScheduleCreateOperation<E>
-    readonly list: ExperimentalScheduleListOperation<E>
-    readonly get: ExperimentalScheduleGetOperation<E>
-    readonly pause: ExperimentalSchedulePauseOperation<E>
-    readonly resume: ExperimentalScheduleResumeOperation<E>
-    readonly delete: ExperimentalScheduleDeleteOperation<E>
+  readonly automation: {
+    readonly create: ExperimentalAutomationCreateOperation<E>
+    readonly list: ExperimentalAutomationListOperation<E>
+    readonly get: ExperimentalAutomationGetOperation<E>
+    readonly pause: ExperimentalAutomationPauseOperation<E>
+    readonly resume: ExperimentalAutomationResumeOperation<E>
+    readonly delete: ExperimentalAutomationDeleteOperation<E>
   }
   readonly artifacts: {
     readonly providers: ExperimentalArtifactsProvidersOperation<E>
@@ -3077,15 +3087,6 @@ export type SessionWaitOutput = ExperimentalSessionWaitOutput
 /** @deprecated Use `ExperimentalSessionWaitOperation`. Removed in the next minor. */
 export type SessionWaitOperation<E = never> = ExperimentalSessionWaitOperation<E>
 
-/** @deprecated Use `ExperimentalSessionContextBreakdownInput`. Removed in the next minor. */
-export type SessionContextBreakdownInput = ExperimentalSessionContextBreakdownInput
-
-/** @deprecated Use `ExperimentalSessionContextBreakdownOutput`. Removed in the next minor. */
-export type SessionContextBreakdownOutput = ExperimentalSessionContextBreakdownOutput
-
-/** @deprecated Use `ExperimentalSessionContextBreakdownOperation`. Removed in the next minor. */
-export type SessionContextBreakdownOperation<E = never> = ExperimentalSessionContextBreakdownOperation<E>
-
 /** @deprecated Use `ExperimentalSessionInstructionsEntryListInput`. Removed in the next minor. */
 export type SessionInstructionsEntryListInput = ExperimentalSessionInstructionsEntryListInput
 
@@ -3112,42 +3113,6 @@ export type SessionInstructionsEntryRemoveOutput = ExperimentalSessionInstructio
 
 /** @deprecated Use `ExperimentalSessionInstructionsEntryRemoveOperation`. Removed in the next minor. */
 export type SessionInstructionsEntryRemoveOperation<E = never> = ExperimentalSessionInstructionsEntryRemoveOperation<E>
-
-/** @deprecated Use `ExperimentalSessionTasksTreeInput`. Removed in the next minor. */
-export type SessionTasksTreeInput = ExperimentalSessionTasksTreeInput
-
-/** @deprecated Use `ExperimentalSessionTasksTreeOutput`. Removed in the next minor. */
-export type SessionTasksTreeOutput = ExperimentalSessionTasksTreeOutput
-
-/** @deprecated Use `ExperimentalSessionTasksTreeOperation`. Removed in the next minor. */
-export type SessionTasksTreeOperation<E = never> = ExperimentalSessionTasksTreeOperation<E>
-
-/** @deprecated Use `ExperimentalSessionTasksCreateInput`. Removed in the next minor. */
-export type SessionTasksCreateInput = ExperimentalSessionTasksCreateInput
-
-/** @deprecated Use `ExperimentalSessionTasksCreateOutput`. Removed in the next minor. */
-export type SessionTasksCreateOutput = ExperimentalSessionTasksCreateOutput
-
-/** @deprecated Use `ExperimentalSessionTasksCreateOperation`. Removed in the next minor. */
-export type SessionTasksCreateOperation<E = never> = ExperimentalSessionTasksCreateOperation<E>
-
-/** @deprecated Use `ExperimentalSessionTasksMessagesInput`. Removed in the next minor. */
-export type SessionTasksMessagesInput = ExperimentalSessionTasksMessagesInput
-
-/** @deprecated Use `ExperimentalSessionTasksMessagesOutput`. Removed in the next minor. */
-export type SessionTasksMessagesOutput = ExperimentalSessionTasksMessagesOutput
-
-/** @deprecated Use `ExperimentalSessionTasksMessagesOperation`. Removed in the next minor. */
-export type SessionTasksMessagesOperation<E = never> = ExperimentalSessionTasksMessagesOperation<E>
-
-/** @deprecated Use `ExperimentalSessionTasksSendInput`. Removed in the next minor. */
-export type SessionTasksSendInput = ExperimentalSessionTasksSendInput
-
-/** @deprecated Use `ExperimentalSessionTasksSendOutput`. Removed in the next minor. */
-export type SessionTasksSendOutput = ExperimentalSessionTasksSendOutput
-
-/** @deprecated Use `ExperimentalSessionTasksSendOperation`. Removed in the next minor. */
-export type SessionTasksSendOperation<E = never> = ExperimentalSessionTasksSendOperation<E>
 
 /** @deprecated Use `ExperimentalSessionLogInput`. Removed in the next minor. */
 export type SessionLogInput = ExperimentalSessionLogInput
@@ -3199,51 +3164,6 @@ export type VoiceSessionOutput = ExperimentalVoiceSessionOutput
 
 /** @deprecated Use `ExperimentalVoiceSessionOperation`. Removed in the next minor. */
 export type VoiceSessionOperation<E = never> = ExperimentalVoiceSessionOperation<E>
-
-/** @deprecated Use `ExperimentalDictationStatusOutput`. Removed in the next minor. */
-export type DictationStatusOutput = ExperimentalDictationStatusOutput
-
-/** @deprecated Use `ExperimentalDictationStatusOperation`. Removed in the next minor. */
-export type DictationStatusOperation<E = never> = ExperimentalDictationStatusOperation<E>
-
-/** @deprecated Use `ExperimentalDictationLanguagesOutput`. Removed in the next minor. */
-export type DictationLanguagesOutput = ExperimentalDictationLanguagesOutput
-
-/** @deprecated Use `ExperimentalDictationLanguagesOperation`. Removed in the next minor. */
-export type DictationLanguagesOperation<E = never> = ExperimentalDictationLanguagesOperation<E>
-
-/** @deprecated Use `ExperimentalDictationPrepareOutput`. Removed in the next minor. */
-export type DictationPrepareOutput = ExperimentalDictationPrepareOutput
-
-/** @deprecated Use `ExperimentalDictationPrepareOperation`. Removed in the next minor. */
-export type DictationPrepareOperation<E = never> = ExperimentalDictationPrepareOperation<E>
-
-/** @deprecated Use `ExperimentalDictationTranscribeInput`. Removed in the next minor. */
-export type DictationTranscribeInput = ExperimentalDictationTranscribeInput
-
-/** @deprecated Use `ExperimentalDictationTranscribeOutput`. Removed in the next minor. */
-export type DictationTranscribeOutput = ExperimentalDictationTranscribeOutput
-
-/** @deprecated Use `ExperimentalDictationTranscribeOperation`. Removed in the next minor. */
-export type DictationTranscribeOperation<E = never> = ExperimentalDictationTranscribeOperation<E>
-
-/** @deprecated Use `ExperimentalDictationCancelInput`. Removed in the next minor. */
-export type DictationCancelInput = ExperimentalDictationCancelInput
-
-/** @deprecated Use `ExperimentalDictationCancelOutput`. Removed in the next minor. */
-export type DictationCancelOutput = ExperimentalDictationCancelOutput
-
-/** @deprecated Use `ExperimentalDictationCancelOperation`. Removed in the next minor. */
-export type DictationCancelOperation<E = never> = ExperimentalDictationCancelOperation<E>
-
-/** @deprecated Use `ExperimentalDictationCleanupInput`. Removed in the next minor. */
-export type DictationCleanupInput = ExperimentalDictationCleanupInput
-
-/** @deprecated Use `ExperimentalDictationCleanupOutput`. Removed in the next minor. */
-export type DictationCleanupOutput = ExperimentalDictationCleanupOutput
-
-/** @deprecated Use `ExperimentalDictationCleanupOperation`. Removed in the next minor. */
-export type DictationCleanupOperation<E = never> = ExperimentalDictationCleanupOperation<E>
 
 /** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
 export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput
@@ -3347,9 +3267,6 @@ export type GenerateApi<E = never> = ExperimentalGenerateApi<E>
 /** @deprecated Use `ExperimentalVoiceApi`. Removed in the next minor. */
 export type VoiceApi<E = never> = ExperimentalVoiceApi<E>
 
-/** @deprecated Use `ExperimentalDictationApi`. Removed in the next minor. */
-export type DictationApi<E = never> = ExperimentalDictationApi<E>
-
 /** @deprecated Use `ExperimentalMigrationApi`. Removed in the next minor. */
 export type MigrationApi<E = never> = ExperimentalMigrationApi<E>
 
@@ -3416,27 +3333,6 @@ export interface AppApi<E = never> {
 
     /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
     readonly session: ExperimentalVoiceSessionOperation<E>
-  }
-
-  /** @deprecated Use `client.experimental.dictation`. Removed in the next minor. */
-  readonly dictation: {
-    /** @deprecated Use `client.experimental.dictation.status`. Removed in the next minor. */
-    readonly status: ExperimentalDictationStatusOperation<E>
-
-    /** @deprecated Use `client.experimental.dictation.languages`. Removed in the next minor. */
-    readonly languages: ExperimentalDictationLanguagesOperation<E>
-
-    /** @deprecated Use `client.experimental.dictation.prepare`. Removed in the next minor. */
-    readonly prepare: ExperimentalDictationPrepareOperation<E>
-
-    /** @deprecated Use `client.experimental.dictation.transcribe`. Removed in the next minor. */
-    readonly transcribe: ExperimentalDictationTranscribeOperation<E>
-
-    /** @deprecated Use `client.experimental.dictation.cancel`. Removed in the next minor. */
-    readonly cancel: ExperimentalDictationCancelOperation<E>
-
-    /** @deprecated Use `client.experimental.dictation.cleanup`. Removed in the next minor. */
-    readonly cleanup: ExperimentalDictationCleanupOperation<E>
   }
 
   /** @deprecated Use `client.experimental.migration`. Removed in the next minor. */

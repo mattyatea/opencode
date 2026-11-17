@@ -3,11 +3,18 @@ import type { Extension } from "./extension.js"
 import { scanTools } from "./scan.js"
 import { type Services, type ToolDescription, ToolRuntime } from "./tool-runtime.js"
 import type { Tools } from "./tools.js"
-import { fromJson } from "./vm/data.js"
-import { finishExecution, resumeProgram, type Running, type Setup, startProgram, SuspendError } from "./vm/runtime/execute.js"
-import { extensionGlobals } from "./vm/runtime/extensions.js"
-import { globalNames } from "./vm/runtime/globals.js"
-import { fromBytes, type Snapshot, SnapshotError, type SnapshotHeader, toBytes } from "./vm/snapshot/snapshot.js"
+import { fromJson } from "./data.js"
+import {
+  finishExecution,
+  resumeProgram,
+  type Running,
+  type Setup,
+  startProgram,
+  SuspendError,
+} from "./runtime/execute.js"
+import { extensionGlobals } from "./runtime/extensions.js"
+import { globalNames } from "./runtime/globals.js"
+import { fromBytes, type Snapshot, SnapshotError, type SnapshotHeader, toBytes } from "./snapshot/snapshot.js"
 
 export { fromBytes, scanTools, SnapshotError, SuspendError, toBytes }
 export type { Snapshot, SnapshotHeader }
@@ -46,8 +53,18 @@ export type ResolvedExecutionLimits = {
   readonly maxOutputBytes: number | undefined
 }
 
+/** Options for one run of a runtime's program: `Runtime.execute`, `Runtime.program`, and `Runtime.resume`. */
+export type RunOptions = {
+  /**
+   * Which of the runtime's extensions this run gets as globals; all of them by default. Each must be one the runtime
+   * was made with, so its services are already part of the runtime's environment. A resumed run needs the ones it
+   * started with.
+   */
+  readonly extensions?: ReadonlyArray<Extension>
+}
+
 /** Options for `Runtime.program`. */
-export type ProgramOptions = {
+export type ProgramOptions = RunOptions & {
   /** Names this run's host calls (`<runId>:<callId>`); a random UUID by default. */
   readonly runId?: string
 }
@@ -157,7 +174,11 @@ export type Outcome = Result | Suspended
 /** Reusable confined runtime over explicit tools and extensions. */
 export type Runtime<R = never> = {
   readonly catalog: ReadonlyArray<ToolDescription>
-  readonly execute: (code: string, bindings?: Readonly<Record<string, DataValue>>) => Effect.Effect<Result, never, R>
+  readonly execute: (
+    code: string,
+    bindings?: Readonly<Record<string, DataValue>>,
+    options?: RunOptions,
+  ) => Effect.Effect<Result, never, R>
   /** A program ready to run once; nothing runs until `program.run()`. */
   readonly program: (
     code: string,
@@ -169,11 +190,11 @@ export type Runtime<R = never> = {
    * same build with the same extensions. The state is checked when it runs: `run()` fails with a `SnapshotError` when
    * it can't be resumed here.
    */
-  readonly resume: (state: Snapshot | Uint8Array) => Program<R, SnapshotError>
+  readonly resume: (state: Snapshot | Uint8Array, options?: RunOptions) => Program<R, SnapshotError>
 }
 
 /**
- * One run of a program on the VM. `run()` runs it in the current fiber until it ends or is suspended, and owns its host
+ * One run of a program. `run()` runs it in the current fiber until it ends or is suspended, and owns its host
  * calls: interrupting `run()` interrupts them. A program runs once: running it again is a defect.
  */
 export type Program<R = never, E = never> = {
@@ -217,7 +238,7 @@ export function make<
   type R = Environment<Provided, Extensions>
   const prepared = ToolRuntime.prepare<R>((options.tools ?? {}) as Tools<Services<Provided>>)
   const limits = resolveExecutionLimits(options.limits)
-  const extensions = options.extensions ?? []
+  const extensions: ReadonlyArray<Extension> = options.extensions ?? []
   const bound = new Set(globalNames)
   for (const extension of extensions) {
     for (const name of Object.keys(extension.globals)) {
@@ -225,27 +246,43 @@ export function make<
       bound.add(name)
     }
   }
-  const setup: Setup<R> = {
-    prepared,
-    limits,
-    hooks: options.hooks ?? {},
-    globals: extensions.length === 0 ? undefined : (ctx) => extensionGlobals(ctx, extensions),
-    lossy: extensions.some((extension) => extension.snapshot === undefined),
+  const setupFor = (selected: ReadonlyArray<Extension> = extensions): Setup<R> => {
+    for (const extension of selected) {
+      if (!extensions.includes(extension)) {
+        throw new TypeError(`Extension "${extension.name}" isn't one this runtime was made with.`)
+      }
+    }
+    // In the runtime's order, so the same extensions picked in any order give the same globals, and resume alike.
+    const picked = extensions.filter((extension) => selected.includes(extension))
+    return {
+      prepared,
+      limits,
+      hooks: options.hooks ?? {},
+      globals: picked.length === 0 ? undefined : (ctx) => extensionGlobals(ctx, picked),
+      lossy: picked.some((extension) => extension.snapshot === undefined),
+    }
   }
+  const setup = setupFor()
   const data = (bindings: Readonly<Record<string, DataValue>> | undefined) =>
     bindings === undefined
       ? undefined
       : (ctx: Parameters<typeof fromJson>[0]) =>
           Object.entries(bindings).map(([name, value]) => [name, fromJson(ctx, value)] as const)
-  const program = (code: string, bindings?: Readonly<Record<string, DataValue>>, programOptions?: ProgramOptions) =>
-    makeProgram(() => Effect.succeed(startProgram(setup, code, data(bindings), programOptions?.runId)))
+  const program = (code: string, bindings?: Readonly<Record<string, DataValue>>, programOptions?: ProgramOptions) => {
+    const run = programOptions?.extensions === undefined ? setup : setupFor(programOptions.extensions)
+    return makeProgram(() => Effect.succeed(startProgram(run, code, data(bindings), programOptions?.runId)))
+  }
   return {
     get catalog() {
       return prepared.catalog
     },
-    execute: (code, bindings) => Effect.suspend(() => finishExecution(program(code, bindings).run())),
+    execute: (code, bindings, runOptions) =>
+      Effect.suspend(() => finishExecution(program(code, bindings, runOptions).run())),
     program,
-    resume: (state) => makeProgram(() => resumeProgram(setup, state)),
+    resume: (state, runOptions) => {
+      const run = runOptions?.extensions === undefined ? setup : setupFor(runOptions.extensions)
+      return makeProgram(() => resumeProgram(run, state))
+    },
   }
 }
 

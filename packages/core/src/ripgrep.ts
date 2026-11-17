@@ -5,6 +5,7 @@ import { ChildProcess } from "effect/process"
 import { Entry, Match } from "@opencode/schema/filesystem"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { collectStream, waitForAbort } from "@opencode/util/process"
+import { TextBoundary } from "@opencode/util/text-boundary"
 import { Environment } from "./environment/index.js"
 import { NonNegativeInt, PositiveInt, RelativePath } from "./schema.js"
 import { RipgrepBinary } from "./ripgrep/binary.js"
@@ -22,16 +23,19 @@ const MAX_LINE_CHARS = 2_000
 const MAX_CONTEXT_LINES = 1_000
 const MAX_CONTEXT_CHARS = 200_000
 
+// rg reports data that is not valid UTF-8 as base64 `bytes` instead of `text`.
+const RawData = Schema.Union([Schema.Struct({ text: Schema.String }), Schema.Struct({ bytes: Schema.String })])
+
 const RawMatch = Schema.Struct({
   type: Schema.Literals(["match", "context"]),
   data: Schema.Struct({
-    path: Schema.Struct({ text: Schema.String }),
-    lines: Schema.Struct({ text: Schema.String }),
+    path: RawData,
+    lines: RawData,
     line_number: PositiveInt,
     absolute_offset: NonNegativeInt,
     submatches: Schema.Array(
       Schema.Struct({
-        match: Schema.Struct({ text: Schema.String }),
+        match: RawData,
         start: NonNegativeInt,
         end: NonNegativeInt,
       }),
@@ -40,7 +44,16 @@ const RawMatch = Schema.Struct({
 })
 const decodeJsonRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
 
-type RawMatchData = (typeof RawMatch.Type)["data"]
+const rawText = (data: typeof RawData.Type) =>
+  "text" in data ? data.text : Buffer.from(data.bytes, "base64").toString("utf8")
+
+type RawMatchData = {
+  path: { text: string }
+  lines: { text: string }
+  line_number: number
+  absolute_offset: number
+  submatches: { match: { text: string }; start: number; end: number }[]
+}
 
 export type ContextMatch = Match & { readonly context?: boolean }
 
@@ -48,6 +61,8 @@ export class Error extends Schema.TaggedError<Error>()("Ripgrep.Error", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}
+
+export class InvalidGlobError extends Error {}
 
 export class InvalidPatternError extends Schema.TaggedError<InvalidPatternError>()("Ripgrep.InvalidPatternError", {
   pattern: Schema.String,
@@ -161,6 +176,11 @@ const layer = Layer.effect(
 
           const code = yield* handle.exitCode
           const stderr = yield* Fiber.join(stderrFiber)
+          if (code === 2) {
+            // rg 13 omits the program name. Ignore-file diagnostics start with a path and line number.
+            const prefix = /^(?:rg: )?error parsing glob /.exec(stderr)
+            if (prefix) return yield* new InvalidGlobError({ message: stderr.slice(prefix[0].length).trimEnd() })
+          }
           if (input.pattern && code === 2 && isInvalidPattern(stderr)) {
             return yield* new InvalidPatternError({ pattern: input.pattern, message: stderr.trim() })
           }
@@ -229,19 +249,21 @@ const layer = Layer.effect(
                   context: match.type === "context",
                   lines: {
                     text:
-                      match.data.lines.text.length > MAX_LINE_CHARS
-                        ? Buffer.from(match.data.lines.text.slice(0, MAX_LINE_CHARS), "utf8").toString() + "..."
-                        : match.data.lines.text,
+                      rawText(match.data.lines).length > MAX_LINE_CHARS
+                        ? TextBoundary.head(rawText(match.data.lines), MAX_LINE_CHARS) + "..."
+                        : rawText(match.data.lines),
                   },
-                  path: { text: normalizePath(match.data.path.text) },
+                  path: { text: normalizePath(rawText(match.data.path)) },
                   submatches: match.data.submatches.slice(0, MAX_SUBMATCHES).map((submatch) =>
                     context
                       ? {
                           ...submatch,
                           // Keep offsets, but do not repeat unbounded text outside the preview.
-                          match: { text: submatch.match.text.slice(0, Math.max(0, MAX_LINE_CHARS - submatch.start)) },
+                          match: {
+                            text: rawText(submatch.match).slice(0, Math.max(0, MAX_LINE_CHARS - submatch.start)),
+                          },
                         }
-                      : submatch,
+                      : { ...submatch, match: { text: rawText(submatch.match) } },
                   ),
                 })),
                 Effect.mapError((cause) => failure("Invalid ripgrep match output", cause)),

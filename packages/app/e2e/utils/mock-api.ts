@@ -306,6 +306,18 @@ const Group = HttpApiGroup.make("mock")
     }),
   )
   .add(
+    HttpApiEndpoint.get("dictationStatus", "/api/experimental/dictation/status", { success: Json }),
+    HttpApiEndpoint.get("preferenceGet", "/api/experimental/preference/:key", {
+      params: { key: Schema.String },
+      success: Json,
+    }),
+    HttpApiEndpoint.put("preferenceSet", "/api/experimental/preference/:key", {
+      params: { key: Schema.String },
+      payload: Schema.Struct({ value: Schema.Json }),
+      success: NoContent,
+    }),
+  )
+  .add(
     HttpApiEndpoint.get("persistentPtyList", "/api/experimental/session/:sessionID/terminal", {
       params: SessionParams,
       success: Json,

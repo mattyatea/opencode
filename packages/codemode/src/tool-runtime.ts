@@ -1,5 +1,5 @@
 import { Cause, Effect, Exit, Formatter, Schema } from "effect"
-import type { Json } from "./vm/data.js"
+import type { Json } from "./data.js"
 import type { DiagnosticKind } from "./codemode.js"
 import { toolError } from "./tool-error.js"
 import {
@@ -523,7 +523,7 @@ const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Tool => ({
 /** Exact callable signature of the built-in `search` function, for host-owned instructions. */
 export const searchSignature = (() => {
   const tool = makeSearchTool([])
-  return `search(${inputTypeScript(tool, true)}): ${outputTypeScript(tool, true)}`
+  return `search(query: string | ${inputTypeScript(tool, true)}): ${outputTypeScript(tool, true)}`
 })()
 
 const toSearchEntry = <R>(visible: VisibleTool<R>, position: number): SearchEntry => {
@@ -595,7 +595,24 @@ const resolve = <R>(root: ToolNode<R>, path: ReadonlyArray<string>, index: Reado
     )
   }
   if (node.tool === undefined) {
-    throw new ToolRuntimeError("UnknownTool", `Tool '${segments.join(".")}' is not callable.`)
+    const name = segments.join(".")
+    const under = index.filter((entry) => entry.description.path.startsWith(`${name}.`))
+    const ranked = rank(under, segments.at(-1) ?? "", index)
+    const shown = [...ranked, ...under.filter((entry) => !ranked.includes(entry))]
+      .slice(0, 3)
+      .map((entry) => toolExpression(entry.description.path))
+    const more = under.length - shown.length
+    throw new ToolRuntimeError(
+      "UnknownTool",
+      shown.length === 0
+        ? `Tool '${name}' is not callable.`
+        : `Tool '${name}' is not callable, it is a namespace. Did you mean ${new Intl.ListFormat("en", { type: "disjunction" }).format(shown)}?`,
+      [
+        more > 0
+          ? `${more} more under '${name}'. Use search({ namespace: ${JSON.stringify(name)} }) to list them.`
+          : "Use search to find available tools.",
+      ],
+    )
   }
   return node.tool
 }
@@ -693,7 +710,11 @@ export const make = <R>(
           new ToolRuntimeError(
             "InvalidToolInput",
             `Invalid input for tool '${name}': ${String(cause)}`,
-            name === "search" ? [] : ["The signature may have changed. Use search to get the current signature."],
+            name === "search"
+              ? [
+                  'Pass search a query string or an object, such as search("issues") or search({ namespace: "github" }).',
+                ]
+              : ["The signature may have changed. Use search to get the current signature."],
           ),
       })
     })
@@ -744,6 +765,15 @@ export const make = <R>(
       )
     })
 
+  // `search("notes")` is shorthand for `search({ query: "notes" })`.
+  const search = (args: Array<Json | undefined>, options: ExecuteCallOptions) =>
+    executeTool(
+      "search",
+      makeSearchTool(prepared.searchIndex),
+      typeof args[0] === "string" ? [{ query: args[0] }, ...args.slice(1)] : args,
+      options,
+    )
+
   const durableTool = (
     path: ReadonlyArray<string>,
   ): {
@@ -766,14 +796,13 @@ export const make = <R>(
     invocations,
     record: (name) => recordCall({ name }),
     keys: (path) => namespaceKeys(root, path),
-    search: (args, options) =>
-      Effect.suspend(() => executeTool("search", makeSearchTool(prepared.searchIndex), args, options)),
+    search: (args, options) => Effect.suspend(() => search(args, options)),
     execute: (path, args, options) =>
       Effect.suspend(() => {
         const segments = canonicalSegments(path)
         // Models often write `tools.search(...)` for the bare `search(...)`; honor it unless a tool owns that path.
         if (segments.length === 1 && segments[0] === "search" && lookup(root, segments) === undefined)
-          return executeTool("search", makeSearchTool(prepared.searchIndex), args, options)
+          return search(args, options)
         return executeTool(segments.join("."), resolve(root, path, prepared.searchIndex), args, options)
       }),
     mode: (path) => {

@@ -68,7 +68,7 @@ function RawMessage(props: {
             </div>
             <div class="flex items-center gap-3">
               <div class="shrink-0 text-12-regular text-text-weak">{props.time(props.message.time.created)}</div>
-              <Icon name="chevron-grabber-vertical" size="small" class="shrink-0 text-text-weak" />
+              <Icon name="chevron-grabber-vertical" class="shrink-0 text-text-weak" />
             </div>
           </div>
         </Accordion.Trigger>
@@ -142,8 +142,18 @@ export default function SessionContextTab(props: { session: MountedSession }) {
 
   const formatter = createMemo(() => createSessionContextFormatter(i18n.locale()))
 
-  // A root session's cost includes its subagent sessions, as in the TUI.
-  const cost = createMemo(() => usd().format(props.session.id ? data().session.cost(props.session.id) : 0))
+  const cost = createMemo(() => {
+    if (!props.session.id) return
+    const spent = data().session.cost(props.session.id)
+
+    if (spent === 0) {
+      const ref = info()?.model ?? messages().findLast((item) => item.type === "assistant")?.model
+
+      if (ref?.providerID === "opencode-go") return
+    }
+
+    return usd().format(spent)
+  })
 
   const counts = createMemo(() => {
     const all = messages()
@@ -394,7 +404,9 @@ export default function SessionContextTab(props: { session: MountedSession }) {
         <ContextWindow session={props.session} />
 
         <div class="grid grid-cols-1 @[32rem]:grid-cols-2 gap-4">
-          <For each={stats}>{(stat) => <Stat label={ctx.t(stat.label)} value={stat.value()} />}</For>
+          <For each={stats}>
+            {(stat) => <Show when={stat.value()}>{(value) => <Stat label={ctx.t(stat.label)} value={value()} />}</Show>}
+          </For>
         </div>
 
         <Show when={systemPrompt()}>
@@ -418,7 +430,7 @@ export default function SessionContextTab(props: { session: MountedSession }) {
               disabled={!props.session.id || exporting()}
               onClick={exportSession}
             >
-              <Show when={exporting()} fallback={<Icon name="download" size="small" />}>
+              <Show when={exporting()} fallback={<Icon name="download" />}>
                 <Loader class="size-4 shrink-0" />
               </Show>
               <span>{ctx.t("export.session")}</span>
