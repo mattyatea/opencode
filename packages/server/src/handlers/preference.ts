@@ -9,8 +9,7 @@ export const makePreference = Effect.gen(function* () {
   const kv = yield* KV.Service
 
   return {
-    get: (key: PreferenceKey) =>
-      kv.get(storageKey(key)).pipe(Effect.map((value) => ({ data: value ?? null }))),
+    get: (key: PreferenceKey) => kv.get(storageKey(key)).pipe(Effect.map((value) => ({ data: value ?? null }))),
     set: (key: PreferenceKey, value: Schema.Json) =>
       kv.set(storageKey(key), value).pipe(Effect.as(HttpApiSchema.NoContent.make())),
   }

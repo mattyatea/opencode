@@ -510,7 +510,6 @@ export function SidebarCustomized(props: {
 
       result().groups.forEach((parent) => {
         if (parent.collapsed) return
-
         ;(parent.children ?? [parent]).forEach((group) => {
           if (group.collapsed) return
 
@@ -549,9 +548,7 @@ export function SidebarCustomized(props: {
   }
 
   function GroupHeader(headerProps: { groupKey: string }) {
-    return (
-      <Show when={groupByKey().get(headerProps.groupKey)}>{(group) => <GroupHeaderView group={group()} />}</Show>
-    )
+    return <Show when={groupByKey().get(headerProps.groupKey)}>{(group) => <GroupHeaderView group={group()} />}</Show>
   }
 
   function GroupHeaderView(headerProps: { group: SidebarGroup<Row> }) {
