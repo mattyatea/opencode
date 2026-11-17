@@ -56,6 +56,7 @@ test("exposes every standard HTTP API group", () => {
     "session",
     "generate",
     "voice",
+    "dictation",
     "integration",
     "mcp",
     "file",
@@ -65,6 +66,7 @@ test("exposes every standard HTTP API group", () => {
     "automation",
     "artifacts",
     "job",
+    "preference",
     "migration",
     "usage",
     "config",
@@ -76,10 +78,13 @@ test("exposes every standard HTTP API group", () => {
     "export",
     "skill",
     "wait",
+    "contextBreakdown",
     "instructions",
+    "tasks",
     "log",
   ])
   expect(Object.keys(client.experimental.voice)).toEqual(["models", "session"])
+  expect(Object.keys(client.experimental.preference)).toEqual(["get", "set"])
   expect(Object.keys(client.experimental.usage)).toEqual(["limits"])
   expect(Object.keys(client.experimental.mcp)).toEqual(["add", "remove", "connect", "disconnect", "client"])
   expect(Object.keys(client.experimental.integration.wellknown)).toEqual(["add"])
