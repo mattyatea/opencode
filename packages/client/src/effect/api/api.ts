@@ -1702,78 +1702,73 @@ export type ExperimentalVoiceSessionOperation<E = never> = (
   input: ExperimentalVoiceSessionInput,
 ) => Effect.Effect<ExperimentalVoiceSessionOutput, E>
 
-export type ExperimentalVoiceCodexStartInput = {
+export type ExperimentalVoiceCallStartInput = {
   readonly sdp: string
-  readonly instructions: { readonly voice: string; readonly delegator: string }
-  readonly tools: ReadonlyArray<{ readonly name: string; readonly description: string; readonly parameters: unknown }>
-  readonly context?: string | undefined
+  readonly directory: string
+  readonly viewing?: { readonly id: string; readonly title?: string | undefined } | undefined
 }
-export type ExperimentalVoiceCodexStartOutput = { readonly call: string; readonly sdp: string }
-export type ExperimentalVoiceCodexStartOperation<E = never> = (
-  input: ExperimentalVoiceCodexStartInput,
-) => Effect.Effect<ExperimentalVoiceCodexStartOutput, E>
+export type ExperimentalVoiceCallStartOutput = { readonly call: string; readonly sdp: string }
+export type ExperimentalVoiceCallStartOperation<E = never> = (
+  input: ExperimentalVoiceCallStartInput,
+) => Effect.Effect<ExperimentalVoiceCallStartOutput, E>
 
-export type ExperimentalVoiceCodexEventsInput = { readonly callID: string; readonly after?: number | undefined }
-export type ExperimentalVoiceCodexEventsOutput = {
+export type ExperimentalVoiceCallEventsInput = { readonly callID: string; readonly after?: number | undefined }
+export type ExperimentalVoiceCallEventsOutput = {
   readonly events: ReadonlyArray<
-    | { readonly seq: number; readonly type: "transcript"; readonly role: string; readonly delta: string }
-    | { readonly seq: number; readonly type: "transcript.done"; readonly role: string; readonly text: string }
-    | { readonly seq: number; readonly type: "delegation"; readonly status: "started" | "completed" }
+    | { readonly seq: number; readonly type: "transcript"; readonly role: "user" | "assistant"; readonly delta: string }
     | {
         readonly seq: number
-        readonly type: "tool"
-        readonly id: string
-        readonly name: string
-        readonly arguments: string
+        readonly type: "transcript.done"
+        readonly role: "user" | "assistant"
+        readonly text: string
       }
+    | {
+        readonly seq: number
+        readonly type: "delegation"
+        readonly id: string
+        readonly status: "started" | "completed"
+      }
+    | { readonly seq: number; readonly type: "open"; readonly sessionID: string }
     | { readonly seq: number; readonly type: "error"; readonly message: string }
     | { readonly seq: number; readonly type: "closed"; readonly reason?: string | undefined }
   >
   readonly closed: boolean
 }
-export type ExperimentalVoiceCodexEventsOperation<E = never> = (
-  input: ExperimentalVoiceCodexEventsInput,
-) => Effect.Effect<ExperimentalVoiceCodexEventsOutput, E>
+export type ExperimentalVoiceCallEventsOperation<E = never> = (
+  input: ExperimentalVoiceCallEventsInput,
+) => Effect.Effect<ExperimentalVoiceCallEventsOutput, E>
 
-export type ExperimentalVoiceCodexToolInput = {
+export type ExperimentalVoiceCallSpeechInput = { readonly callID: string; readonly text: string }
+export type ExperimentalVoiceCallSpeechOutput = void
+export type ExperimentalVoiceCallSpeechOperation<E = never> = (
+  input: ExperimentalVoiceCallSpeechInput,
+) => Effect.Effect<ExperimentalVoiceCallSpeechOutput, E>
+
+export type ExperimentalVoiceCallViewInput = {
   readonly callID: string
   readonly id: string
-  readonly output: string
-  readonly success: boolean
+  readonly title?: string | undefined
 }
-export type ExperimentalVoiceCodexToolOutput = void
-export type ExperimentalVoiceCodexToolOperation<E = never> = (
-  input: ExperimentalVoiceCodexToolInput,
-) => Effect.Effect<ExperimentalVoiceCodexToolOutput, E>
+export type ExperimentalVoiceCallViewOutput = void
+export type ExperimentalVoiceCallViewOperation<E = never> = (
+  input: ExperimentalVoiceCallViewInput,
+) => Effect.Effect<ExperimentalVoiceCallViewOutput, E>
 
-export type ExperimentalVoiceCodexSpeechInput = { readonly callID: string; readonly text: string }
-export type ExperimentalVoiceCodexSpeechOutput = void
-export type ExperimentalVoiceCodexSpeechOperation<E = never> = (
-  input: ExperimentalVoiceCodexSpeechInput,
-) => Effect.Effect<ExperimentalVoiceCodexSpeechOutput, E>
-
-export type ExperimentalVoiceCodexContextInput = { readonly callID: string; readonly text: string }
-export type ExperimentalVoiceCodexContextOutput = void
-export type ExperimentalVoiceCodexContextOperation<E = never> = (
-  input: ExperimentalVoiceCodexContextInput,
-) => Effect.Effect<ExperimentalVoiceCodexContextOutput, E>
-
-export type ExperimentalVoiceCodexStopInput = { readonly callID: string }
-export type ExperimentalVoiceCodexStopOutput = void
-export type ExperimentalVoiceCodexStopOperation<E = never> = (
-  input: ExperimentalVoiceCodexStopInput,
-) => Effect.Effect<ExperimentalVoiceCodexStopOutput, E>
+export type ExperimentalVoiceCallStopInput = { readonly callID: string }
+export type ExperimentalVoiceCallStopOutput = void
+export type ExperimentalVoiceCallStopOperation<E = never> = (
+  input: ExperimentalVoiceCallStopInput,
+) => Effect.Effect<ExperimentalVoiceCallStopOutput, E>
 
 export interface ExperimentalVoiceApi<E = never> {
   readonly models: ExperimentalVoiceModelsOperation<E>
   readonly session: ExperimentalVoiceSessionOperation<E>
-  readonly codex: {
-    readonly start: ExperimentalVoiceCodexStartOperation<E>
-    readonly events: ExperimentalVoiceCodexEventsOperation<E>
-    readonly tool: ExperimentalVoiceCodexToolOperation<E>
-    readonly speech: ExperimentalVoiceCodexSpeechOperation<E>
-    readonly context: ExperimentalVoiceCodexContextOperation<E>
-    readonly stop: ExperimentalVoiceCodexStopOperation<E>
+  readonly call: {
+    readonly start: ExperimentalVoiceCallStartOperation<E>
+    readonly events: ExperimentalVoiceCallEventsOperation<E>
+    readonly speech: ExperimentalVoiceCallSpeechOperation<E>
+    readonly view: ExperimentalVoiceCallViewOperation<E>
+    readonly stop: ExperimentalVoiceCallStopOperation<E>
   }
 }
 
@@ -3106,10 +3101,18 @@ export interface ConfigApi<E = never> {
   readonly update: ExperimentalConfigUpdateOperation<E>
 }
 
-export type ExperimentalConfigUpdateInput = { readonly shell: string | null }
+export type ExperimentalConfigUpdateInput = {
+  readonly shell?: string | null | undefined
+  readonly voice?:
+    | {
+        readonly provider?: ("openai" | "chatgpt") | null | undefined
+        readonly chatgpt_voice?: string | null | undefined
+      }
+    | undefined
+}
 export type ExperimentalConfigUpdateOutput = void
 export type ExperimentalConfigUpdateOperation<E = never> = (
-  input: ExperimentalConfigUpdateInput,
+  input?: ExperimentalConfigUpdateInput,
 ) => Effect.Effect<ExperimentalConfigUpdateOutput, E>
 
 export interface ExperimentalConfigApi<E = never> {

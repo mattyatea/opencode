@@ -16,6 +16,7 @@ import { experimentalSettingsAvailable, SettingsExperimental } from "./experimen
 import { SettingsKeybinds } from "./keybinds/keybinds"
 import { SettingsNotifications } from "./notifications/notifications"
 import { SettingsDictation } from "./dictation/dictation"
+import { SettingsVoice } from "./voice/voice"
 import { SettingsProviders } from "./providers/providers"
 import { SettingsModels } from "./models/models"
 import { SettingsUsage } from "./usage/usage"
@@ -51,6 +52,7 @@ const serverTabs = [
   { value: "usage", icon: pageIcons.usage, label: "settings.usage.title" },
   { value: "providers", icon: pageIcons.providers, label: "settings.providers.title" },
   { value: "models", icon: pageIcons.models, label: "settings.models.title" },
+  { value: "voice", icon: pageIcons.voice, label: "settings.tab.voice" },
   { value: "extensions", icon: pageIcons.extensions, label: "settings.tab.extensions" },
   { value: "projects", icon: pageIcons.projects, label: "settings.tab.projects" },
   { value: "workspaces", icon: pageIcons.workspaces, label: "settings.tab.workspaces" },
@@ -61,6 +63,7 @@ const serverPages = {
   usage: { title: "settings.usage.title", description: "settings.usage.description" },
   providers: { title: "settings.providers.title", description: "settings.providers.description" },
   models: { title: "settings.models.title", description: "settings.models.description" },
+  voice: { title: "settings.tab.voice", description: "settings.voice.description" },
   extensions: { title: "settings.tab.extensions", description: "settings.extensions.description" },
   projects: { title: "settings.projects.title", description: "settings.projects.description" },
   workspaces: { title: "settings.tab.workspaces", description: "settings.workspaces.description" },
@@ -312,6 +315,9 @@ function RootSettings() {
           <SettingsServerDataScope server={server}>
             <Tabs.Content value="dictation" class="settings-panel">
               <SettingsDictation />
+            </Tabs.Content>
+            <Tabs.Content value="voice" class="settings-panel">
+              <SettingsVoice />
             </Tabs.Content>
             <Tabs.Content value="providers" class="settings-panel">
               <SettingsProviders

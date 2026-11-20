@@ -2,11 +2,13 @@ import { expect } from "bun:test"
 import { RequestExecutor } from "@opencode/ai/route"
 import { Credential } from "@opencode/core/credential"
 import { Flag } from "@opencode/core/flag"
+import { Session } from "@opencode/core/session"
 import { Integration } from "@opencode/core/integration"
 import { Voice } from "@opencode/core/voice"
 import { Document, Info } from "@opencode/schema/config"
 import { ConfigVoice } from "@opencode/schema/config/voice"
 import { Effect, Layer } from "effect"
+import { Socket } from "effect/socket"
 import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http"
 import { TestClock } from "effect/testing"
 import { testEffect } from "./lib/effect"
@@ -48,7 +50,16 @@ const resolveCredential: Integration.Interface["connection"]["resolve"] = (conne
 
 const unused = () => Effect.die("unused")
 
-const noCodex = Flag.testLayer([], { overrides: "-codex_voice" })
+const unusedSessions = Layer.mock(Session.Service, { revert: { stage: unused, clear: unused, commit: unused } })
+const unusedSockets = Layer.succeed(Socket.WebSocketConstructor, () => {
+  throw new Error("unused")
+})
+
+const noSubscription = Layer.mergeAll(
+  Flag.testLayer([], { overrides: "-chatgpt_voice" }),
+  unusedSessions,
+  unusedSockets,
+)
 
 const mockIntegration = (
   connections: (id: Integration.ID) => Integration.Info["connections"],
@@ -90,7 +101,7 @@ const start = (
       Voice.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            noCodex,
+            noSubscription,
             mockIntegration((id) => connections[id] ?? [], resolveCredential),
             RequestExecutor.layer.pipe(
               Layer.provide(
@@ -194,7 +205,7 @@ it.effect("lists voice models with availability and default without resolving cr
           Voice.layer.pipe(
             Layer.provide(
               Layer.mergeAll(
-                noCodex,
+                noSubscription,
                 mockIntegration((id) => connections[id] ?? []),
                 Layer.mock(RequestExecutor.Service, {}),
               ),
@@ -244,9 +255,12 @@ it.effect("lists voice models with availability and default without resolving cr
   }),
 )
 
-it.effect("offers Codex voice first when voice.codex is configured and its command exists", () =>
+it.effect("picks the voice provider from voice.provider, else an API key before the ChatGPT plan", () =>
   Effect.gen(function* () {
-    const list = (voice: ConstructorParameters<typeof ConfigVoice.Info>[0]) =>
+    const list = (
+      voice: ConstructorParameters<typeof ConfigVoice.Info>[0],
+      connections: Partial<Record<string, Integration.Info["connections"]>>,
+    ) =>
       Effect.flatMap(Voice.Service, (service) => service.models()).pipe(
         Effect.provide(
           Voice.layer.pipe(
@@ -254,26 +268,33 @@ it.effect("offers Codex voice first when voice.codex is configured and its comma
               Layer.mergeAll(
                 Flag.testLayer(
                   [new Document({ type: "document", info: new Info({ voice: new ConfigVoice.Info(voice) }) })],
-                  {
-                    overrides: "codex_voice",
-                  },
+                  { overrides: "chatgpt_voice" },
                 ),
-                mockIntegration((id) => (id === "openai" ? [credential("active", "key")] : [])),
+                mockIntegration((id) => connections[id] ?? []),
                 Layer.mock(RequestExecutor.Service, {}),
+                unusedSessions,
+                unusedSockets,
               ),
             ),
           ),
         ),
       )
+    // Only OpenCode's own sign-ins count, so the test doesn't depend on a Codex CLI on this machine.
+    const chatgpt = new ConfigVoice.ChatGPT({ token: "opencode" })
+    const signedIn = { openai: [credential("chatgpt", "oauth")] }
+    const both = { openai: [credential("chatgpt", "oauth"), credential("active", "key")] }
 
-    const configured = yield* list({ codex: new ConfigVoice.Codex({ command: "sh" }) })
-    expect(configured.models[0]).toEqual({ model: "codex", provider: "codex", transports: ["webrtc"], available: true })
-    expect(configured.default).toBe("codex")
-    expect((yield* list({ engine: "gpt-live", codex: new ConfigVoice.Codex({ command: "sh" }) })).default).toBe(
-      "gpt-live-1",
-    )
-    const missing = yield* list({ codex: new ConfigVoice.Codex({ command: "opencode-missing-codex" }) })
-    expect(missing.models[0]?.available).toBe(false)
-    expect(missing.default).toBe("gpt-live-1")
+    const subscription = yield* list({ chatgpt }, signedIn)
+    expect(subscription.models[0]).toEqual({
+      model: "chatgpt-live",
+      provider: "chatgpt",
+      transports: ["webrtc"],
+      available: true,
+    })
+    expect(subscription.default).toBe("chatgpt-live")
+    expect((yield* list({ chatgpt }, both)).default).toBe("gpt-live-1")
+    expect((yield* list({ chatgpt, provider: "chatgpt" }, both)).default).toBe("chatgpt-live")
+    expect((yield* list({ chatgpt, provider: "openai" }, signedIn)).default).toBeUndefined()
+    expect((yield* list({ chatgpt }, {})).models[0]?.available).toBe(false)
   }),
 )

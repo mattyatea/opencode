@@ -1,5 +1,6 @@
 import path from "path"
 import fs from "fs/promises"
+import { parse } from "jsonc-parser"
 import { describe, expect, test } from "bun:test"
 import { Arbitrary, Effect, Fiber, Layer, Logger, Schema, Stream } from "effect"
 import { Config } from "@opencode/core/config"
@@ -177,6 +178,40 @@ describe("Config", () => {
                 testLayer(project, global, project, undefined, undefined, undefined, undefined, { claude: false }),
               ),
             ),
+          ),
+        )
+      }),
+    ),
+  )
+
+  it.live("updates only the global fields a patch names, and removes the ones it sets to null", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) => {
+        const global = path.join(tmp.path, "global")
+        const file = path.join(global, "opencode.jsonc")
+        return Effect.promise(async () => {
+          await fs.mkdir(global, { recursive: true })
+          await fs.writeFile(
+            file,
+            '{\n  // kept\n  "shell": "zsh",\n  "voice": { "chatgpt": { "token": "codex" } }\n}\n',
+          )
+        }).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              const config = yield* Config.Service
+              yield* config.update!({ voice: { provider: "chatgpt", chatgpt_voice: "juniper" } })
+              const written = yield* Effect.promise(() => fs.readFile(file, "utf8"))
+              expect(written).toContain("// kept")
+              expect(parse(written)).toEqual({
+                shell: "zsh",
+                voice: { chatgpt: { token: "codex", voice: "juniper" }, provider: "chatgpt" },
+              })
+              yield* config.update!({ voice: { provider: null } })
+              expect(parse(yield* Effect.promise(() => fs.readFile(file, "utf8")))).toEqual({
+                shell: "zsh",
+                voice: { chatgpt: { token: "codex", voice: "juniper" } },
+              })
+            }).pipe(Effect.provide(testLayer(tmp.path, global))),
           ),
         )
       }),

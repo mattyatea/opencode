@@ -45,23 +45,23 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
         ),
       )
       .handle(
-        "voice.codex.start",
-        Effect.fn("server.voice.codex.start")(
+        "voice.call.start",
+        Effect.fn("server.voice.call.start")(
           function* (request) {
             const voice = yield* Voice.Service
-            return { data: yield* voice.codex.start(request.payload).pipe(Effect.mapError(voiceErrors)) }
+            return { data: yield* voice.call.start(request.payload).pipe(Effect.mapError(voiceErrors)) }
           },
           Effect.provide(services),
           locationErrors,
         ),
       )
       .handle(
-        "voice.codex.events",
-        Effect.fn("server.voice.codex.events")(
+        "voice.call.events",
+        Effect.fn("server.voice.call.events")(
           function* (request) {
             const voice = yield* Voice.Service
             return {
-              data: yield* voice.codex
+              data: yield* voice.call
                 .events(request.params.callID, request.query.after ?? 0)
                 .pipe(Effect.mapError(voiceErrors)),
             }
@@ -71,46 +71,33 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
         ),
       )
       .handle(
-        "voice.codex.tool",
-        Effect.fn("server.voice.codex.tool")(
+        "voice.call.speech",
+        Effect.fn("server.voice.call.speech")(
           function* (request) {
             const voice = yield* Voice.Service
-            yield* voice.codex
-              .tool(request.params.callID, request.payload.id, request.payload.output, request.payload.success)
-              .pipe(Effect.mapError(voiceErrors))
+            yield* voice.call.speech(request.params.callID, request.payload.text).pipe(Effect.mapError(voiceErrors))
           },
           Effect.provide(services),
           locationErrors,
         ),
       )
       .handle(
-        "voice.codex.speech",
-        Effect.fn("server.voice.codex.speech")(
+        "voice.call.view",
+        Effect.fn("server.voice.call.view")(
           function* (request) {
             const voice = yield* Voice.Service
-            yield* voice.codex.speech(request.params.callID, request.payload.text).pipe(Effect.mapError(voiceErrors))
+            yield* voice.call.view(request.params.callID, request.payload).pipe(Effect.mapError(voiceErrors))
           },
           Effect.provide(services),
           locationErrors,
         ),
       )
       .handle(
-        "voice.codex.context",
-        Effect.fn("server.voice.codex.context")(
+        "voice.call.stop",
+        Effect.fn("server.voice.call.stop")(
           function* (request) {
             const voice = yield* Voice.Service
-            yield* voice.codex.context(request.params.callID, request.payload.text).pipe(Effect.mapError(voiceErrors))
-          },
-          Effect.provide(services),
-          locationErrors,
-        ),
-      )
-      .handle(
-        "voice.codex.stop",
-        Effect.fn("server.voice.codex.stop")(
-          function* (request) {
-            const voice = yield* Voice.Service
-            yield* voice.codex.stop(request.params.callID)
+            yield* voice.call.stop(request.params.callID)
           },
           Effect.provide(services),
           locationErrors,

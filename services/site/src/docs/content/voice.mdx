@@ -2,38 +2,57 @@
 title: "Voice"
 ---
 
-Desktop voice calls can run on Codex realtime instead of GPT-Live. OpenCode
-starts the [Codex CLI](https://github.com/openai/codex)'s `codex app-server` on
-the server and uses its sign-in, so a ChatGPT plan works without an OpenAI API
-key. This is experimental and behind the `codex_voice` flag, which is on in
-local and dev builds.
+Desktop voice calls run on one of two providers:
 
-Configure it in any [OpenCode configuration file](/config):
+- **API key** (`openai`): GPT-Live on an OpenAI API key or an OpenCode Console
+  connection.
+- **ChatGPT plan** (`chatgpt`): GPT-Live on your ChatGPT plan through a Codex
+  sign-in. OpenCode itself answers the voice's requests in a voice session. This
+  is experimental and behind the `chatgpt_voice` flag, which is on in local and
+  dev builds.
+
+Choose one in **Settings > Voice**, or in any
+[OpenCode configuration file](/config):
 
 ```jsonc title="opencode.jsonc"
 {
   "$schema": "https://opencode.ai/config.json",
   "voice": {
-    "codex": {},
+    "provider": "chatgpt",
   },
 }
 ```
 
-The server needs the Codex CLI and a sign-in. Run `codex login` once on the
-machine that runs OpenCode.
+Without `provider`, a call uses an API key when the server has one, and the
+ChatGPT plan otherwise.
 
-## How a call works
+## How a ChatGPT plan call works
 
-1. Desktop sends its WebRTC offer to the server, which starts an ephemeral Codex
-   thread and its realtime voice. Audio flows directly between Desktop and
-   OpenAI.
-2. When you ask for something, the voice delegates it to the Codex agent of that
-   thread.
-3. The agent works only through OpenCode's voice tools, such as listing,
-   reading, opening and messaging sessions. Desktop runs those tools, just as it
-   does for GPT-Live. The agent has no shell, files or web of its own.
-4. The voice speaks the agent's answer. Replies that sessions send later are
-   spoken too.
+1. Desktop sends its WebRTC offer to the server. The server creates the call on
+   ChatGPT with a Codex sign-in and joins its control connection. Audio flows
+   directly between Desktop and OpenAI.
+2. When you ask for something, the voice hands the request to OpenCode.
+3. OpenCode sends it to the call's voice session, which runs the `voice` agent
+   in the directory of the session on screen. The agent manages sessions with
+   voice tools: it lists, reads and messages sessions, waits for them, and asks
+   Desktop to show one.
+4. The voice speaks the agent's answer. When a session the agent sent work to
+   finishes, the voice reads its reply too.
+
+The voice session stays in the session list, so you can read what you asked and
+what happened.
+
+### Sign-in
+
+The ChatGPT plan uses one of these sign-ins on the server, in order:
+
+1. OpenAI connected with **Codex browser (legacy)** or **Codex device code
+   (legacy)** in OpenCode. OpenCode refreshes it as needed.
+2. The Codex CLI's sign-in in `~/.codex/auth.json` (or `$CODEX_HOME`). OpenCode
+   only reads it: when it expires, run the Codex CLI once to refresh it.
+
+The **Sign in with ChatGPT** connection does not work for voice: ChatGPT rejects
+voice calls made with it.
 
 ## Options
 
@@ -41,64 +60,31 @@ machine that runs OpenCode.
 {
   "$schema": "https://opencode.ai/config.json",
   "voice": {
-    "engine": "codex",
-    "codex": {
-      "command": "/Users/me/.local/bin/codex",
-      "args": ["--disable", "hooks"],
-      "env": { "CODEX_HOME": "/Users/me/.codex-voice" },
-      "model": "gpt-6.1-sol",
-      "reasoning_effort": "low",
-      "config": { "model_verbosity": "low" },
-      "realtime": {
-        "version": "v3",
-        "voice": "cove",
-        "ack_filler": true,
-      },
-      "instructions": {
-        "append": "Answer in Japanese.",
-      },
+    "provider": "chatgpt",
+    "chatgpt": {
+      "token": "auto",
+      "voice": "juniper",
+      "ack_filler": true,
+    },
+    "agent": {
+      "model": "openai/gpt-6.1-sol",
+      "instructions": "Answer in Japanese.",
     },
   },
 }
 ```
 
-| Field                             | Default          | Purpose                                                                                     |
-| --------------------------------- | ---------------- | ------------------------------------------------------------------------------------------- |
-| `engine`                          | `codex` when set | `codex` or `gpt-live`. Without it, Desktop uses Codex whenever `voice.codex` is set.        |
-| `codex.command`                   | `codex`          | Codex CLI executable. OpenCode also looks in `~/.local/bin`, Homebrew and `/usr/local/bin`. |
-| `codex.args`                      | none             | Arguments after `codex app-server`, such as `-c key=value`, `--enable` or `--disable`.      |
-| `codex.env`                       | none             | Extra environment variables for the app-server process.                                     |
-| `codex.cwd`                       | home directory   | Working directory of the Codex thread behind a call.                                        |
-| `codex.model`                     | Codex config     | Model of the Codex agent that handles delegations.                                          |
-| `codex.reasoning_effort`          | `low`            | Reasoning effort of that agent.                                                             |
-| `codex.config`                    | none             | Codex config overrides for the call's thread, with dotted Codex config keys.                |
-| `codex.realtime.version`          | `v3`             | Codex realtime protocol. `v3` is GPT-Live with Codex delegation.                            |
-| `codex.realtime.model`            | Codex's default  | Realtime voice model.                                                                       |
-| `codex.realtime.voice`            | Codex's default  | Output voice. The voices depend on the version; v3 has `cove`, `juniper` and others.        |
-| `codex.realtime.ack_filler`       | Realtime default | Let the voice acknowledge a request while the agent works (v3).                             |
-| `codex.realtime.startup_context`  | `false`          | Add Codex's own workspace and recent-thread context to the voice prompt.                    |
-| `codex.realtime.reasoning_status` | `false`          | Relay the agent's reasoning summaries to the voice as quiet context (v3).                   |
+| Field                  | Default       | Purpose                                                                                    |
+| ---------------------- | ------------- | ------------------------------------------------------------------------------------------ |
+| `provider`             | automatic     | `openai` or `chatgpt`.                                                                     |
+| `chatgpt.token`        | `auto`        | `opencode` uses only OpenCode's Codex (legacy) sign-in, `codex` only the Codex CLI's.      |
+| `chatgpt.voice`        | `cove`        | Output voice, such as `cove`, `juniper`, `maple` or `himari`.                              |
+| `chatgpt.model`        | ChatGPT's     | Realtime voice model.                                                                      |
+| `chatgpt.ack_filler`   | ChatGPT's     | Let the voice say a short acknowledgement while OpenCode works on a request.               |
+| `chatgpt.instructions` | OpenCode's    | Replaces the system instructions of the voice, the part you talk to.                       |
+| `agent.model`          | default model | Model of the voice session's agent, as `provider/model`.                                   |
+| `agent.instructions`   | none          | Extra instructions for the voice session's agent, added to the first request of each call. |
 
-The app-server keeps running while the server does. A change to `command`,
-`args` or `env` starts a new process for the next call; the other fields apply
-to the next call as soon as you save.
-
-Codex reads its own `~/.codex/config.toml` too, including hooks and plugins.
-Disable what a voice call shouldn't run with `args`, or point `CODEX_HOME` at a
-separate Codex home in `env`.
-
-## Instructions
-
-OpenCode gives the voice and the agent instructions written for Desktop. Replace
-or extend them under `voice.codex.instructions`:
-
-| Field       | Purpose                                                                       |
-| ----------- | ----------------------------------------------------------------------------- |
-| `voice`     | Replaces the system instructions of the realtime voice, the part you talk to. |
-| `delegator` | Replaces the base instructions of the Codex agent that drives OpenCode.       |
-| `append`    | Adds developer instructions for the agent and keeps OpenCode's defaults.      |
-| `start`     | Developer instructions the agent gets when a call starts.                     |
-| `end`       | Developer instructions the agent gets when a call ends.                       |
-
-Prefer `append` for language or tone. Replacing `delegator` drops OpenCode's
-rules for using its tools, such as when to open a session or only message it.
+OpenCode waits up to three minutes for the voice session to answer a request.
+Longer work keeps running in its session, and the voice says it is still
+running.

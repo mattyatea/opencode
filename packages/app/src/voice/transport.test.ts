@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, jest, test } from "bun:test"
-import type { OpenCodeClient, VoiceCodexEvent } from "@opencode/client/promise"
+import type { OpenCodeClient, VoiceCallEvent } from "@opencode/client/promise"
 import { CLOSE_TIMEOUT, DISCONNECT_GRACE, JOIN_TIMEOUT } from "./transport-machine"
 import { VoiceFailure, VoiceTransport } from "./transport"
 
@@ -150,29 +150,29 @@ const live = { model: "gpt-live-1", provider: "openai", available: true, transpo
 
 const unused = () => Promise.reject(new Error("unused"))
 
-const noCodex: Voice["codex"] = {
+const noCall: Voice["call"] = {
   start: unused,
   events: unused,
-  tool: unused,
   speech: unused,
-  context: unused,
+  view: unused,
   stop: unused,
 }
 
-function open(models: Voice["models"] = () => Promise.resolve({ models: [live] }), codex = noCodex) {
+function open(models: Voice["models"] = () => Promise.resolve({ models: [live] }), call = noCall) {
   const voice: Voice = {
     models,
     session: () => Promise.resolve({ transport: { type: "webrtc", sdp: "v=0 answer" } }),
-    codex,
+    call,
   }
 
   const dropped = jest.fn()
-  const received: VoiceCodexEvent[] = []
+  const received: VoiceCallEvent[] = []
 
   const transport = new VoiceTransport({
     voice,
     event: () => {},
-    codex: (event) => received.push(event),
+    call: (event) => received.push(event),
+    directory: (viewing) => Promise.resolve(`/work/${viewing.id}`),
     levels: () => {},
     dropped,
   })
@@ -291,22 +291,22 @@ test("a rejected session.update keeps the live call open", async () => {
   expect(result.peer.channel.sent.at(-1)).toEqual({ type: "response.create", event_id: "del_1_4" })
 })
 
-test("a Codex call joins on the server's answer, relays its events, and stops the call when it ends", async () => {
-  const codex = { model: "codex", provider: "codex", available: true, transports: ["webrtc" as const] }
-  const polls: PromiseWithResolvers<{ events: VoiceCodexEvent[]; closed: boolean }>[] = []
-  const started: Parameters<Voice["codex"]["start"]>[0][] = []
+test("a ChatGPT call joins on the server's answer, relays its events, and stops the call when it ends", async () => {
+  const chatgpt = { model: "chatgpt-live", provider: "chatgpt", available: true, transports: ["webrtc" as const] }
+  const polls: PromiseWithResolvers<{ events: VoiceCallEvent[]; closed: boolean }>[] = []
+  const started: Parameters<Voice["call"]["start"]>[0][] = []
   const stopped: string[] = []
 
-  const result = open(() => Promise.resolve({ models: [codex, live], default: "codex" }), {
-    ...noCodex,
+  const result = open(() => Promise.resolve({ models: [chatgpt, live], default: "chatgpt-live" }), {
+    ...noCall,
     start: (input) => {
       started.push(input)
 
-      return Promise.resolve({ call: "thread_1", sdp: "v=0 codex" })
+      return Promise.resolve({ call: "rtc_1", sdp: "v=0 chatgpt" })
     },
     events: (input) => {
       expect(input.after).toBe(polls.length === 0 ? 0 : 7)
-      const poll = Promise.withResolvers<{ events: VoiceCodexEvent[]; closed: boolean }>()
+      const poll = Promise.withResolvers<{ events: VoiceCallEvent[]; closed: boolean }>()
       polls.push(poll)
 
       return poll.promise
@@ -320,27 +320,25 @@ test("a Codex call joins on the server's answer, relays its events, and stops th
 
   const joined = result.transport.join({ id: "ses_1", title: "Desktop" }, "")
   await settle()
-  // Codex's call never says session.started on the data channel; the server's answer means it started.
+  // The call never says session.started on the data channel; the server's answer means it started.
   microphone.resolve(new FakeMediaStream([track()]))
   await joined
-  expect(result.transport.engine).toBe("codex")
-  expect(started[0]?.sdp).toBe("v=0 offer")
-  expect(started[0]?.context).toBe('Viewed session: {"id":"ses_1","title":"Desktop"}')
-  expect(started[0]?.tools.map((tool) => tool.name)).toContain("send_message")
+  expect(result.transport.engine).toBe("chatgpt")
+  expect(started).toEqual([{ sdp: "v=0 offer", directory: "/work/ses_1", viewing: { id: "ses_1", title: "Desktop" } }])
 
-  const tool: VoiceCodexEvent = { seq: 7, type: "tool", id: "exec_1", name: "list_sessions", arguments: "{}" }
-  polls[0]?.resolve({ events: [tool], closed: false })
+  const opened: VoiceCallEvent = { seq: 7, type: "open", sessionID: "ses_2" }
+  polls[0]?.resolve({ events: [opened], closed: false })
   await settle()
-  expect(result.received).toEqual([tool])
-  // Muting only silences the track; Codex owns the session, so nothing goes over the data channel.
+  expect(result.received).toEqual([opened])
+  // Muting only silences the track; the server owns the session, so nothing goes over the data channel.
   result.transport.mute(true)
   expect(result.peer.channel.sent).toEqual([])
 
-  polls[1]?.resolve({ events: [{ seq: 8, type: "closed", reason: "transport_closed" }], closed: true })
+  polls[1]?.resolve({ events: [{ seq: 8, type: "closed", reason: "session_expired" }], closed: true })
   await settle()
   expect(result.dropped).toHaveBeenCalledTimes(1)
-  expect(result.received).toEqual([tool])
-  expect(stopped).toEqual(["thread_1"])
+  expect(result.received).toEqual([opened])
+  expect(stopped).toEqual(["rtc_1"])
   await result.transport.close()
   expect(result.peer.closed).toBe(true)
 })

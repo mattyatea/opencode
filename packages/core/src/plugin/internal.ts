@@ -84,6 +84,7 @@ import { ImageGenerateTool } from "../tool/plugin/image-generate.js"
 import { McpEventTools } from "../tool/plugin/mcp-events.js"
 import { McpResourceTools } from "../tool/plugin/mcp-resource.js"
 import { OpenCodeTools } from "../tool/plugin/opencode.js"
+import { VoiceTools } from "../tool/plugin/voice.js"
 import { QuestionTool } from "../tool/plugin/question.js"
 import { ReadToolFileSystem } from "../tool/read-filesystem.js"
 import { ReadTool } from "../tool/plugin/read.js"
@@ -277,6 +278,7 @@ const pre = [
   GrepTool.Plugin,
   ImageGenerateTool.Plugin,
   OpenCodeTools.Plugin,
+  VoiceTools.Plugin,
   McpEventTools.Plugin,
   McpResourceTools.Plugin,
   QuestionTool.Plugin,

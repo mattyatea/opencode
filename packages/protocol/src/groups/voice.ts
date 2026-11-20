@@ -43,39 +43,29 @@ export const VoiceTransport = Schema.Union([VoiceWebRTCTransport, VoiceWebSocket
   identifier: "VoiceTransport",
 })
 
-export const VoiceCodexTool = Schema.Struct({
-  name: Schema.String,
-  description: Schema.String,
-  parameters: Schema.Unknown,
-}).annotate({ identifier: "VoiceCodexTool" })
+const role = Schema.Literals(["user", "assistant"])
 
-export const VoiceCodexEvent = Schema.Union([
-  Schema.Struct({ seq: Schema.Number, type: Schema.Literal("transcript"), role: Schema.String, delta: Schema.String }),
-  Schema.Struct({
-    seq: Schema.Number,
-    type: Schema.Literal("transcript.done"),
-    role: Schema.String,
-    text: Schema.String,
-  }),
+export const VoiceCallEvent = Schema.Union([
+  Schema.Struct({ seq: Schema.Number, type: Schema.Literal("transcript"), role, delta: Schema.String }),
+  Schema.Struct({ seq: Schema.Number, type: Schema.Literal("transcript.done"), role, text: Schema.String }),
   Schema.Struct({
     seq: Schema.Number,
     type: Schema.Literal("delegation"),
+    id: Schema.String,
     status: Schema.Literals(["started", "completed"]),
   }),
-  Schema.Struct({
-    seq: Schema.Number,
-    type: Schema.Literal("tool"),
-    id: Schema.String,
-    name: Schema.String,
-    arguments: Schema.String,
-  }),
+  Schema.Struct({ seq: Schema.Number, type: Schema.Literal("open"), sessionID: Schema.String }),
   Schema.Struct({ seq: Schema.Number, type: Schema.Literal("error"), message: Schema.String }),
   Schema.Struct({ seq: Schema.Number, type: Schema.Literal("closed"), reason: Schema.optional(Schema.String) }),
-]).annotate({ identifier: "VoiceCodexEvent" })
+]).annotate({ identifier: "VoiceCallEvent" })
 
-const codexCall = { callID: Schema.String }
+export const VoiceViewing = Schema.Struct({ id: Schema.String, title: Schema.optional(Schema.String) }).annotate({
+  identifier: "VoiceViewing",
+})
 
-const codexErrors = [InvalidRequestError, ServiceUnavailableError, LocationNotFoundError]
+const call = { callID: Schema.String }
+
+const callErrors = [InvalidRequestError, ServiceUnavailableError, LocationNotFoundError]
 
 export const VoiceGroup = HttpApiGroup.make("server.voice")
   .add(
@@ -119,99 +109,83 @@ export const VoiceGroup = HttpApiGroup.make("server.voice")
     ),
   )
   .add(
-    HttpApiEndpoint.post("voice.codex.start", "/api/experimental/voice/codex", {
+    HttpApiEndpoint.post("voice.call.start", "/api/experimental/voice/call", {
       payload: Schema.Struct({
         sdp: Schema.String,
-        instructions: Schema.Struct({ voice: Schema.String, delegator: Schema.String }),
-        tools: Schema.Array(VoiceCodexTool),
-        context: Schema.optional(Schema.String),
+        directory: Schema.String,
+        viewing: Schema.optional(VoiceViewing),
       }),
       success: Schema.Struct({
         data: Schema.Struct({ call: Schema.String, sdp: Schema.String }),
-      }).annotate({ identifier: "VoiceCodexStartResponse" }),
-      error: codexErrors,
+      }).annotate({ identifier: "VoiceCallStartResponse" }),
+      error: callErrors,
     }).annotateMerge(
       OpenApi.annotations({
-        identifier: "experimental.voice.codex.start",
-        summary: "Start Codex voice call",
+        identifier: "experimental.voice.call.start",
+        summary: "Start voice call on the ChatGPT plan",
         description:
-          "Experimental: may change without compatibility guarantees. Start a Codex realtime call through the server's `codex app-server` and Codex sign-in, and return its WebRTC SDP answer. The Codex agent behind the call runs the given tools through this call's events.",
+          "Experimental: may change without compatibility guarantees. Start GPT-Live on the ChatGPT plan with the server's Codex sign-in and return its WebRTC SDP answer. OpenCode answers the voice's requests in a voice session in `directory`.",
       }),
     ),
   )
   .add(
-    HttpApiEndpoint.get("voice.codex.events", "/api/experimental/voice/codex/:callID/events", {
-      params: codexCall,
+    HttpApiEndpoint.get("voice.call.events", "/api/experimental/voice/call/:callID/events", {
+      params: call,
       query: Schema.Struct({
         after: Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)).pipe(Schema.optional),
       }),
       success: Schema.Struct({
-        data: Schema.Struct({ events: Schema.Array(VoiceCodexEvent), closed: Schema.Boolean }),
-      }).annotate({ identifier: "VoiceCodexEventsResponse" }),
-      error: codexErrors,
+        data: Schema.Struct({ events: Schema.Array(VoiceCallEvent), closed: Schema.Boolean }),
+      }).annotate({ identifier: "VoiceCallEventsResponse" }),
+      error: callErrors,
     }).annotateMerge(
       OpenApi.annotations({
-        identifier: "experimental.voice.codex.events",
-        summary: "Read Codex voice call events",
+        identifier: "experimental.voice.call.events",
+        summary: "Read voice call events",
         description:
-          "Experimental: may change without compatibility guarantees. Return the call's events after `after`, waiting up to 20 seconds for one: transcripts, delegations, tool calls to run, errors and close.",
+          "Experimental: may change without compatibility guarantees. Return the call's events after `after`, waiting up to 20 seconds for one: transcripts, requests OpenCode works on, sessions to show, errors and close.",
       }),
     ),
   )
   .add(
-    HttpApiEndpoint.post("voice.codex.tool", "/api/experimental/voice/codex/:callID/tool", {
-      params: codexCall,
-      payload: Schema.Struct({ id: Schema.String, output: Schema.String, success: Schema.Boolean }),
-      success: HttpApiSchema.NoContent,
-      error: codexErrors,
-    }).annotateMerge(
-      OpenApi.annotations({
-        identifier: "experimental.voice.codex.tool",
-        summary: "Answer Codex voice tool call",
-        description:
-          "Experimental: may change without compatibility guarantees. Return a tool call's output to the Codex agent.",
-      }),
-    ),
-  )
-  .add(
-    HttpApiEndpoint.post("voice.codex.speech", "/api/experimental/voice/codex/:callID/speech", {
-      params: codexCall,
+    HttpApiEndpoint.post("voice.call.speech", "/api/experimental/voice/call/:callID/speech", {
+      params: call,
       payload: Schema.Struct({ text: Schema.String }),
       success: HttpApiSchema.NoContent,
-      error: codexErrors,
+      error: callErrors,
     }).annotateMerge(
       OpenApi.annotations({
-        identifier: "experimental.voice.codex.speech",
-        summary: "Speak on Codex voice call",
+        identifier: "experimental.voice.call.speech",
+        summary: "Speak on voice call",
         description: "Experimental: may change without compatibility guarantees. Have the call's voice say the text.",
       }),
     ),
   )
   .add(
-    HttpApiEndpoint.post("voice.codex.context", "/api/experimental/voice/codex/:callID/context", {
-      params: codexCall,
-      payload: Schema.Struct({ text: Schema.String }),
+    HttpApiEndpoint.post("voice.call.view", "/api/experimental/voice/call/:callID/view", {
+      params: call,
+      payload: VoiceViewing,
       success: HttpApiSchema.NoContent,
-      error: codexErrors,
+      error: callErrors,
     }).annotateMerge(
       OpenApi.annotations({
-        identifier: "experimental.voice.codex.context",
-        summary: "Update Codex voice context",
+        identifier: "experimental.voice.call.view",
+        summary: "Update voice call view",
         description:
-          "Experimental: may change without compatibility guarantees. Add developer context for the call's Codex agent, such as the session on screen.",
+          "Experimental: may change without compatibility guarantees. Record which session Desktop shows, which the call's requests mean by this session.",
       }),
     ),
   )
   .add(
-    HttpApiEndpoint.delete("voice.codex.stop", "/api/experimental/voice/codex/:callID", {
-      params: codexCall,
+    HttpApiEndpoint.delete("voice.call.stop", "/api/experimental/voice/call/:callID", {
+      params: call,
       success: HttpApiSchema.NoContent,
       error: [LocationNotFoundError],
     }).annotateMerge(
       OpenApi.annotations({
-        identifier: "experimental.voice.codex.stop",
-        summary: "Stop Codex voice call",
-        description: "Experimental: may change without compatibility guarantees. End the Codex realtime call.",
+        identifier: "experimental.voice.call.stop",
+        summary: "Stop voice call",
+        description: "Experimental: may change without compatibility guarantees. End the voice call.",
       }),
     ),
   )

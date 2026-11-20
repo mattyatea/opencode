@@ -124,8 +124,14 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   experimental: ConfigExperimental.Info.pipe(optional),
 }) {}
 
+/** Global config fields a client may change. An omitted field is left alone; null removes it. */
 export const Patch = Schema.Struct({
-  shell: Schema.NullOr(Schema.String),
+  shell: Schema.NullOr(Schema.String).pipe(Schema.optional),
+  voice: Schema.Struct({
+    provider: Schema.NullOr(ConfigVoice.Provider).pipe(Schema.optional),
+    /** `voice.chatgpt.voice` */
+    chatgpt_voice: Schema.NullOr(Schema.String).pipe(Schema.optional),
+  }).pipe(Schema.optional),
 }).annotate({ identifier: "Config.Patch" })
 export interface Patch extends Schema.Schema.Type<typeof Patch> {}
 

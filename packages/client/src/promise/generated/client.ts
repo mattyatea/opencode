@@ -132,18 +132,16 @@ import type {
   ExperimentalVoiceModelsOutput,
   ExperimentalVoiceSessionInput,
   ExperimentalVoiceSessionOutput,
-  ExperimentalVoiceCodexStartInput,
-  ExperimentalVoiceCodexStartOutput,
-  ExperimentalVoiceCodexEventsInput,
-  ExperimentalVoiceCodexEventsOutput,
-  ExperimentalVoiceCodexToolInput,
-  ExperimentalVoiceCodexToolOutput,
-  ExperimentalVoiceCodexSpeechInput,
-  ExperimentalVoiceCodexSpeechOutput,
-  ExperimentalVoiceCodexContextInput,
-  ExperimentalVoiceCodexContextOutput,
-  ExperimentalVoiceCodexStopInput,
-  ExperimentalVoiceCodexStopOutput,
+  ExperimentalVoiceCallStartInput,
+  ExperimentalVoiceCallStartOutput,
+  ExperimentalVoiceCallEventsInput,
+  ExperimentalVoiceCallEventsOutput,
+  ExperimentalVoiceCallSpeechInput,
+  ExperimentalVoiceCallSpeechOutput,
+  ExperimentalVoiceCallViewInput,
+  ExperimentalVoiceCallViewOutput,
+  ExperimentalVoiceCallStopInput,
+  ExperimentalVoiceCallStopOutput,
   ExperimentalDictationStatusOutput,
   ExperimentalDictationLanguagesOutput,
   ExperimentalDictationPrepareOutput,
@@ -1379,29 +1377,24 @@ export function make(options: ClientOptions) {
             },
             requestOptions,
           ).then((value) => value.data),
-        codex: {
-          start: (input: ExperimentalVoiceCodexStartInput, requestOptions?: RequestOptions) =>
-            request<{ readonly data: ExperimentalVoiceCodexStartOutput }>(
+        call: {
+          start: (input: ExperimentalVoiceCallStartInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalVoiceCallStartOutput }>(
               {
                 method: "POST",
-                path: `/api/experimental/voice/codex`,
-                body: {
-                  sdp: input["sdp"],
-                  instructions: input["instructions"],
-                  tools: input["tools"],
-                  context: input["context"],
-                },
+                path: `/api/experimental/voice/call`,
+                body: { sdp: input["sdp"], directory: input["directory"], viewing: input["viewing"] },
                 successStatus: 200,
                 declaredStatuses: [400, 401, 404, 503],
                 empty: false,
               },
               requestOptions,
             ).then((value) => value.data),
-          events: (input: ExperimentalVoiceCodexEventsInput, requestOptions?: RequestOptions) =>
-            request<{ readonly data: ExperimentalVoiceCodexEventsOutput }>(
+          events: (input: ExperimentalVoiceCallEventsInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalVoiceCallEventsOutput }>(
               {
                 method: "GET",
-                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}/events`,
+                path: `/api/experimental/voice/call/${encodeURIComponent(input.callID)}/events`,
                 query: { after: input["after"] },
                 successStatus: 200,
                 declaredStatuses: [400, 401, 404, 503],
@@ -1409,23 +1402,11 @@ export function make(options: ClientOptions) {
               },
               requestOptions,
             ).then((value) => value.data),
-          tool: (input: ExperimentalVoiceCodexToolInput, requestOptions?: RequestOptions) =>
-            request<ExperimentalVoiceCodexToolOutput>(
+          speech: (input: ExperimentalVoiceCallSpeechInput, requestOptions?: RequestOptions) =>
+            request<ExperimentalVoiceCallSpeechOutput>(
               {
                 method: "POST",
-                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}/tool`,
-                body: { id: input["id"], output: input["output"], success: input["success"] },
-                successStatus: 204,
-                declaredStatuses: [400, 401, 404, 503],
-                empty: true,
-              },
-              requestOptions,
-            ),
-          speech: (input: ExperimentalVoiceCodexSpeechInput, requestOptions?: RequestOptions) =>
-            request<ExperimentalVoiceCodexSpeechOutput>(
-              {
-                method: "POST",
-                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}/speech`,
+                path: `/api/experimental/voice/call/${encodeURIComponent(input.callID)}/speech`,
                 body: { text: input["text"] },
                 successStatus: 204,
                 declaredStatuses: [400, 401, 404, 503],
@@ -1433,23 +1414,23 @@ export function make(options: ClientOptions) {
               },
               requestOptions,
             ),
-          context: (input: ExperimentalVoiceCodexContextInput, requestOptions?: RequestOptions) =>
-            request<ExperimentalVoiceCodexContextOutput>(
+          view: (input: ExperimentalVoiceCallViewInput, requestOptions?: RequestOptions) =>
+            request<ExperimentalVoiceCallViewOutput>(
               {
                 method: "POST",
-                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}/context`,
-                body: { text: input["text"] },
+                path: `/api/experimental/voice/call/${encodeURIComponent(input.callID)}/view`,
+                body: { id: input["id"], title: input["title"] },
                 successStatus: 204,
                 declaredStatuses: [400, 401, 404, 503],
                 empty: true,
               },
               requestOptions,
             ),
-          stop: (input: ExperimentalVoiceCodexStopInput, requestOptions?: RequestOptions) =>
-            request<ExperimentalVoiceCodexStopOutput>(
+          stop: (input: ExperimentalVoiceCallStopInput, requestOptions?: RequestOptions) =>
+            request<ExperimentalVoiceCallStopOutput>(
               {
                 method: "DELETE",
-                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}`,
+                path: `/api/experimental/voice/call/${encodeURIComponent(input.callID)}`,
                 successStatus: 204,
                 declaredStatuses: [400, 401, 404],
                 empty: true,
@@ -2061,12 +2042,12 @@ export function make(options: ClientOptions) {
           ),
       },
       config: {
-        update: (input: ExperimentalConfigUpdateInput, requestOptions?: RequestOptions) =>
+        update: (input?: ExperimentalConfigUpdateInput, requestOptions?: RequestOptions) =>
           request<ExperimentalConfigUpdateOutput>(
             {
               method: "PATCH",
               path: `/api/experimental/config`,
-              body: { shell: input["shell"] },
+              body: { shell: input?.["shell"], voice: input?.["voice"] },
               successStatus: 204,
               declaredStatuses: [400, 401, 404],
               empty: true,

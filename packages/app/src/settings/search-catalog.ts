@@ -263,6 +263,12 @@ export const serverSettings: Entry<SettingsServerTab | "servers">[] = [
   { tab: "projects", label: "settings.tab.projects" },
   { tab: "workspaces", label: "settings.tab.workspaces", keywords: "workspaces disk usage cleanup delete" },
   { tab: "providers", label: "settings.providers.title", keywords: "connect api key credentials" },
+  {
+    tab: "voice",
+    label: "settings.tab.voice",
+    description: "settings.voice.description",
+    keywords: "voice call chatgpt plan codex gpt-live realtime speech 音声 通話",
+  },
   { tab: "models", label: "settings.models.title", keywords: "model picker visibility" },
   { tab: "extensions", label: "settings.tab.extensions" },
   {
