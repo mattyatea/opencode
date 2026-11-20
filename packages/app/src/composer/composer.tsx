@@ -29,6 +29,8 @@ export function Composer(props: {
   suggestionBoundary?: () => HTMLElement | undefined
   /** Controls before the send button, such as dictation. */
   actions?: JSX.Element
+  /** Takes the send button's place while there is nothing to send, such as starting a voice call. */
+  idleAction?: JSX.Element
   /** Controls after the model and variant selects. */
   extraControls?: JSX.Element
 }) {
@@ -76,6 +78,7 @@ export function Composer(props: {
         exitShellKeybind={[formatKeybind("esc", language.t)]}
         suggestionBoundary={props.suggestionBoundary}
         actions={props.actions}
+        idleAction={props.idleAction}
         extraControls={props.extraControls}
         modelControl={
           <ComposerModelControl

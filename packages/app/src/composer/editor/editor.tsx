@@ -97,6 +97,8 @@ export type ComposerEditorProps = {
   modelControlsVisible?: boolean
   /** Controls before the send button, such as dictation. */
   actions?: JSX.Element
+  /** Takes the send button's place while there is nothing to send, such as starting a voice call. */
+  idleAction?: JSX.Element
   attachKeybind?: string[]
   attachShortcut?: string
   alternateKeybind?: string[]
@@ -563,16 +565,29 @@ export function ComposerEditor(props: ComposerEditorProps) {
                 </Button>
               </Show>
               {props.actions}
-              <ComposerEditorSubmitButton
-                mode={mode()}
-                stopping={view.submit.stopping()}
-                busy={view.submit.busy?.() ?? false}
-                disabled={!props.controller.canSubmit()}
-                sendLabel={i18n.t("ui.promptInput.send")}
-                stopLabel={i18n.t("ui.promptInput.stop")}
-                onSubmit={() => props.controller.submit()}
-                onStop={props.controller.stop}
-              />
+              <Show
+                when={
+                  mode() === "normal" &&
+                  !view.submit.stopping() &&
+                  !props.controller.value() &&
+                  !props.controller.parts().some(isAttachment) &&
+                  props.idleAction
+                }
+                fallback={
+                  <ComposerEditorSubmitButton
+                    mode={mode()}
+                    stopping={view.submit.stopping()}
+                    busy={view.submit.busy?.() ?? false}
+                    disabled={!props.controller.canSubmit()}
+                    sendLabel={i18n.t("ui.promptInput.send")}
+                    stopLabel={i18n.t("ui.promptInput.stop")}
+                    onSubmit={() => props.controller.submit()}
+                    onStop={props.controller.stop}
+                  />
+                }
+              >
+                {props.idleAction}
+              </Show>
             </div>
           </Show>
         </div>
@@ -1731,10 +1746,7 @@ function ComposerEditorTouchBar(props: { controller: ComposerEditorModel; docked
           onClick={() => props.controller.submit()}
         >
           {label()}
-          <Show
-            when={busy()}
-            fallback={<Icon name={props.controller.mode() === "shell" ? "enter" : "arrow-up"} />}
-          >
+          <Show when={busy()} fallback={<Icon name={props.controller.mode() === "shell" ? "enter" : "arrow-up"} />}>
             <Loader class="size-4" />
           </Show>
         </Button>
