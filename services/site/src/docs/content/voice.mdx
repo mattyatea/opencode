@@ -1,0 +1,90 @@
+---
+title: "Voice"
+---
+
+Desktop voice calls run on one of two providers:
+
+- **API key** (`openai`): GPT-Live on an OpenAI API key or an OpenCode Console
+  connection.
+- **ChatGPT plan** (`chatgpt`): GPT-Live on your ChatGPT plan through a Codex
+  sign-in. OpenCode itself answers the voice's requests in a voice session. This
+  is experimental and behind the `chatgpt_voice` flag, which is on in local and
+  dev builds.
+
+Choose one in **Settings > Voice**, or in any
+[OpenCode configuration file](/config):
+
+```jsonc title="opencode.jsonc"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "voice": {
+    "provider": "chatgpt",
+  },
+}
+```
+
+Without `provider`, a call uses an API key when the server has one, and the
+ChatGPT plan otherwise.
+
+## How a ChatGPT plan call works
+
+1. Desktop sends its WebRTC offer to the server. The server creates the call on
+   ChatGPT with a Codex sign-in and joins its control connection. Audio flows
+   directly between Desktop and OpenAI.
+2. When you ask for something, the voice hands the request to OpenCode.
+3. OpenCode sends it to the call's voice session, which runs the `voice` agent
+   in the directory of the session on screen. The agent manages sessions with
+   voice tools: it lists, reads and messages sessions, waits for them, and asks
+   Desktop to show one.
+4. The voice speaks the agent's answer. When a session the agent sent work to
+   finishes, the voice reads its reply too.
+
+The voice session stays in the session list, so you can read what you asked and
+what happened.
+
+### Sign-in
+
+The ChatGPT plan uses one of these sign-ins on the server, in order:
+
+1. OpenAI connected with **Codex browser (legacy)** or **Codex device code
+   (legacy)** in OpenCode. OpenCode refreshes it as needed.
+2. The Codex CLI's sign-in in `~/.codex/auth.json` (or `$CODEX_HOME`). OpenCode
+   only reads it: when it expires, run the Codex CLI once to refresh it.
+
+The **Sign in with ChatGPT** connection does not work for voice: ChatGPT rejects
+voice calls made with it.
+
+## Options
+
+```jsonc title="opencode.jsonc"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "voice": {
+    "provider": "chatgpt",
+    "chatgpt": {
+      "token": "auto",
+      "voice": "juniper",
+      "ack_filler": true,
+    },
+    "agent": {
+      "model": "openai/gpt-6.1-sol",
+      "instructions": "Answer in Japanese.",
+    },
+  },
+}
+```
+
+| Field                  | Default       | Purpose                                                                                    |
+| ---------------------- | ------------- | ------------------------------------------------------------------------------------------ |
+| `provider`             | automatic     | `openai` or `chatgpt`.                                                                     |
+| `chatgpt.token`        | `auto`        | `opencode` uses only OpenCode's Codex (legacy) sign-in, `codex` only the Codex CLI's.      |
+| `chatgpt.voice`        | `cove`        | Output voice, such as `cove`, `juniper`, `maple` or `himari`.                              |
+| `chatgpt.model`        | ChatGPT's     | Realtime voice model.                                                                      |
+| `chatgpt.ack_filler`   | ChatGPT's     | Let the voice say a short acknowledgement while OpenCode works on a request.               |
+| `chatgpt.instructions` | OpenCode's    | Replaces the system instructions of the voice, the part you talk to.                       |
+| `agent.model`          | default model | Model of the voice session's agent, as `provider/model`.                                   |
+| `agent.instructions`   | none          | Extra instructions for the voice session's agent, added to the first request of each call. |
+
+OpenCode waits up to three minutes for the voice session to answer a request.
+Longer work keeps running in its session, and the voice says it is still
+running.

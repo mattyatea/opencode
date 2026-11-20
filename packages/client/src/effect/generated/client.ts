@@ -138,6 +138,16 @@ import type {
   ExperimentalVoiceModelsOutput,
   ExperimentalVoiceSessionInput,
   ExperimentalVoiceSessionOutput,
+  ExperimentalVoiceCallStartInput,
+  ExperimentalVoiceCallStartOutput,
+  ExperimentalVoiceCallEventsInput,
+  ExperimentalVoiceCallEventsOutput,
+  ExperimentalVoiceCallSpeechInput,
+  ExperimentalVoiceCallSpeechOutput,
+  ExperimentalVoiceCallViewInput,
+  ExperimentalVoiceCallViewOutput,
+  ExperimentalVoiceCallStopInput,
+  ExperimentalVoiceCallStopOutput,
   ExperimentalDictationStatusOutput,
   ExperimentalDictationLanguagesOutput,
   ExperimentalDictationPrepareOutput,
@@ -1103,9 +1113,57 @@ const EndpointExperimentalVoiceSession = (raw: RawClient["server.voice"]) => (in
     ),
   )
 
+const EndpointExperimentalVoiceCallStart =
+  (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceCallStartInput) =>
+    preserveEffect<ExperimentalVoiceCallStartOutput>()(
+      raw["voice.call.start"]({
+        payload: { sdp: input["sdp"], directory: input["directory"], viewing: input["viewing"] },
+      }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalVoiceCallEvents =
+  (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceCallEventsInput) =>
+    preserveEffect<ExperimentalVoiceCallEventsOutput>()(
+      raw["voice.call.events"]({ params: { callID: input["callID"] }, query: { after: input["after"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalVoiceCallSpeech =
+  (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceCallSpeechInput) =>
+    preserveEffect<ExperimentalVoiceCallSpeechOutput>()(
+      raw["voice.call.speech"]({ params: { callID: input["callID"] }, payload: { text: input["text"] } }).pipe(
+        Effect.mapError(mapClientError),
+      ),
+    )
+
+const EndpointExperimentalVoiceCallView = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceCallViewInput) =>
+  preserveEffect<ExperimentalVoiceCallViewOutput>()(
+    raw["voice.call.view"]({
+      params: { callID: input["callID"] },
+      payload: { id: input["id"], title: input["title"] },
+    }).pipe(Effect.mapError(mapClientError)),
+  )
+
+const EndpointExperimentalVoiceCallStop = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceCallStopInput) =>
+  preserveEffect<ExperimentalVoiceCallStopOutput>()(
+    raw["voice.call.stop"]({ params: { callID: input["callID"] } }).pipe(Effect.mapError(mapClientError)),
+  )
+
 const adaptGroupExperimentalVoice = (raw: RawClient["server.voice"]) => ({
   models: EndpointExperimentalVoiceModels(raw),
   session: EndpointExperimentalVoiceSession(raw),
+  call: {
+    start: EndpointExperimentalVoiceCallStart(raw),
+    events: EndpointExperimentalVoiceCallEvents(raw),
+    speech: EndpointExperimentalVoiceCallSpeech(raw),
+    view: EndpointExperimentalVoiceCallView(raw),
+    stop: EndpointExperimentalVoiceCallStop(raw),
+  },
 })
 
 const EndpointExperimentalDictationStatus = (raw: RawClient["server.dictation"]) => () =>
@@ -2158,9 +2216,11 @@ const adaptGroupConfig = (raw: RawClient["server.config"]) => ({
   shells: EndpointConfigShells(raw),
 })
 
-const EndpointExperimentalConfigUpdate = (raw: RawClient["server.config"]) => (input: ExperimentalConfigUpdateInput) =>
+const EndpointExperimentalConfigUpdate = (raw: RawClient["server.config"]) => (input?: ExperimentalConfigUpdateInput) =>
   preserveEffect<ExperimentalConfigUpdateOutput>()(
-    raw["config.update"]({ payload: { shell: input["shell"] } }).pipe(Effect.mapError(mapClientError)),
+    raw["config.update"]({ payload: { shell: input?.["shell"], voice: input?.["voice"] } }).pipe(
+      Effect.mapError(mapClientError),
+    ),
   )
 
 const adaptGroupExperimentalConfig = (raw: RawClient["server.config"]) => ({

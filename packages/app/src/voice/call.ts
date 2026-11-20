@@ -3,7 +3,7 @@ import type { ServerCtx } from "@/runtime/server/runtime"
 import type { Platform } from "@/runtime/platform/platform"
 import { TranscriptTail } from "./tail"
 import { VoiceTools } from "./tools"
-import { VoiceFailure, VoiceTransport } from "./transport"
+import { VoiceFailure, VoiceTransport, type ChatGPTCallEvent } from "./transport"
 import { delegatorInstructions } from "./spec"
 import type { VoiceEvent } from "./protocol"
 import {
@@ -72,8 +72,16 @@ export function createVoiceCall(input: {
     const transport = new VoiceTransport({
       voice: input.ctx.sdk.api.experimental.voice,
       event: (event) => {
-        if (connection?.transport === transport) eventReceived(attempt, event)
+        // The server owns a ChatGPT call's session; anything on the data channel is not the app's to act on.
+        if (connection?.transport === transport && transport.engine === "live") eventReceived(attempt, event)
       },
+      call: (event) => {
+        if (connection?.transport === transport) callReceived(attempt, transport, event)
+      },
+      directory: (viewing) =>
+        input.ctx.sdk.api.session
+          .get({ sessionID: viewing.id }, { signal: transport.signal })
+          .then((session) => session.location.directory),
       levels: (mic, speaker) => {
         if (connection?.transport !== transport) return
         speech.user = !isMuted(input.call()) && mic > 0.015
@@ -110,18 +118,25 @@ export function createVoiceCall(input: {
   }
 
   function instructions(attempt: number, viewing: VoiceViewedSession) {
+    const transport = connection?.attempt === attempt ? connection.transport : undefined
+
+    // A lost update only costs which session "here" means to the ChatGPT call's agent.
+    if (transport?.engine === "chatgpt") return void transport.view(viewing).catch(() => undefined)
     send(attempt, "connection", (transport) => transport.instructions(delegatorInstructions(viewing, tail.lines)))
+  }
+
+  function heard(attempt: number, speaker: "user" | "assistant", delta: string) {
+    const text = tail.append(speaker, delta)
+    const utterance = tail.latest
+
+    gates = transitionVoiceGate(gates, { type: "heard", speaker, now: Date.now() })
+
+    if (utterance !== undefined) input.dispatch({ type: "caption.updated", attempt, utterance, speaker, text })
   }
 
   function eventReceived(attempt: number, event: VoiceEvent) {
     if (event.type === "session.input_transcript.delta" || event.type === "session.output_transcript.delta") {
-      const speaker = event.type === "session.input_transcript.delta" ? "user" : "assistant"
-      const text = tail.append(speaker, event.delta ?? "")
-      const utterance = tail.latest
-
-      gates = transitionVoiceGate(gates, { type: "heard", speaker, now: Date.now() })
-
-      if (utterance !== undefined) input.dispatch({ type: "caption.updated", attempt, utterance, speaker, text })
+      heard(attempt, event.type === "session.input_transcript.delta" ? "user" : "assistant", event.delta ?? "")
 
       return
     }
@@ -142,6 +157,22 @@ export function createVoiceCall(input: {
     const next = responseEvent(event)
 
     if (next) dispatch(next)
+  }
+
+  /** A ChatGPT call's event: OpenCode answers its requests on the server, so the app only shows and moves. */
+  function callReceived(attempt: number, transport: VoiceTransport, event: ChatGPTCallEvent) {
+    if (event.type === "transcript") return heard(attempt, event.role, event.delta)
+
+    if (event.type === "open") {
+      void input.ctx.sdk.api.session
+        .get({ sessionID: event.sessionID }, { signal: transport.signal })
+        .then((session) => input.open(session, transport.signal))
+        .catch(() => undefined)
+
+      return
+    }
+
+    if (event.type === "error") console.warn("[voice] ChatGPT voice call error", event.message)
   }
 
   function dispatch(event: VoiceDelegationEvent) {
@@ -302,6 +333,7 @@ export function createVoiceCall(input: {
 
     if (!connection) return
     const reply = effect.reply
+
     send(connection.attempt, "dropped", (transport) => {
       transport.send({ type: "session.commentary.append", delegation_id: null, content: replyCommentary(reply) })
       tools.replies.heard(reply.sessionID, [reply.messageID])

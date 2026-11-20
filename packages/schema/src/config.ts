@@ -17,6 +17,7 @@ import { ConfigPlugin } from "./config/plugin.js"
 import { ConfigPolicy } from "./config/policy.js"
 import { ConfigProvider } from "./config/provider.js"
 import { ConfigReference } from "./config/reference.js"
+import { ConfigVoice } from "./config/voice.js"
 import { ConfigWebSearch } from "./config/websearch.js"
 import { ConfigToolCalls } from "./config/tool-calls.js"
 import { ConfigToolOutput } from "./config/tool-output.js"
@@ -107,6 +108,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   websearch: ConfigWebSearch.Selection.pipe(optional).annotate({
     description: "Web search provider selection",
   }),
+  voice: ConfigVoice.Info.pipe(optional).annotate({
+    description: "Voice call engine and Codex realtime settings",
+  }),
   plugins: ConfigPlugin.Plugins.pipe(optional).annotate({
     description: "Ordered plugin enablement directives and external package declarations",
   }),
@@ -120,8 +124,14 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   experimental: ConfigExperimental.Info.pipe(optional),
 }) {}
 
+/** Global config fields a client may change. An omitted field is left alone; null removes it. */
 export const Patch = Schema.Struct({
-  shell: Schema.NullOr(Schema.String),
+  shell: Schema.NullOr(Schema.String).pipe(Schema.optional),
+  voice: Schema.Struct({
+    provider: Schema.NullOr(ConfigVoice.Provider).pipe(Schema.optional),
+    /** `voice.chatgpt.voice` */
+    chatgpt_voice: Schema.NullOr(Schema.String).pipe(Schema.optional),
+  }).pipe(Schema.optional),
 }).annotate({ identifier: "Config.Patch" })
 export interface Patch extends Schema.Schema.Type<typeof Patch> {}
 

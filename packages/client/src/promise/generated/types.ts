@@ -226,6 +226,16 @@ export type VoiceWebRTCTransport = { type: "webrtc"; sdp: string }
 
 export type VoiceWebSocketTransport = { type: "websocket"; url: string; token: string; expiresAt: number }
 
+export type VoiceCallStartResponse = { data: { call: string; sdp: string } }
+
+export type VoiceCallEvent =
+  | { seq: number; type: "transcript"; role: "user" | "assistant"; delta: string }
+  | { seq: number; type: "transcript.done"; role: "user" | "assistant"; text: string }
+  | { seq: number; type: "delegation"; id: string; status: "started" | "completed" }
+  | { seq: number; type: "open"; sessionID: string }
+  | { seq: number; type: "error"; message: string }
+  | { seq: number; type: "closed"; reason?: string | undefined }
+
 export type DictationStatus = { available: boolean; reason?: "disabled" | "unsupported" | undefined }
 
 export type DictationLanguagesResponse = { data: { languages: Array<string> } }
@@ -391,6 +401,10 @@ export type UsageLimitsMeter = { percent: number; limited: boolean; resetsAt: nu
 export type McpProtocol = "legacy" | "auto" | "2026-07-28"
 
 export type ConfigCompactionPercent = string
+
+export type ConfigVoiceProvider = "openai" | "chatgpt"
+
+export type ConfigVoiceTokenSource = "auto" | "opencode" | "codex"
 
 export type ConfigWorktree = { directory: string }
 
@@ -785,6 +799,8 @@ export type GenerateChoiceAnswer = {
 export type VoiceModel = { model: string; provider: string; transports: Array<VoiceTransportType>; available: boolean }
 
 export type VoiceTransport = VoiceWebRTCTransport | VoiceWebSocketTransport
+
+export type VoiceCallEventsResponse = { data: { events: Array<VoiceCallEvent>; closed: boolean } }
 
 export type DictationStatusResponse = { data: DictationStatus }
 
@@ -2635,6 +2651,17 @@ export type ConfigEntry =
             | { path: string; description?: string; hidden?: boolean }
         }
         websearch?: false | { provider: "random" | WebSearchID }
+        voice?: {
+          provider?: ConfigVoiceProvider
+          chatgpt?: {
+            token?: ConfigVoiceTokenSource
+            voice?: string
+            model?: string
+            ack_filler?: boolean
+            instructions?: string
+          }
+          agent?: { model?: string; instructions?: string }
+        }
         plugins?: Array<string | { package: string; options?: { [x: string]: JsonValue } }>
         worktree?: ConfigWorktree
         warming?: boolean | { prompt?: string; interval?: "auto" | (string & {}); duration?: string }
@@ -2699,6 +2726,7 @@ export type ConfigEntry =
           automations?: boolean
           artifacts?: boolean
           dictation?: boolean
+          chatgpt_voice?: boolean
           shell_timeout_background?: boolean
           video_generate?: boolean
           console_watches?: boolean
@@ -4224,6 +4252,34 @@ export type ExperimentalVoiceSessionInput = {
 
 export type ExperimentalVoiceSessionOutput = VoiceSessionResponse["data"]
 
+export type ExperimentalVoiceCallStartInput = {
+  readonly sdp: string
+  readonly directory: string
+  readonly viewing?: { readonly id: string; readonly title?: string | undefined } | undefined
+}
+
+export type ExperimentalVoiceCallStartOutput = VoiceCallStartResponse["data"]
+
+export type ExperimentalVoiceCallEventsInput = { readonly callID: string; readonly after?: number | undefined }
+
+export type ExperimentalVoiceCallEventsOutput = VoiceCallEventsResponse["data"]
+
+export type ExperimentalVoiceCallSpeechInput = { readonly callID: string; readonly text: string }
+
+export type ExperimentalVoiceCallSpeechOutput = void
+
+export type ExperimentalVoiceCallViewInput = {
+  readonly callID: string
+  readonly id: string
+  readonly title?: string | undefined
+}
+
+export type ExperimentalVoiceCallViewOutput = void
+
+export type ExperimentalVoiceCallStopInput = { readonly callID: string }
+
+export type ExperimentalVoiceCallStopOutput = void
+
 export type ExperimentalDictationStatusOutput = DictationStatusResponse["data"]
 
 export type ExperimentalDictationLanguagesOutput = DictationLanguagesResponse["data"]
@@ -5107,7 +5163,15 @@ export type ConfigGetOutput = Array<ConfigEntry>
 
 export type ConfigShellsOutput = Array<ConfigShellOption>
 
-export type ExperimentalConfigUpdateInput = { readonly shell: string | null }
+export type ExperimentalConfigUpdateInput = {
+  readonly shell?: string | null | undefined
+  readonly voice?:
+    | {
+        readonly provider?: ("openai" | "chatgpt") | null | undefined
+        readonly chatgpt_voice?: string | null | undefined
+      }
+    | undefined
+}
 
 export type ExperimentalConfigUpdateOutput = void
 

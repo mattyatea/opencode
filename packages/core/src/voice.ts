@@ -10,10 +10,37 @@ import {
 } from "@opencode/ai/experimental"
 import { RequestExecutor } from "@opencode/ai/route"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
-import { Context, Effect, Layer, Redacted, Schema } from "effect"
+import { Cause, Context, Duration, Effect, Layer, Redacted, Schedule, Schema } from "effect"
+import { Socket } from "effect/socket"
+import { AbsolutePath } from "@opencode/schema/schema"
+import { Config } from "./config.js"
 import { Credential } from "./credential.js"
-import { requestExecutor } from "./effect/app-node-platform.js"
+import { requestExecutor, webSocketConstructor } from "./effect/app-node-platform.js"
+import { Flag } from "./flag.js"
 import { Integration } from "./integration.js"
+import { Location } from "./location.js"
+import { Model } from "./model.js"
+import { voiceAgentID } from "./plugin/agent.js"
+import { Session } from "./session.js"
+import { messageText } from "./tool/plugin/voice.js"
+import { CallError, createChatGPTVoice, type Call as ChatGPTCall, type Event as CallEvent } from "./voice/chatgpt.js"
+import { codexCLICredentials } from "./voice/codex-cli.js"
+import { VoiceRegistry } from "./voice/registry.js"
+
+export type { CallEvent }
+
+/** Where a ChatGPT voice call's requests are answered, and the session Desktop shows when it starts. */
+export interface CallInput {
+  readonly sdp: string
+  /** The project or worktree directory the call's voice session runs in. */
+  readonly directory: string
+  readonly viewing?: Viewing
+}
+
+export interface Viewing {
+  readonly id: string
+  readonly title?: string
+}
 
 export interface ModelInfo {
   readonly model: string
@@ -47,7 +74,40 @@ export type Error = InvalidRequestError | UnavailableError
 export interface Interface {
   readonly models: () => Effect.Effect<Models>
   readonly session: (input: SessionInput) => Effect.Effect<RealtimeTransport, Error>
+  /**
+   * GPT-Live on the ChatGPT plan, created by the server with a Codex sign-in. OpenCode answers the voice's requests in
+   * a voice session per call.
+   */
+  readonly call: {
+    readonly start: (input: CallInput) => Effect.Effect<{ readonly call: string; readonly sdp: string }, Error>
+    /** Waits briefly for the call's events after `after`, so a client can ask again right away. */
+    readonly events: (
+      call: string,
+      after: number,
+    ) => Effect.Effect<{ readonly events: readonly CallEvent[]; readonly closed: boolean }, Error>
+    readonly speech: (call: string, text: string) => Effect.Effect<void, Error>
+    /** Records which session Desktop shows now. */
+    readonly view: (call: string, viewing: Viewing) => Effect.Effect<void, Error>
+    readonly stop: (call: string) => Effect.Effect<void>
+  }
 }
+
+/** The model ID of GPT-Live on the ChatGPT plan in `models` and the client. */
+export const chatgptModel = "chatgpt-live"
+
+/** How long OpenCode may work on one request before the voice hears that it is still running. */
+const DELEGATION_LIMIT = Duration.minutes(3)
+
+const defaultVoiceInstructions = `You are OpenCode's voice assistant. Speak naturally and briefly, in the user's language.
+You cannot see sessions, projects, code, files, or the screen. Your backend can: it manages OpenCode's sessions with tools.
+Delegate every request about coding, sessions, projects, status, the screen, models, or work to your backend in the same turn you hear it, before you say anything about the result.
+Never answer those yourself and never guess: names, counts, statuses and results come only from the backend.
+"It didn't work" or "nothing happened" is a request to check: delegate it.
+When you delegate, react briefly ("let me check") and never phrase it as done. Wait for the backend's answer, then give only the outcome and where.
+Results for work sent earlier arrive with their session title and request. Attribute each result to that session.
+Do not read IDs, code blocks, or long paths aloud. Summarize results in one to three sentences.
+Background speech and remarks to other people are not requests. Ask once if a request is unintelligible.
+Do not speak until the user speaks.`
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Voice") {}
 
@@ -56,6 +116,28 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const executor = yield* RequestExecutor.Service
     const integrations = yield* Integration.Service
+    const config = yield* Config.Service
+    const flags = yield* Flag.Service
+    const sessions = yield* Session.Service
+    const makeSocket = yield* Socket.WebSocketConstructor
+    const run = Effect.runPromiseWith(yield* Effect.context<never>())
+    // Per call: where its voice session runs, the session Desktop shows, and the voice session once it exists.
+    const states = new Map<string, CallState>()
+    const chatgpt = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        createChatGPTVoice({
+          socket: (url, headers) => makeSocket(url, { headers }),
+          delegate: (call, delegation) => run(delegate(call, delegation.text)),
+        }),
+      ),
+      (voice) =>
+        Effect.sync(() => {
+          voice.close()
+          states.forEach((state) => state.unlink?.())
+        }),
+    )
+
+    const voiceConfig = () => config.entries().pipe(Effect.map((entries) => Config.latest(entries, "voice")))
 
     // Integration lists the active credential first, then newer stored credentials, then non-empty env vars.
     const findConnection = (provider: string, methods: readonly string[] = ["key"]) =>
@@ -86,8 +168,27 @@ export const layer = Layer.effect(
           })),
         ),
       )
-      const first = list.find((item) => item.available)?.model
-      return first ? { models: list, default: first } : { models: list }
+      const settings = yield* voiceConfig()
+      const subscription = (yield* flags.enabled("chatgpt_voice"))
+        ? [
+            {
+              model: chatgptModel,
+              provider: "chatgpt",
+              transports: ["webrtc" as const],
+              available: yield* hasChatGPTSignIn(settings?.chatgpt?.token ?? "auto"),
+            },
+          ]
+        : []
+      // An explicit provider wins; otherwise an API key, then the ChatGPT plan.
+      const order =
+        settings?.provider === "chatgpt"
+          ? [...subscription, ...list]
+          : settings?.provider === "openai"
+            ? list
+            : [...list, ...subscription]
+      const first = order.find((item) => item.available)?.model
+      const models = [...subscription, ...list]
+      return first ? { models, default: first } : { models }
     })
 
     const session = Effect.fn("Voice.session")(function* (input: SessionInput) {
@@ -123,14 +224,205 @@ export const layer = Layer.effect(
       )
     })
 
-    return Service.of({ models, session })
+    const callEffect = <A>(name: string, work: () => A | Promise<A>) =>
+      Effect.tryPromise({
+        try: async () => work(),
+        catch: (error): Error =>
+          error instanceof CallError && error.kind === "invalid"
+            ? new InvalidRequestError({ message: error.message })
+            : new UnavailableError({
+                service: "chatgpt",
+                message: error instanceof Error ? error.message : String(error),
+              }),
+      }).pipe(Effect.withSpan(`Voice.call.${name}`))
+
+    const hasChatGPTSignIn = Effect.fnUntraced(function* (source: string) {
+      if (source !== "codex") {
+        const info = yield* integrations.get(Integration.ID.make("openai"))
+        if (info?.connections.some((item) => item.type === "credential" && item.method === "oauth")) return true
+      }
+      return source !== "opencode" && codexCLICredentials() !== undefined
+    })
+
+    // OpenCode's Codex (legacy) sign-in first, refreshed as needed; then the Codex CLI's, read as it is.
+    const chatgptCredentials = Effect.fn("Voice.chatgptCredentials")(function* (source: string) {
+      if (source !== "codex") {
+        const info = yield* integrations.get(Integration.ID.make("openai"))
+        for (const connection of info?.connections ?? []) {
+          if (connection.type !== "credential" || connection.method !== "oauth") continue
+          const value = yield* integrations.connection.resolve(connection).pipe(Effect.orElseSucceed(() => undefined))
+          if (value?.type !== "oauth" || !["chatgpt-browser", "chatgpt-headless"].includes(value.methodID)) continue
+          const account = value.metadata?.accountID
+          return { token: value.access, ...(typeof account === "string" ? { account } : {}) }
+        }
+      }
+      const cli = source === "opencode" ? undefined : codexCLICredentials()
+      if (cli?.expired)
+        return yield* new UnavailableError({
+          service: "chatgpt",
+          message:
+            "The Codex CLI's sign-in has expired. Run the Codex CLI once to refresh it, or sign in with Codex (legacy) in OpenCode.",
+        })
+      if (cli) return { token: cli.token, ...(cli.account ? { account: cli.account } : {}) }
+      return yield* new UnavailableError({
+        service: "chatgpt",
+        message:
+          "Voice on the ChatGPT plan needs a Codex sign-in: connect OpenAI with Codex browser (legacy) in OpenCode, or sign in to the Codex CLI.",
+      })
+    })
+
+    /** Answers one request in the call's voice session and returns what the voice should say. */
+    // Annotated so this layer's type doesn't depend on Session's inferred types, which reach back to this layer.
+    const delegate = (call: ChatGPTCall, request: string): Effect.Effect<string> =>
+      answer(call, request).pipe(
+        Effect.catchCause((cause) =>
+          Effect.succeed(
+            `OpenCode could not finish that request (${Cause.pretty(cause).split("\n")[0]}). Do not claim it succeeded.`,
+          ),
+        ),
+        Effect.withSpan("Voice.delegate"),
+      )
+
+    const answer = Effect.fnUntraced(function* (call: ChatGPTCall, request: string) {
+      const state = states.get(call.id)
+      if (!state) return "The call ended before OpenCode could answer."
+      const settings = yield* voiceConfig()
+      const sessionID = state.session ?? (yield* openVoiceSession(call, state, settings?.agent?.model))
+      const viewing = state.viewing
+      const extra = !state.session && settings?.agent?.instructions ? `\n\n${settings.agent.instructions}` : ""
+      state.session = sessionID
+      const admitted = yield* sessions.prompt({
+        sessionID,
+        text: `${request}\n\n(Desktop shows ${viewing ? `"${viewing.title ?? "Untitled"}" (${viewing.id})` : "no session"}.)${extra}`,
+      })
+      const finished = yield* settle(sessionID).pipe(
+        Effect.timeout(DELEGATION_LIMIT),
+        Effect.as(true),
+        Effect.catchTag("TimeoutError", () => Effect.succeed(false)),
+      )
+      if (!finished) return "That is still running in OpenCode. Say so, and offer to check again later."
+      const recent = yield* sessions.messages({ sessionID, order: "desc", limit: 20 })
+      const reply = recent.find(
+        (message) => message.type === "assistant" && message.id > admitted.id && messageText(message),
+      )
+      return reply ? messageText(reply) : "OpenCode finished without an answer. Say you're not sure it worked."
+    })
+
+    /** Waits for work just admitted to a session to finish. */
+    const settle = Effect.fnUntraced(function* (sessionID: Session.ID) {
+      // The work starts shortly after it is admitted; waiting before then would return at once.
+      yield* Effect.gen(function* () {
+        return (yield* sessions.active).has(sessionID) ? true : yield* Effect.fail("idle" as const)
+      }).pipe(Effect.retry({ times: 50, schedule: Schedule.spaced("100 millis") }), Effect.ignore)
+      yield* sessions.wait(sessionID)
+    })
+
+    /** Waits for a session the voice sent work to, then has the voice read its reply. */
+    const announce = (
+      call: ChatGPTCall,
+      input: { readonly sessionID: string; readonly title: string; readonly request: string },
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const sessionID = Session.ID.make(input.sessionID)
+        const before = (yield* sessions.messages({ sessionID, order: "desc", limit: 1 }))[0]?.id
+        yield* settle(sessionID)
+        if (call.closed) return
+        const recent = yield* sessions.messages({ sessionID, order: "desc", limit: 20 })
+        const reply = recent.find(
+          (message) =>
+            message.type === "assistant" && (before === undefined || message.id > before) && messageText(message),
+        )
+        if (!reply) return
+        const text = messageText(reply)
+          .replace(/```[\s\S]*?```/g, "[code in session]")
+          .slice(0, 800)
+        call.send({
+          type: "session.context.append",
+          content: [
+            {
+              type: "input_text",
+              text: `Result from session ${JSON.stringify(input.title.slice(0, 100))}, request ${JSON.stringify(input.request.slice(0, 100))}: ${text}`,
+            },
+          ],
+        })
+      }).pipe(Effect.ignoreCause, Effect.withSpan("Voice.announce"))
+
+    const openVoiceSession = (
+      call: ChatGPTCall,
+      state: CallState,
+      model?: string,
+    ): Effect.Effect<Session.ID, unknown> =>
+      Effect.gen(function* () {
+        const parsed = model?.includes("/") ? Model.parse(model) : undefined
+        const session = yield* sessions.create({
+          title: "Voice call",
+          agent: voiceAgentID,
+          location: Location.Ref.make({ directory: AbsolutePath.make(state.directory) }),
+          ...(parsed ? { model: { providerID: parsed.providerID, id: parsed.modelID } } : {}),
+        })
+        state.unlink = VoiceRegistry.link(session.id, {
+          viewing: () => state.viewing,
+          open: (sessionID) => call.push({ type: "open", sessionID }),
+          watch: (input) => void run(announce(call, input)),
+        })
+        return session.id
+      })
+
+    const callStart = Effect.fn("Voice.call.start")(function* (input: CallInput) {
+      if (!(yield* flags.enabled("chatgpt_voice")))
+        return yield* new UnavailableError({
+          service: "chatgpt",
+          message: "Voice on the ChatGPT plan is turned off. Enable the chatgpt_voice flag.",
+        })
+      const settings = (yield* voiceConfig())?.chatgpt
+      const credentials = yield* chatgptCredentials(settings?.token ?? "auto")
+      const started = yield* callEffect("start", () =>
+        chatgpt.start(credentials, input.sdp, {
+          instructions: settings?.instructions ?? defaultVoiceInstructions,
+          voice: settings?.voice,
+          model: settings?.model,
+          ackFiller: settings?.ack_filler,
+        }),
+      )
+      states.set(started.call, { directory: input.directory, viewing: input.viewing })
+      return started
+    })
+
+    return Service.of({
+      models,
+      session,
+      call: {
+        start: callStart,
+        events: (call, after) => callEffect("events", () => chatgpt.events(call, after)),
+        speech: (call, text) => callEffect("speech", () => chatgpt.speech(call, text)),
+        view: (call, viewing) =>
+          callEffect("view", () => {
+            chatgpt.get(call)
+            const state = states.get(call)
+            if (state) state.viewing = viewing
+          }),
+        stop: (call) =>
+          Effect.sync(() => {
+            chatgpt.stop(call)
+            states.get(call)?.unlink?.()
+            states.delete(call)
+          }),
+      },
+    })
   }),
 )
+
+interface CallState {
+  readonly directory: string
+  viewing?: Viewing
+  session?: Session.ID
+  unlink?: () => void
+}
 
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Integration.node, requestExecutor],
+  deps: [Integration.node, requestExecutor, Config.node, Flag.node, Session.node, webSocketConstructor],
 })
 
 /** OpenCode hosts GPT-Live on its OpenAI account, billed to the workspace whose credential starts a session. */

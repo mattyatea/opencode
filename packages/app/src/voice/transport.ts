@@ -1,4 +1,4 @@
-import type { OpenCodeClient } from "@opencode/client/promise"
+import type { OpenCodeClient, VoiceCallEvent } from "@opencode/client/promise"
 import { uuid } from "@opencode/util/uuid"
 import { decodeEvent, type VoiceEvent } from "./protocol"
 import { delegatorInstructions, liveInstructions, tools } from "./spec"
@@ -29,6 +29,19 @@ export type VoiceClientEvent =
   | { type: "response.item.create"; item: { type: "function_call_output"; call_id: string; output: string } }
   | { type: "session.commentary.append"; delegation_id: null; content: string }
 
+/**
+ * Who runs the call. `live` is GPT-Live on the server's API key, whose delegations reach the app over the data channel.
+ * `chatgpt` is GPT-Live on the ChatGPT plan: the server joins the call and OpenCode answers its requests in a voice
+ * session, so the transcript and the sessions to show arrive as server events instead.
+ */
+export type VoiceEngine = "live" | "chatgpt"
+
+/** What a ChatGPT call's server reports: transcript, requests OpenCode works on, sessions to show, errors. */
+export type ChatGPTCallEvent = VoiceCallEvent
+
+/** Polls a failing events request at most this often, so a restarting server isn't hammered. */
+const CALL_RETRY_MS = 1_000
+
 /** One join of a WebRTC Live session; `transport-machine.ts` owns its lifecycle. */
 export class VoiceTransport {
   private readonly abort = new AbortController()
@@ -49,11 +62,21 @@ export class VoiceTransport {
   private disconnectTimer?: ReturnType<typeof setTimeout>
   private closeTimer?: ReturnType<typeof setTimeout>
   private levelTimer?: ReturnType<typeof setInterval>
+  /** Chosen from `voice.models` before the offer; fixed for this join. */
+  engine: VoiceEngine = "live"
+  /** The ChatGPT call this transport started, once the server answered. */
+  private callID?: string
+  /** Settles once the server stopped the ChatGPT call; every close stops it, with or without a handshake. */
+  private callStopped?: Promise<unknown>
 
   constructor(
     private readonly inputOptions: {
       voice: OpenCodeClient["experimental"]["voice"]
       event: (event: VoiceEvent) => void
+      /** A ChatGPT call's server event: transcript, request OpenCode works on, or session to show. */
+      call: (event: VoiceCallEvent) => void
+      /** The directory of the session on screen, where a ChatGPT call's voice session runs. */
+      directory: (viewing: VoiceJoinTarget) => Promise<string>
       levels: (input: number, output: number) => void
       dropped: () => void
     },
@@ -104,12 +127,35 @@ export class VoiceTransport {
     this.stream?.getAudioTracks().forEach((track) => {
       track.enabled = !muted
     })
+
+    // The server owns a ChatGPT call's session, so a muted track is all the app controls.
+    if (this.engine === "chatgpt") return
     this.send({ type: muted ? "session.input_audio.mute" : "session.input_audio.unmute" })
   }
 
   /** The call runs on the server's own OpenAI key, so its data channel can update the backend's instructions. */
   instructions(instructions: string) {
     this.send({ type: "session.update", session: { delegation: { type: "responses", responses: { instructions } } } })
+  }
+
+  /** Tells a ChatGPT call which session is on screen. */
+  view(viewing: VoiceJoinTarget) {
+    return this.chatgpt((voice, callID) =>
+      voice.view({ callID, id: viewing.id, title: viewing.title }, { signal: this.signal }),
+    )
+  }
+
+  /** Has a ChatGPT call's voice say text. */
+  speak(text: string) {
+    return this.chatgpt((voice, callID) => voice.speech({ callID, text }, { signal: this.signal }))
+  }
+
+  private chatgpt<A>(run: (voice: OpenCodeClient["experimental"]["voice"]["call"], callID: string) => Promise<A>) {
+    const callID = this.callID
+
+    if (this.engine !== "chatgpt" || !callID || !this.canSend) return Promise.reject(new VoiceFailure("dropped"))
+
+    return run(this.inputOptions.voice.call, callID)
   }
 
   /** Settles once the peer connection and audio are released. */
@@ -187,6 +233,9 @@ export class VoiceTransport {
     }
 
     if (effect.type === "stop.media") {
+      const callID = this.callID
+
+      if (callID) this.callStopped = this.inputOptions.voice.call.stop({ callID }).catch(() => undefined)
       this.stream?.getTracks().forEach((track) => track.stop())
       this.audio.pause()
       this.audio.srcObject = null
@@ -199,6 +248,14 @@ export class VoiceTransport {
 
     if (effect.type === "close.handshake.start") {
       this.closeTimer = setTimeout(() => this.dispatch({ type: "close.timeout" }), effect.ms)
+
+      if (this.engine === "chatgpt") {
+        // The server says goodbye on the call's sideband; the handshake ends once it stopped the call.
+        void Promise.resolve(this.callStopped).then(() => this.dispatch({ type: "channel.closed" }))
+
+        return
+      }
+
       // A channel that is already closing throws; its close event is on the way, so settle now.
       void Promise.resolve()
         .then(() => this.channel.send(JSON.stringify({ type: "session.close", event_id: uuid() })))
@@ -238,11 +295,13 @@ export class VoiceTransport {
     await this.context.resume()
     const offered = await this.inputOptions.voice.models({ signal: this.abort.signal })
 
-    if (
-      !offered.models.some(
-        (model) => model.model === "gpt-live-1" && model.available && model.transports.includes("webrtc"),
-      )
-    )
+    const usable = (name: string) =>
+      offered.models.some((model) => model.model === name && model.available && model.transports.includes("webrtc"))
+
+    // The server picks the ChatGPT plan when voice.provider asks for it or no API key is available.
+    this.engine = offered.default === "chatgpt-live" && usable("chatgpt-live") ? "chatgpt" : "live"
+
+    if (this.engine === "live" && !usable("gpt-live-1"))
       return this.dispatch({ type: "step.failed", step: "offer", reason: "unavailable" })
 
     await this.peer.setLocalDescription(await this.peer.createOffer())
@@ -250,6 +309,8 @@ export class VoiceTransport {
   }
 
   private async negotiate(viewing: VoiceJoinTarget, tail: string) {
+    if (this.engine === "chatgpt") return this.negotiateChatGPT(viewing)
+
     const response = await this.inputOptions.voice.session(
       {
         model: "gpt-live-1",
@@ -276,6 +337,51 @@ export class VoiceTransport {
       return this.dispatch({ type: "step.failed", step: "negotiating", reason: "connection" })
     await this.peer.setRemoteDescription({ type: "answer", sdp: response.transport.sdp })
     this.dispatch({ type: "answer.applied" })
+  }
+
+  private async negotiateChatGPT(viewing: VoiceJoinTarget) {
+    const directory = await this.inputOptions.directory(viewing)
+
+    const started = await this.inputOptions.voice.call.start(
+      { sdp: this.peer.localDescription!.sdp, directory, viewing: { id: viewing.id, title: viewing.title } },
+      { signal: this.abort.signal },
+    )
+
+    this.callID = started.call
+
+    // A call that ended while the server started it must not stay open on OpenAI.
+    if (this.abort.signal.aborted)
+      return void this.inputOptions.voice.call.stop({ callID: started.call }).catch(() => undefined)
+    await this.peer.setRemoteDescription({ type: "answer", sdp: started.sdp })
+    this.dispatch({ type: "answer.applied" })
+    // The server answered only after ChatGPT created the call, which Live reports with `session.started`.
+    this.dispatch({ type: "channel.message", event: { type: "session.started" } })
+    void this.poll(started.call)
+  }
+
+  /** Reads the ChatGPT call's events until it closes or this transport does; a closed call drops the join. */
+  private async poll(callID: string) {
+    const signal = this.abort.signal
+    let after = 0
+
+    while (!signal.aborted) {
+      const result = await this.inputOptions.voice.call.events({ callID, after }, { signal }).catch(() => undefined)
+
+      if (signal.aborted) return
+
+      if (!result) {
+        await new Promise((resolve) => setTimeout(resolve, CALL_RETRY_MS))
+        continue
+      }
+
+      for (const event of result.events) {
+        after = Math.max(after, event.seq)
+
+        if (event.type !== "closed") this.inputOptions.call(event)
+      }
+
+      if (result.closed) return this.dispatch({ type: "channel.closed" })
+    }
   }
 
   private async acquireMic() {

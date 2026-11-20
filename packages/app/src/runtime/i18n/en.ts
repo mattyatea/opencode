@@ -750,7 +750,8 @@ export const dict = {
   "tips.browse.description": "Let OpenCode work in your browser with your tabs, logins, and extensions.",
   "tips.browse.install": "Install",
   "tips.hex.title": "Use your voice",
-  "tips.hex.description": "Hex lets you hold a key and speak your prompts. It runs on your computer and works in any app.",
+  "tips.hex.description":
+    "Hex lets you hold a key and speak your prompts. It runs on your computer and works in any app.",
   "tips.hex.install": "Install Hex",
   "home.workspaceTip": "Start next session in a new workspace to keep changes isolated",
 
@@ -1133,6 +1134,26 @@ export const dict = {
   "settings.appearance.row.reduceMotion.off": "Off",
   "settings.notifications.description": "Choose when to receive notifications and hear sounds",
   "settings.tab.dictation": "Dictation",
+  "settings.tab.voice": "Voice",
+  "settings.voice.description": "How voice calls on this server reach a model.",
+  "settings.voice.section.provider": "Provider",
+  "settings.voice.provider.title": "Voice provider",
+  "settings.voice.provider.description":
+    "API key runs GPT-Live on an OpenAI or OpenCode key. ChatGPT plan uses a Codex sign-in, and OpenCode answers your requests in a voice session.",
+  "settings.voice.provider.auto": "Automatic",
+  "settings.voice.provider.openai": "API key",
+  "settings.voice.provider.chatgpt": "ChatGPT plan",
+  "settings.voice.status.title": "In use",
+  "settings.voice.status.description": "What the next call on this server starts with.",
+  "settings.voice.status.chatgpt": "ChatGPT plan",
+  "settings.voice.status.live": "GPT-Live on an API key",
+  "settings.voice.status.none": "Nothing available",
+  "settings.voice.section.chatgpt": "ChatGPT plan",
+  "settings.voice.voice.title": "Voice",
+  "settings.voice.voice.description": "The voice GPT-Live speaks with on the ChatGPT plan.",
+  "settings.voice.voice.default": "Default",
+  "settings.voice.signin.missing":
+    "No Codex sign-in found on this server. Connect OpenAI with Codex browser (legacy), or sign in to the Codex CLI.",
   "settings.dictation.description":
     "Speak into the composer. A local MLX model on the server transcribes speech as you talk",
   "settings.dictation.section.recognition": "Recognition",

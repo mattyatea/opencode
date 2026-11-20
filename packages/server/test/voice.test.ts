@@ -39,6 +39,19 @@ const voice = makeLocationNode({
               },
         )
       },
+      call: {
+        start: (input) => Effect.succeed({ call: "rtc_1", sdp: `answer:chatgpt:${input.sdp}:${input.directory}` }),
+        events: (call, after) =>
+          call === "rtc_1"
+            ? Effect.succeed({
+                events: [{ seq: after + 1, type: "open" as const, sessionID: "ses_1" }],
+                closed: false,
+              })
+            : Effect.fail(new Voice.InvalidRequestError({ message: `Unknown voice call: ${call}` })),
+        speech: () => Effect.void,
+        view: () => Effect.void,
+        stop: () => Effect.void,
+      },
     }),
   ),
   deps: [],
@@ -110,5 +123,31 @@ it.live("routes experimental voice models and session endpoints", () =>
 
     expect((yield* post({ model: "invalid", transport: { type: "websocket" } })).status).toBe(400)
     expect((yield* post({ model: "unavailable", transport: { type: "websocket" } })).status).toBe(503)
+
+    const call = (route: string, init?: RequestInit) =>
+      Effect.promise(() =>
+        handler(
+          new Request(`http://opencode.local/api/experimental/voice/call${route}`, {
+            ...init,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      )
+    const started = yield* call("", {
+      method: "POST",
+      body: JSON.stringify({ sdp: "v=0", directory: "/work", viewing: { id: "ses_1", title: "Desktop" } }),
+    })
+    expect(started.status).toBe(200)
+    expect(yield* Effect.promise(() => started.json())).toEqual({
+      data: { call: "rtc_1", sdp: "answer:chatgpt:v=0:/work" },
+    })
+    const events = yield* call("/rtc_1/events?after=4")
+    expect(yield* Effect.promise(() => events.json())).toEqual({
+      data: { events: [{ seq: 5, type: "open", sessionID: "ses_1" }], closed: false },
+    })
+    expect((yield* call("/missing/events")).status).toBe(400)
+    const viewed = yield* call("/rtc_1/view", { method: "POST", body: JSON.stringify({ id: "ses_2" }) })
+    expect(viewed.status).toBe(204)
+    expect((yield* call("/rtc_1", { method: "DELETE" })).status).toBe(204)
   }),
 )

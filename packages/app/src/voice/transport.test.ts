@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, jest, test } from "bun:test"
-import type { OpenCodeClient } from "@opencode/client/promise"
+import type { OpenCodeClient, VoiceCallEvent } from "@opencode/client/promise"
 import { CLOSE_TIMEOUT, DISCONNECT_GRACE, JOIN_TIMEOUT } from "./transport-machine"
 import { VoiceFailure, VoiceTransport } from "./transport"
 
@@ -148,16 +148,36 @@ type Voice = OpenCodeClient["experimental"]["voice"]
 
 const live = { model: "gpt-live-1", provider: "openai", available: true, transports: ["webrtc" as const] }
 
-function open(models: Voice["models"] = () => Promise.resolve({ models: [live] })) {
+const unused = () => Promise.reject(new Error("unused"))
+
+const noCall: Voice["call"] = {
+  start: unused,
+  events: unused,
+  speech: unused,
+  view: unused,
+  stop: unused,
+}
+
+function open(models: Voice["models"] = () => Promise.resolve({ models: [live] }), call = noCall) {
   const voice: Voice = {
     models,
     session: () => Promise.resolve({ transport: { type: "webrtc", sdp: "v=0 answer" } }),
+    call,
   }
 
   const dropped = jest.fn()
-  const transport = new VoiceTransport({ voice, event: () => {}, levels: () => {}, dropped })
+  const received: VoiceCallEvent[] = []
 
-  return { transport, dropped, peer: FakePeer.last }
+  const transport = new VoiceTransport({
+    voice,
+    event: () => {},
+    call: (event) => received.push(event),
+    directory: (viewing) => Promise.resolve(`/work/${viewing.id}`),
+    levels: () => {},
+    dropped,
+  })
+
+  return { transport, dropped, received, peer: FakePeer.last }
 }
 
 // Lets the transport's awaited WebRTC calls settle; fake timers leave promise jobs alone.
@@ -269,4 +289,56 @@ test("a rejected session.update keeps the live call open", async () => {
   // A request keeps its own ID, so a later rejection can name the delegation that sent it.
   result.transport.send({ type: "response.create", event_id: "del_1_4" })
   expect(result.peer.channel.sent.at(-1)).toEqual({ type: "response.create", event_id: "del_1_4" })
+})
+
+test("a ChatGPT call joins on the server's answer, relays its events, and stops the call when it ends", async () => {
+  const chatgpt = { model: "chatgpt-live", provider: "chatgpt", available: true, transports: ["webrtc" as const] }
+  const polls: PromiseWithResolvers<{ events: VoiceCallEvent[]; closed: boolean }>[] = []
+  const started: Parameters<Voice["call"]["start"]>[0][] = []
+  const stopped: string[] = []
+
+  const result = open(() => Promise.resolve({ models: [chatgpt, live], default: "chatgpt-live" }), {
+    ...noCall,
+    start: (input) => {
+      started.push(input)
+
+      return Promise.resolve({ call: "rtc_1", sdp: "v=0 chatgpt" })
+    },
+    events: (input) => {
+      expect(input.after).toBe(polls.length === 0 ? 0 : 7)
+      const poll = Promise.withResolvers<{ events: VoiceCallEvent[]; closed: boolean }>()
+      polls.push(poll)
+
+      return poll.promise
+    },
+    stop: (input) => {
+      stopped.push(input.callID)
+
+      return Promise.resolve()
+    },
+  })
+
+  const joined = result.transport.join({ id: "ses_1", title: "Desktop" }, "")
+  await settle()
+  // The call never says session.started on the data channel; the server's answer means it started.
+  microphone.resolve(new FakeMediaStream([track()]))
+  await joined
+  expect(result.transport.engine).toBe("chatgpt")
+  expect(started).toEqual([{ sdp: "v=0 offer", directory: "/work/ses_1", viewing: { id: "ses_1", title: "Desktop" } }])
+
+  const opened: VoiceCallEvent = { seq: 7, type: "open", sessionID: "ses_2" }
+  polls[0]?.resolve({ events: [opened], closed: false })
+  await settle()
+  expect(result.received).toEqual([opened])
+  // Muting only silences the track; the server owns the session, so nothing goes over the data channel.
+  result.transport.mute(true)
+  expect(result.peer.channel.sent).toEqual([])
+
+  polls[1]?.resolve({ events: [{ seq: 8, type: "closed", reason: "session_expired" }], closed: true })
+  await settle()
+  expect(result.dropped).toHaveBeenCalledTimes(1)
+  expect(result.received).toEqual([opened])
+  expect(stopped).toEqual(["rtc_1"])
+  await result.transport.close()
+  expect(result.peer.closed).toBe(true)
 })

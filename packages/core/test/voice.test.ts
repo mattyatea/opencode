@@ -1,9 +1,14 @@
 import { expect } from "bun:test"
 import { RequestExecutor } from "@opencode/ai/route"
 import { Credential } from "@opencode/core/credential"
+import { Flag } from "@opencode/core/flag"
+import { Session } from "@opencode/core/session"
 import { Integration } from "@opencode/core/integration"
 import { Voice } from "@opencode/core/voice"
+import { Document, Info } from "@opencode/schema/config"
+import { ConfigVoice } from "@opencode/schema/config/voice"
 import { Effect, Layer } from "effect"
+import { Socket } from "effect/socket"
 import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http"
 import { TestClock } from "effect/testing"
 import { testEffect } from "./lib/effect"
@@ -45,6 +50,17 @@ const resolveCredential: Integration.Interface["connection"]["resolve"] = (conne
 
 const unused = () => Effect.die("unused")
 
+const unusedSessions = Layer.mock(Session.Service, { revert: { stage: unused, clear: unused, commit: unused } })
+const unusedSockets = Layer.succeed(Socket.WebSocketConstructor, () => {
+  throw new Error("unused")
+})
+
+const noSubscription = Layer.mergeAll(
+  Flag.testLayer([], { overrides: "-chatgpt_voice" }),
+  unusedSessions,
+  unusedSockets,
+)
+
 const mockIntegration = (
   connections: (id: Integration.ID) => Integration.Info["connections"],
   resolve: Integration.Interface["connection"]["resolve"] = () => Effect.die("Voice.models resolved a credential"),
@@ -84,7 +100,8 @@ const start = (
     Effect.provide(
       Voice.layer.pipe(
         Layer.provide(
-          Layer.merge(
+          Layer.mergeAll(
+            noSubscription,
             mockIntegration((id) => connections[id] ?? [], resolveCredential),
             RequestExecutor.layer.pipe(
               Layer.provide(
@@ -187,7 +204,8 @@ it.effect("lists voice models with availability and default without resolving cr
         Effect.provide(
           Voice.layer.pipe(
             Layer.provide(
-              Layer.merge(
+              Layer.mergeAll(
+                noSubscription,
                 mockIntegration((id) => connections[id] ?? []),
                 Layer.mock(RequestExecutor.Service, {}),
               ),
@@ -234,5 +252,49 @@ it.effect("lists voice models with availability and default without resolving cr
       ],
     })
     expect("default" in none).toBe(false)
+  }),
+)
+
+it.effect("picks the voice provider from voice.provider, else an API key before the ChatGPT plan", () =>
+  Effect.gen(function* () {
+    const list = (
+      voice: ConstructorParameters<typeof ConfigVoice.Info>[0],
+      connections: Partial<Record<string, Integration.Info["connections"]>>,
+    ) =>
+      Effect.flatMap(Voice.Service, (service) => service.models()).pipe(
+        Effect.provide(
+          Voice.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Flag.testLayer(
+                  [new Document({ type: "document", info: new Info({ voice: new ConfigVoice.Info(voice) }) })],
+                  { overrides: "chatgpt_voice" },
+                ),
+                mockIntegration((id) => connections[id] ?? []),
+                Layer.mock(RequestExecutor.Service, {}),
+                unusedSessions,
+                unusedSockets,
+              ),
+            ),
+          ),
+        ),
+      )
+    // Only OpenCode's own sign-ins count, so the test doesn't depend on a Codex CLI on this machine.
+    const chatgpt = new ConfigVoice.ChatGPT({ token: "opencode" })
+    const signedIn = { openai: [credential("chatgpt", "oauth")] }
+    const both = { openai: [credential("chatgpt", "oauth"), credential("active", "key")] }
+
+    const subscription = yield* list({ chatgpt }, signedIn)
+    expect(subscription.models[0]).toEqual({
+      model: "chatgpt-live",
+      provider: "chatgpt",
+      transports: ["webrtc"],
+      available: true,
+    })
+    expect(subscription.default).toBe("chatgpt-live")
+    expect((yield* list({ chatgpt }, both)).default).toBe("gpt-live-1")
+    expect((yield* list({ chatgpt, provider: "chatgpt" }, both)).default).toBe("chatgpt-live")
+    expect((yield* list({ chatgpt, provider: "openai" }, signedIn)).default).toBeUndefined()
+    expect((yield* list({ chatgpt }, {})).models[0]?.available).toBe(false)
   }),
 )
