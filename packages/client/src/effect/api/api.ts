@@ -1702,9 +1702,79 @@ export type ExperimentalVoiceSessionOperation<E = never> = (
   input: ExperimentalVoiceSessionInput,
 ) => Effect.Effect<ExperimentalVoiceSessionOutput, E>
 
+export type ExperimentalVoiceCodexStartInput = {
+  readonly sdp: string
+  readonly instructions: { readonly voice: string; readonly delegator: string }
+  readonly tools: ReadonlyArray<{ readonly name: string; readonly description: string; readonly parameters: unknown }>
+  readonly context?: string | undefined
+}
+export type ExperimentalVoiceCodexStartOutput = { readonly call: string; readonly sdp: string }
+export type ExperimentalVoiceCodexStartOperation<E = never> = (
+  input: ExperimentalVoiceCodexStartInput,
+) => Effect.Effect<ExperimentalVoiceCodexStartOutput, E>
+
+export type ExperimentalVoiceCodexEventsInput = { readonly callID: string; readonly after?: number | undefined }
+export type ExperimentalVoiceCodexEventsOutput = {
+  readonly events: ReadonlyArray<
+    | { readonly seq: number; readonly type: "transcript"; readonly role: string; readonly delta: string }
+    | { readonly seq: number; readonly type: "transcript.done"; readonly role: string; readonly text: string }
+    | { readonly seq: number; readonly type: "delegation"; readonly status: "started" | "completed" }
+    | {
+        readonly seq: number
+        readonly type: "tool"
+        readonly id: string
+        readonly name: string
+        readonly arguments: string
+      }
+    | { readonly seq: number; readonly type: "error"; readonly message: string }
+    | { readonly seq: number; readonly type: "closed"; readonly reason?: string | undefined }
+  >
+  readonly closed: boolean
+}
+export type ExperimentalVoiceCodexEventsOperation<E = never> = (
+  input: ExperimentalVoiceCodexEventsInput,
+) => Effect.Effect<ExperimentalVoiceCodexEventsOutput, E>
+
+export type ExperimentalVoiceCodexToolInput = {
+  readonly callID: string
+  readonly id: string
+  readonly output: string
+  readonly success: boolean
+}
+export type ExperimentalVoiceCodexToolOutput = void
+export type ExperimentalVoiceCodexToolOperation<E = never> = (
+  input: ExperimentalVoiceCodexToolInput,
+) => Effect.Effect<ExperimentalVoiceCodexToolOutput, E>
+
+export type ExperimentalVoiceCodexSpeechInput = { readonly callID: string; readonly text: string }
+export type ExperimentalVoiceCodexSpeechOutput = void
+export type ExperimentalVoiceCodexSpeechOperation<E = never> = (
+  input: ExperimentalVoiceCodexSpeechInput,
+) => Effect.Effect<ExperimentalVoiceCodexSpeechOutput, E>
+
+export type ExperimentalVoiceCodexContextInput = { readonly callID: string; readonly text: string }
+export type ExperimentalVoiceCodexContextOutput = void
+export type ExperimentalVoiceCodexContextOperation<E = never> = (
+  input: ExperimentalVoiceCodexContextInput,
+) => Effect.Effect<ExperimentalVoiceCodexContextOutput, E>
+
+export type ExperimentalVoiceCodexStopInput = { readonly callID: string }
+export type ExperimentalVoiceCodexStopOutput = void
+export type ExperimentalVoiceCodexStopOperation<E = never> = (
+  input: ExperimentalVoiceCodexStopInput,
+) => Effect.Effect<ExperimentalVoiceCodexStopOutput, E>
+
 export interface ExperimentalVoiceApi<E = never> {
   readonly models: ExperimentalVoiceModelsOperation<E>
   readonly session: ExperimentalVoiceSessionOperation<E>
+  readonly codex: {
+    readonly start: ExperimentalVoiceCodexStartOperation<E>
+    readonly events: ExperimentalVoiceCodexEventsOperation<E>
+    readonly tool: ExperimentalVoiceCodexToolOperation<E>
+    readonly speech: ExperimentalVoiceCodexSpeechOperation<E>
+    readonly context: ExperimentalVoiceCodexContextOperation<E>
+    readonly stop: ExperimentalVoiceCodexStopOperation<E>
+  }
 }
 
 export type ExperimentalDictationStatusOutput = {

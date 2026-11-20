@@ -132,6 +132,18 @@ import type {
   ExperimentalVoiceModelsOutput,
   ExperimentalVoiceSessionInput,
   ExperimentalVoiceSessionOutput,
+  ExperimentalVoiceCodexStartInput,
+  ExperimentalVoiceCodexStartOutput,
+  ExperimentalVoiceCodexEventsInput,
+  ExperimentalVoiceCodexEventsOutput,
+  ExperimentalVoiceCodexToolInput,
+  ExperimentalVoiceCodexToolOutput,
+  ExperimentalVoiceCodexSpeechInput,
+  ExperimentalVoiceCodexSpeechOutput,
+  ExperimentalVoiceCodexContextInput,
+  ExperimentalVoiceCodexContextOutput,
+  ExperimentalVoiceCodexStopInput,
+  ExperimentalVoiceCodexStopOutput,
   ExperimentalDictationStatusOutput,
   ExperimentalDictationLanguagesOutput,
   ExperimentalDictationPrepareOutput,
@@ -1367,6 +1379,84 @@ export function make(options: ClientOptions) {
             },
             requestOptions,
           ).then((value) => value.data),
+        codex: {
+          start: (input: ExperimentalVoiceCodexStartInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalVoiceCodexStartOutput }>(
+              {
+                method: "POST",
+                path: `/api/experimental/voice/codex`,
+                body: {
+                  sdp: input["sdp"],
+                  instructions: input["instructions"],
+                  tools: input["tools"],
+                  context: input["context"],
+                },
+                successStatus: 200,
+                declaredStatuses: [400, 401, 404, 503],
+                empty: false,
+              },
+              requestOptions,
+            ).then((value) => value.data),
+          events: (input: ExperimentalVoiceCodexEventsInput, requestOptions?: RequestOptions) =>
+            request<{ readonly data: ExperimentalVoiceCodexEventsOutput }>(
+              {
+                method: "GET",
+                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}/events`,
+                query: { after: input["after"] },
+                successStatus: 200,
+                declaredStatuses: [400, 401, 404, 503],
+                empty: false,
+              },
+              requestOptions,
+            ).then((value) => value.data),
+          tool: (input: ExperimentalVoiceCodexToolInput, requestOptions?: RequestOptions) =>
+            request<ExperimentalVoiceCodexToolOutput>(
+              {
+                method: "POST",
+                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}/tool`,
+                body: { id: input["id"], output: input["output"], success: input["success"] },
+                successStatus: 204,
+                declaredStatuses: [400, 401, 404, 503],
+                empty: true,
+              },
+              requestOptions,
+            ),
+          speech: (input: ExperimentalVoiceCodexSpeechInput, requestOptions?: RequestOptions) =>
+            request<ExperimentalVoiceCodexSpeechOutput>(
+              {
+                method: "POST",
+                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}/speech`,
+                body: { text: input["text"] },
+                successStatus: 204,
+                declaredStatuses: [400, 401, 404, 503],
+                empty: true,
+              },
+              requestOptions,
+            ),
+          context: (input: ExperimentalVoiceCodexContextInput, requestOptions?: RequestOptions) =>
+            request<ExperimentalVoiceCodexContextOutput>(
+              {
+                method: "POST",
+                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}/context`,
+                body: { text: input["text"] },
+                successStatus: 204,
+                declaredStatuses: [400, 401, 404, 503],
+                empty: true,
+              },
+              requestOptions,
+            ),
+          stop: (input: ExperimentalVoiceCodexStopInput, requestOptions?: RequestOptions) =>
+            request<ExperimentalVoiceCodexStopOutput>(
+              {
+                method: "DELETE",
+                path: `/api/experimental/voice/codex/${encodeURIComponent(input.callID)}`,
+                successStatus: 204,
+                declaredStatuses: [400, 401, 404],
+                empty: true,
+              },
+              requestOptions,
+            ),
+        },
       },
       dictation: {
         status: (requestOptions?: RequestOptions) =>

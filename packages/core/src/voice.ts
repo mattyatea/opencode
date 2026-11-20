@@ -11,9 +11,20 @@ import {
 import { RequestExecutor } from "@opencode/ai/route"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Context, Effect, Layer, Redacted, Schema } from "effect"
+import { Config } from "./config.js"
 import { Credential } from "./credential.js"
 import { requestExecutor } from "./effect/app-node-platform.js"
+import { Flag } from "./flag.js"
 import { Integration } from "./integration.js"
+import {
+  CallError,
+  createCodexVoice,
+  resolveCommand,
+  type Event as CodexEvent,
+  type StartInput,
+} from "./voice/codex.js"
+
+export type { CodexEvent, StartInput as CodexStartInput }
 
 export interface ModelInfo {
   readonly model: string
@@ -47,7 +58,23 @@ export type Error = InvalidRequestError | UnavailableError
 export interface Interface {
   readonly models: () => Effect.Effect<Models>
   readonly session: (input: SessionInput) => Effect.Effect<RealtimeTransport, Error>
+  /** Calls on Codex realtime through `codex app-server`, with the server's Codex sign-in. */
+  readonly codex: {
+    readonly start: (input: StartInput) => Effect.Effect<{ readonly call: string; readonly sdp: string }, Error>
+    /** Waits briefly for the call's events after `after`, so a client can ask again right away. */
+    readonly events: (
+      call: string,
+      after: number,
+    ) => Effect.Effect<{ readonly events: readonly CodexEvent[]; readonly closed: boolean }, Error>
+    readonly tool: (call: string, id: string, output: string, success: boolean) => Effect.Effect<void, Error>
+    readonly speech: (call: string, text: string) => Effect.Effect<void, Error>
+    readonly context: (call: string, text: string) => Effect.Effect<void, Error>
+    readonly stop: (call: string) => Effect.Effect<void>
+  }
 }
+
+/** The model ID that selects Codex realtime in `models` and the client. */
+export const codexModel = "codex"
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Voice") {}
 
@@ -56,6 +83,11 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const executor = yield* RequestExecutor.Service
     const integrations = yield* Integration.Service
+    const config = yield* Config.Service
+    const flags = yield* Flag.Service
+    const codex = yield* Effect.acquireRelease(Effect.sync(createCodexVoice), (codex) => Effect.sync(codex.close))
+
+    const voiceConfig = () => config.entries().pipe(Effect.map((entries) => Config.latest(entries, "voice")))
 
     // Integration lists the active credential first, then newer stored credentials, then non-empty env vars.
     const findConnection = (provider: string, methods: readonly string[] = ["key"]) =>
@@ -86,8 +118,21 @@ export const layer = Layer.effect(
           })),
         ),
       )
-      const first = list.find((item) => item.available)?.model
-      return first ? { models: list, default: first } : { models: list }
+      const settings = yield* voiceConfig()
+      const codexEntry = (yield* flags.enabled("codex_voice"))
+        ? [
+            {
+              model: codexModel,
+              provider: "codex",
+              transports: ["webrtc" as const],
+              available: resolveCommand(settings?.codex) !== undefined,
+            },
+          ]
+        : []
+      const preferCodex = settings?.engine === "codex" || (settings?.engine === undefined && !!settings?.codex)
+      const first = [...(preferCodex ? codexEntry : []), ...list].find((item) => item.available)?.model
+      const models = [...codexEntry, ...list]
+      return first ? { models, default: first } : { models }
     })
 
     const session = Effect.fn("Voice.session")(function* (input: SessionInput) {
@@ -123,14 +168,48 @@ export const layer = Layer.effect(
       )
     })
 
-    return Service.of({ models, session })
+    const codexCall = <A>(name: string, run: () => Promise<A>) =>
+      Effect.tryPromise({
+        try: run,
+        catch: (error): Error =>
+          error instanceof CallError && error.kind === "invalid"
+            ? new InvalidRequestError({ message: error.message })
+            : new UnavailableError({
+                service: "codex",
+                message: error instanceof Error ? error.message : String(error),
+              }),
+      }).pipe(Effect.withSpan(`Voice.codex.${name}`))
+
+    const codexStart = Effect.fn("Voice.codex.start")(function* (input: StartInput) {
+      if (!(yield* flags.enabled("codex_voice")))
+        return yield* new UnavailableError({
+          service: "codex",
+          message: "Codex voice is turned off. Enable the codex_voice flag.",
+        })
+      const settings = yield* voiceConfig()
+      return yield* codexCall("call", () => codex.start(settings?.codex, input))
+    })
+
+    return Service.of({
+      models,
+      session,
+      codex: {
+        start: codexStart,
+        events: (call, after) => codexCall("events", () => codex.events(call, after)),
+        tool: (call, id, output, success) =>
+          codexCall("tool", () => Promise.resolve().then(() => codex.tool(call, id, output, success))),
+        speech: (call, text) => codexCall("speech", () => codex.speech(call, text)),
+        context: (call, text) => codexCall("context", () => codex.context(call, text)),
+        stop: (call) => Effect.promise(() => codex.stop(call)),
+      },
+    })
   }),
 )
 
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Integration.node, requestExecutor],
+  deps: [Integration.node, requestExecutor, Config.node, Flag.node],
 })
 
 /** OpenCode hosts GPT-Live on its OpenAI account, billed to the workspace whose credential starts a session. */

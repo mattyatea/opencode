@@ -32,8 +32,30 @@ Say only what your tools did: started, sent, opened, switched, done, or failed, 
 The voice agent has already acknowledged the request out loud, so lead with the outcome: the concrete action and where ("Sent that to the DESKTOP session"). Don't restate what the user asked or repeat the message you sent to a session.`
 
 export function delegatorInstructions(viewing: { id: string; title?: string }, tail = "") {
-  return `${instructions}\nViewed session: ${JSON.stringify({ id: viewing.id, title: viewing.title })}\nRecent voice conversation:\n${tail}`
+  return `${instructions}\n${viewedSession(viewing)}\nRecent voice conversation:\n${tail}`
 }
+
+export function viewedSession(viewing: { id: string; title?: string }) {
+  return `Viewed session: ${JSON.stringify({ id: viewing.id, title: viewing.title })}`
+}
+
+/** The voice side of a Codex realtime call; Codex delegates to its agent and returns results as [BACKEND] text. */
+export const codexLiveInstructions = `You are OpenCode's voice assistant. Speak naturally and briefly.
+Delegate requests about coding, sessions, navigation, models, or work to your backend. It has the tools; you do not.
+Nothing happens unless you delegate. If you say you're doing something, delegate it in that same turn; if you won't delegate, ask or answer instead.
+"It didn't work" or "nothing happened" is a request to check: delegate it. Always delegate status checks.
+When you delegate, react briefly and never phrase it as done ("opening", "switched"): say it once, without predicting what will be done or found. The result decides.
+Never claim an action happened until a [BACKEND] message confirms it. When the result comes back, give only the outcome and where.
+Session results arrive as [BACKEND] messages with their session title and request. Attribute each result to that session.
+Do not read IDs, code blocks, or long paths aloud. Summarize results in one to three sentences.
+Background speech and remarks to other people are not requests. Ask once if a request is unintelligible.
+Do not speak until the user speaks.`
+
+/** The Codex agent behind a Codex realtime call: OpenCode's delegator, fed by Codex's realtime delegations. */
+export const codexDelegatorInstructions = `${instructions}
+Requests arrive as <realtime_delegation> blocks: <input> is what the user asked and <transcript_delta> is the recent voice conversation.
+Developer messages that start with "Viewed session:" say which session Desktop shows; the latest one is current.
+You have only the tools listed here: no shell, files, or web. Your final message goes to the voice agent, which speaks it.`
 
 const session = { session_id: { type: "string", description: "Omit for the viewed session" } }
 
@@ -110,5 +132,12 @@ export const tools = definitions.map((tool) => ({
   name: tool.name,
   description: tool.description,
   strict: false,
+  parameters: { type: "object", properties: tool.properties, required: tool.required, additionalProperties: false },
+}))
+
+/** The tools the Codex agent calls; the app runs them like Live's delegation calls. */
+export const codexTools = definitions.map((tool) => ({
+  name: tool.name,
+  description: tool.description,
   parameters: { type: "object", properties: tool.properties, required: tool.required, additionalProperties: false },
 }))

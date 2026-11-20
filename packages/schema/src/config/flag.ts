@@ -15,6 +15,8 @@ export const registry = {
   artifacts: "Enable experimental artifacts backed by pluggable providers.",
   dictation:
     "Show a dictation button beside the send button that transcribes speech locally with an MLX model on Apple Silicon, with optional cleanup by a model after recording.",
+  codex_voice:
+    "Let Desktop voice calls run on Codex realtime through the Codex CLI's app-server and your Codex sign-in, configured under voice.codex.",
   shell_timeout_background: "Move foreground shell commands to the background when their timeout expires.",
   video_generate: "Enable the experimental video generation API.",
   console_watches:

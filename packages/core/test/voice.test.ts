@@ -1,8 +1,11 @@
 import { expect } from "bun:test"
 import { RequestExecutor } from "@opencode/ai/route"
 import { Credential } from "@opencode/core/credential"
+import { Flag } from "@opencode/core/flag"
 import { Integration } from "@opencode/core/integration"
 import { Voice } from "@opencode/core/voice"
+import { Document, Info } from "@opencode/schema/config"
+import { ConfigVoice } from "@opencode/schema/config/voice"
 import { Effect, Layer } from "effect"
 import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http"
 import { TestClock } from "effect/testing"
@@ -45,6 +48,8 @@ const resolveCredential: Integration.Interface["connection"]["resolve"] = (conne
 
 const unused = () => Effect.die("unused")
 
+const noCodex = Flag.testLayer([], { overrides: "-codex_voice" })
+
 const mockIntegration = (
   connections: (id: Integration.ID) => Integration.Info["connections"],
   resolve: Integration.Interface["connection"]["resolve"] = () => Effect.die("Voice.models resolved a credential"),
@@ -84,7 +89,8 @@ const start = (
     Effect.provide(
       Voice.layer.pipe(
         Layer.provide(
-          Layer.merge(
+          Layer.mergeAll(
+            noCodex,
             mockIntegration((id) => connections[id] ?? [], resolveCredential),
             RequestExecutor.layer.pipe(
               Layer.provide(
@@ -187,7 +193,8 @@ it.effect("lists voice models with availability and default without resolving cr
         Effect.provide(
           Voice.layer.pipe(
             Layer.provide(
-              Layer.merge(
+              Layer.mergeAll(
+                noCodex,
                 mockIntegration((id) => connections[id] ?? []),
                 Layer.mock(RequestExecutor.Service, {}),
               ),
@@ -234,5 +241,39 @@ it.effect("lists voice models with availability and default without resolving cr
       ],
     })
     expect("default" in none).toBe(false)
+  }),
+)
+
+it.effect("offers Codex voice first when voice.codex is configured and its command exists", () =>
+  Effect.gen(function* () {
+    const list = (voice: ConstructorParameters<typeof ConfigVoice.Info>[0]) =>
+      Effect.flatMap(Voice.Service, (service) => service.models()).pipe(
+        Effect.provide(
+          Voice.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Flag.testLayer(
+                  [new Document({ type: "document", info: new Info({ voice: new ConfigVoice.Info(voice) }) })],
+                  {
+                    overrides: "codex_voice",
+                  },
+                ),
+                mockIntegration((id) => (id === "openai" ? [credential("active", "key")] : [])),
+                Layer.mock(RequestExecutor.Service, {}),
+              ),
+            ),
+          ),
+        ),
+      )
+
+    const configured = yield* list({ codex: new ConfigVoice.Codex({ command: "sh" }) })
+    expect(configured.models[0]).toEqual({ model: "codex", provider: "codex", transports: ["webrtc"], available: true })
+    expect(configured.default).toBe("codex")
+    expect((yield* list({ engine: "gpt-live", codex: new ConfigVoice.Codex({ command: "sh" }) })).default).toBe(
+      "gpt-live-1",
+    )
+    const missing = yield* list({ codex: new ConfigVoice.Codex({ command: "opencode-missing-codex" }) })
+    expect(missing.models[0]?.available).toBe(false)
+    expect(missing.default).toBe("gpt-live-1")
   }),
 )

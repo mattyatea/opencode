@@ -226,6 +226,16 @@ export type VoiceWebRTCTransport = { type: "webrtc"; sdp: string }
 
 export type VoiceWebSocketTransport = { type: "websocket"; url: string; token: string; expiresAt: number }
 
+export type VoiceCodexStartResponse = { data: { call: string; sdp: string } }
+
+export type VoiceCodexEvent =
+  | { seq: number; type: "transcript"; role: string; delta: string }
+  | { seq: number; type: "transcript.done"; role: string; text: string }
+  | { seq: number; type: "delegation"; status: "started" | "completed" }
+  | { seq: number; type: "tool"; id: string; name: string; arguments: string }
+  | { seq: number; type: "error"; message: string }
+  | { seq: number; type: "closed"; reason?: string | undefined }
+
 export type DictationStatus = { available: boolean; reason?: "disabled" | "unsupported" | undefined }
 
 export type DictationLanguagesResponse = { data: { languages: Array<string> } }
@@ -785,6 +795,8 @@ export type GenerateChoiceAnswer = {
 export type VoiceModel = { model: string; provider: string; transports: Array<VoiceTransportType>; available: boolean }
 
 export type VoiceTransport = VoiceWebRTCTransport | VoiceWebSocketTransport
+
+export type VoiceCodexEventsResponse = { data: { events: Array<VoiceCodexEvent>; closed: boolean } }
 
 export type DictationStatusResponse = { data: DictationStatus }
 
@@ -2635,6 +2647,27 @@ export type ConfigEntry =
             | { path: string; description?: string; hidden?: boolean }
         }
         websearch?: false | { provider: "random" | WebSearchID }
+        voice?: {
+          engine?: "codex" | "gpt-live"
+          codex?: {
+            command?: string
+            args?: Array<string>
+            env?: { [x: string]: string }
+            cwd?: string
+            model?: string
+            reasoning_effort?: string
+            config?: { [x: string]: JsonValue }
+            realtime?: {
+              model?: string
+              version?: "v1" | "v2" | "v3"
+              voice?: string
+              ack_filler?: boolean
+              startup_context?: boolean
+              reasoning_status?: boolean
+            }
+            instructions?: { voice?: string; delegator?: string; append?: string; start?: string; end?: string }
+          }
+        }
         plugins?: Array<string | { package: string; options?: { [x: string]: JsonValue } }>
         worktree?: ConfigWorktree
         warming?: boolean | { prompt?: string; interval?: "auto" | (string & {}); duration?: string }
@@ -2699,6 +2732,7 @@ export type ConfigEntry =
           automations?: boolean
           artifacts?: boolean
           dictation?: boolean
+          codex_voice?: boolean
           shell_timeout_background?: boolean
           video_generate?: boolean
           console_watches?: boolean
@@ -4223,6 +4257,40 @@ export type ExperimentalVoiceSessionInput = {
 }
 
 export type ExperimentalVoiceSessionOutput = VoiceSessionResponse["data"]
+
+export type ExperimentalVoiceCodexStartInput = {
+  readonly sdp: string
+  readonly instructions: { readonly voice: string; readonly delegator: string }
+  readonly tools: ReadonlyArray<{ readonly name: string; readonly description: string; readonly parameters: unknown }>
+  readonly context?: string | undefined
+}
+
+export type ExperimentalVoiceCodexStartOutput = VoiceCodexStartResponse["data"]
+
+export type ExperimentalVoiceCodexEventsInput = { readonly callID: string; readonly after?: number | undefined }
+
+export type ExperimentalVoiceCodexEventsOutput = VoiceCodexEventsResponse["data"]
+
+export type ExperimentalVoiceCodexToolInput = {
+  readonly callID: string
+  readonly id: string
+  readonly output: string
+  readonly success: boolean
+}
+
+export type ExperimentalVoiceCodexToolOutput = void
+
+export type ExperimentalVoiceCodexSpeechInput = { readonly callID: string; readonly text: string }
+
+export type ExperimentalVoiceCodexSpeechOutput = void
+
+export type ExperimentalVoiceCodexContextInput = { readonly callID: string; readonly text: string }
+
+export type ExperimentalVoiceCodexContextOutput = void
+
+export type ExperimentalVoiceCodexStopInput = { readonly callID: string }
+
+export type ExperimentalVoiceCodexStopOutput = void
 
 export type ExperimentalDictationStatusOutput = DictationStatusResponse["data"]
 

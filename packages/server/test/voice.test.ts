@@ -39,6 +39,22 @@ const voice = makeLocationNode({
               },
         )
       },
+      codex: {
+        start: (input) => Effect.succeed({ call: "thread_1", sdp: `answer:codex:${input.sdp}:${input.tools.length}` }),
+        events: (call, after) =>
+          call === "thread_1"
+            ? Effect.succeed({
+                events: [
+                  { seq: after + 1, type: "tool" as const, id: "exec_1", name: "list_sessions", arguments: "{}" },
+                ],
+                closed: false,
+              })
+            : Effect.fail(new Voice.InvalidRequestError({ message: `Unknown voice call: ${call}` })),
+        tool: () => Effect.void,
+        speech: () => Effect.void,
+        context: () => Effect.void,
+        stop: () => Effect.void,
+      },
     }),
   ),
   deps: [],
@@ -110,5 +126,41 @@ it.live("routes experimental voice models and session endpoints", () =>
 
     expect((yield* post({ model: "invalid", transport: { type: "websocket" } })).status).toBe(400)
     expect((yield* post({ model: "unavailable", transport: { type: "websocket" } })).status).toBe(503)
+
+    const codex = (route: string, init?: RequestInit) =>
+      Effect.promise(() =>
+        handler(
+          new Request(`http://opencode.local/api/experimental/voice/codex${route}`, {
+            ...init,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      )
+    const started = yield* codex("", {
+      method: "POST",
+      body: JSON.stringify({
+        sdp: "v=0",
+        instructions: { voice: "speak", delegator: "act" },
+        tools: [{ name: "list_sessions", description: "List", parameters: { type: "object" } }],
+      }),
+    })
+    expect(started.status).toBe(200)
+    expect(yield* Effect.promise(() => started.json())).toEqual({
+      data: { call: "thread_1", sdp: "answer:codex:v=0:1" },
+    })
+    const events = yield* codex("/thread_1/events?after=4")
+    expect(yield* Effect.promise(() => events.json())).toEqual({
+      data: {
+        events: [{ seq: 5, type: "tool", id: "exec_1", name: "list_sessions", arguments: "{}" }],
+        closed: false,
+      },
+    })
+    expect((yield* codex("/missing/events")).status).toBe(400)
+    const answered = yield* codex("/thread_1/tool", {
+      method: "POST",
+      body: JSON.stringify({ id: "exec_1", output: "[]", success: true }),
+    })
+    expect(answered.status).toBe(204)
+    expect((yield* codex("/thread_1", { method: "DELETE" })).status).toBe(204)
   }),
 )

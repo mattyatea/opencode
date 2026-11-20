@@ -1,4 +1,4 @@
-import type { SessionInfo } from "@opencode/client/promise"
+import type { SessionInfo, VoiceCodexEvent } from "@opencode/client/promise"
 import type { ServerCtx } from "@/runtime/server/runtime"
 import type { Platform } from "@/runtime/platform/platform"
 import { TranscriptTail } from "./tail"
@@ -31,6 +31,13 @@ import {
   type VoiceReplyEvent,
 } from "./reply-machine"
 import { INITIAL_VOICE_GATE_STATE, transitionVoiceGate, voiceGateDelay } from "./gate-machine"
+import {
+  codexDelegating,
+  createCodexDelegationState,
+  transitionCodexDelegation,
+  type CodexDelegationEffect,
+  type CodexDelegationEvent,
+} from "./codex-machine"
 
 /** Runs one call's transports, tools and delegations for the call machine in `context.tsx`. */
 export function createVoiceCall(input: {
@@ -58,6 +65,13 @@ export function createVoiceCall(input: {
   // The reply machine's pending gate or retry timer, and its history read.
   let replyTimer: ReturnType<typeof setTimeout> | undefined
   let replyAbort: AbortController | undefined
+  // A Codex call's delegation, its request (which open_session moves) and the abort of its running tool.
+  let codex = createCodexDelegationState()
+
+  const codexRuns = new Map<
+    string,
+    { request: { id: string; sessionID: string; transcript: string[] }; abort: AbortController }
+  >()
 
   const unlisten = input.ctx.sdk.event.on("session.idle", (event) => {
     if (tools.replies.sessions.includes(event.data.sessionID))
@@ -72,7 +86,11 @@ export function createVoiceCall(input: {
     const transport = new VoiceTransport({
       voice: input.ctx.sdk.api.experimental.voice,
       event: (event) => {
-        if (connection?.transport === transport) eventReceived(attempt, event)
+        // Codex owns its call's session; anything on the data channel is not the app's to act on.
+        if (connection?.transport === transport && transport.engine === "live") eventReceived(attempt, event)
+      },
+      codex: (event) => {
+        if (connection?.transport === transport) codexReceived(event)
       },
       levels: (mic, speaker) => {
         if (connection?.transport !== transport) return
@@ -110,18 +128,25 @@ export function createVoiceCall(input: {
   }
 
   function instructions(attempt: number, viewing: VoiceViewedSession) {
+    const transport = connection?.attempt === attempt ? connection.transport : undefined
+
+    // Context reaches Codex's agent as a note; a lost one only costs which session "here" means.
+    if (transport?.engine === "codex") return void transport.view(viewing).catch(() => undefined)
     send(attempt, "connection", (transport) => transport.instructions(delegatorInstructions(viewing, tail.lines)))
+  }
+
+  function heard(attempt: number, speaker: "user" | "assistant", delta: string) {
+    const text = tail.append(speaker, delta)
+    const utterance = tail.latest
+
+    gates = transitionVoiceGate(gates, { type: "heard", speaker, now: Date.now() })
+
+    if (utterance !== undefined) input.dispatch({ type: "caption.updated", attempt, utterance, speaker, text })
   }
 
   function eventReceived(attempt: number, event: VoiceEvent) {
     if (event.type === "session.input_transcript.delta" || event.type === "session.output_transcript.delta") {
-      const speaker = event.type === "session.input_transcript.delta" ? "user" : "assistant"
-      const text = tail.append(speaker, event.delta ?? "")
-      const utterance = tail.latest
-
-      gates = transitionVoiceGate(gates, { type: "heard", speaker, now: Date.now() })
-
-      if (utterance !== undefined) input.dispatch({ type: "caption.updated", attempt, utterance, speaker, text })
+      heard(attempt, event.type === "session.input_transcript.delta" ? "user" : "assistant", event.delta ?? "")
 
       return
     }
@@ -142,6 +167,87 @@ export function createVoiceCall(input: {
     const next = responseEvent(event)
 
     if (next) dispatch(next)
+  }
+
+  function codexReceived(event: VoiceCodexEvent) {
+    const attempt = connection?.attempt
+
+    if (attempt === undefined) return
+
+    if (event.type === "transcript") return heard(attempt, event.role === "user" ? "user" : "assistant", event.delta)
+
+    if (event.type === "delegation")
+      return dispatchCodex({ type: event.status === "started" ? "delegation.started" : "delegation.completed" })
+
+    if (event.type === "tool")
+      return dispatchCodex({
+        type: "tool.requested",
+        call: { call_id: event.id, name: event.name, arguments: event.arguments },
+      })
+
+    if (event.type === "error") console.warn("[voice] Codex realtime error", event.message)
+  }
+
+  function dispatchCodex(event: CodexDelegationEvent) {
+    const next = transitionCodexDelegation(codex, event)
+    codex = next.state
+    next.effects.forEach(performCodex)
+  }
+
+  function performCodex(effect: CodexDelegationEffect) {
+    if (effect.type === "begin") {
+      const viewing = viewedSession(input.call())
+      codexRuns.set(effect.id, {
+        request: { id: effect.id, sessionID: viewing?.id ?? "", transcript: tail.capture(effect.id) },
+        abort: new AbortController(),
+      })
+      dispatchReply({ type: "delegations.changed", delegating: true })
+
+      return
+    }
+
+    if (effect.type === "run") {
+      const run = codexRuns.get(effect.id)
+      const transport = connection?.transport
+
+      if (!run || !transport) return
+      const id = effect.id
+      const callID = effect.call.call_id
+      void tools
+        .run(effect.call, run.request, AbortSignal.any([run.abort.signal, transport.signal]))
+        .then((output) => dispatchCodex({ type: "tool.completed", id, callID, output }))
+
+      return
+    }
+
+    if (effect.type === "answer") {
+      const transport = connection?.transport
+
+      // The server answers a dropped call's pending tools itself.
+      void transport
+        ?.answer(effect.callID, effect.output, true)
+        .then(() => dispatchReply({ type: "sessions.dirty", sessionIDs: tools.replies.sessions }))
+        .catch(() => undefined)
+
+      return
+    }
+
+    if (effect.type === "abort") return codexRuns.get(effect.id)?.abort.abort()
+
+    codexRuns.delete(effect.id)
+
+    if (effect.answered) {
+      dispatchReply({ type: "replies.heard", heard: tools.answered(effect.id) })
+      tail.accept(effect.id)
+      gates = transitionVoiceGate(gates, { type: "answer", now: Date.now() })
+    }
+
+    if (!effect.answered) {
+      tools.discard(effect.id)
+      tail.release(effect.id)
+    }
+
+    dispatchReply({ type: "delegations.changed", delegating: codexDelegating(codex) })
   }
 
   function dispatch(event: VoiceDelegationEvent) {
@@ -302,6 +408,21 @@ export function createVoiceCall(input: {
 
     if (!connection) return
     const reply = effect.reply
+
+    if (connection.transport.engine === "codex") {
+      const attempt = connection.attempt
+      void connection.transport.speak(replyCommentary(reply)).then(
+        () => {
+          tools.replies.heard(reply.sessionID, [reply.messageID])
+          gates = transitionVoiceGate(gates, { type: "announced", now: Date.now() })
+          dispatchReply({ type: "announce.succeeded", attempt: effect.attempt, reply })
+        },
+        () => input.dispatch({ type: "call.dropped", attempt, failure: "dropped" }),
+      )
+
+      return
+    }
+
     send(connection.attempt, "dropped", (transport) => {
       transport.send({ type: "session.commentary.append", delegation_id: null, content: replyCommentary(reply) })
       tools.replies.heard(reply.sessionID, [reply.messageID])
@@ -316,6 +437,7 @@ export function createVoiceCall(input: {
     connection = undefined
     dispatchReply({ type: "call.disconnected" })
     dispatch({ type: "call.reset" })
+    dispatchCodex({ type: "reset" })
     tail.clearReservations()
 
     if (!transport) return Promise.resolve()
