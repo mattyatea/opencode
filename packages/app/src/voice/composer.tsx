@@ -8,6 +8,7 @@ import { makeEventListener } from "@solid-primitives/event-listener"
 import {
   createEffect,
   createMemo,
+  createResource,
   createSignal,
   For,
   onCleanup,
@@ -59,7 +60,7 @@ export function VoiceComposer(props: ParentProps<{ session: SessionInfo | undefi
 
 /**
  * The composer's voice call button, which takes the send button's place while there is nothing to send. Undefined
- * where calls can't start: outside Desktop, in release builds, or while a call is already running.
+ * where calls can't start: outside Desktop, while the server offers no voice provider, or during a call.
  */
 export function createVoiceCallAction(session: () => SessionInfo | undefined) {
   const voice = useVoice()
@@ -67,11 +68,19 @@ export function createVoiceCallAction(session: () => SessionInfo | undefined) {
   const language = useLanguage()
   const platform = usePlatform()
 
-  const available = () =>
-    platform.platform === "desktop" &&
-    import.meta.env.VITE_OPENCODE_CHANNEL !== "prod" &&
-    !!session() &&
-    voice.view().canStart
+  const [models, { refetch }] = createResource(() =>
+    server.ctx.sdk.api.experimental.voice.models().catch(() => undefined),
+  )
+
+  // A provider chosen or signed in from Settings shows up after a config change.
+  onCleanup(server.ctx.sdk.event.on("config.updated", () => void refetch()))
+
+  // Read only once loaded: the composer must not suspend while the server answers.
+  const offered = () =>
+    (models.state === "ready" || models.state === "refreshing") &&
+    !!models.latest?.models.some((model) => model.available && model.transports.includes("webrtc"))
+
+  const available = () => platform.platform === "desktop" && offered() && !!session() && voice.view().canStart
 
   // One button for as long as calls can start, so the composer doesn't rebuild it on every read.
   return createMemo(() =>

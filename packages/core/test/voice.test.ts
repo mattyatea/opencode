@@ -260,6 +260,7 @@ it.effect("picks the voice provider from voice.provider, else an API key before 
     const list = (
       voice: ConstructorParameters<typeof ConfigVoice.Info>[0],
       connections: Partial<Record<string, Integration.Info["connections"]>>,
+      overrides = "chatgpt_voice",
     ) =>
       Effect.flatMap(Voice.Service, (service) => service.models()).pipe(
         Effect.provide(
@@ -268,7 +269,7 @@ it.effect("picks the voice provider from voice.provider, else an API key before 
               Layer.mergeAll(
                 Flag.testLayer(
                   [new Document({ type: "document", info: new Info({ voice: new ConfigVoice.Info(voice) }) })],
-                  { overrides: "chatgpt_voice" },
+                  { overrides },
                 ),
                 mockIntegration((id) => connections[id] ?? []),
                 Layer.mock(RequestExecutor.Service, {}),
@@ -296,5 +297,10 @@ it.effect("picks the voice provider from voice.provider, else an API key before 
     expect((yield* list({ chatgpt, provider: "chatgpt" }, both)).default).toBe("chatgpt-live")
     expect((yield* list({ chatgpt, provider: "openai" }, signedIn)).default).toBeUndefined()
     expect((yield* list({ chatgpt }, {})).models[0]?.available).toBe(false)
+    // Release builds keep the flag off; choosing the ChatGPT plan as the provider still opts in.
+    expect((yield* list({ chatgpt }, signedIn, "-chatgpt_voice")).models.map((model) => model.model)).not.toContain(
+      "chatgpt-live",
+    )
+    expect((yield* list({ chatgpt, provider: "chatgpt" }, signedIn, "-chatgpt_voice")).default).toBe("chatgpt-live")
   }),
 )
