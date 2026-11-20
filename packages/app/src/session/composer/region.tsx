@@ -10,7 +10,7 @@ import { Match } from "effect"
 import { createEffect, createMemo, on, onCleanup, onMount, Show, type Accessor } from "solid-js"
 import { Composer } from "@/composer/composer"
 import { ComposerDictation } from "@/composer/dictation/button"
-import { VoiceComposer } from "@/voice/composer"
+import { createVoiceCallAction, VoiceComposer } from "@/voice/composer"
 import { useComposerState } from "@/composer/persistence"
 import { createComposerControls } from "@/composer/selection"
 import { setCursorPosition } from "@/composer/editor/dom"
@@ -431,6 +431,7 @@ export function ActiveSessionComposerRegion(props: {
   const server = useServerSDK()
   const language = useLanguage()
   const openRoute = useOpenSessionRoute()
+  const voiceCall = createVoiceCallAction(() => props.session.data.info())
 
   // Only the server's LocationNotFoundError for the session's own Location replaces the composer.
   // A refetched session info (on reconnect) must not remount the keyed view and close its open menu.
@@ -647,6 +648,7 @@ export function ActiveSessionComposerRegion(props: {
                     readOnly={props.model.queue.undoing()}
                     suggestionBoundary={props.suggestionBoundary}
                     actions={<ComposerDictation controller={props.model.composer} />}
+                    idleAction={voiceCall()}
                     extraControls={
                       <PluginSlot
                         at="composer.controls"
