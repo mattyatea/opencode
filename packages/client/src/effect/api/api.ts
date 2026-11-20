@@ -99,11 +99,7 @@ export interface AgentApi<E = never> {
 }
 
 export type PluginListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
-export type PluginListOutput = {
-  readonly location: Location.PublicRef
-  readonly ready?: boolean | undefined
-  readonly data: ReadonlyArray<Plugin.Info>
-}
+export type PluginListOutput = { readonly location: Location.PublicRef; readonly data: ReadonlyArray<Plugin.Info> }
 export type PluginListOperation<E = never> = (input?: PluginListInput) => Effect.Effect<PluginListOutput, E>
 
 export type PluginGuiInput = {
@@ -2408,6 +2404,7 @@ export type EventSubscribeInput = {
         | "shell.created"
         | "shell.exited"
         | "shell.deleted"
+        | "experimental.job.updated"
         | "form.created"
         | "form.replied"
         | "form.cancelled"
@@ -2787,6 +2784,12 @@ export type ExperimentalJobListOperation<E = never> = (
   input?: ExperimentalJobListInput,
 ) => Effect.Effect<ExperimentalJobListOutput, E>
 
+export type ExperimentalJobCancelInput = { readonly id: string }
+export type ExperimentalJobCancelOutput = void
+export type ExperimentalJobCancelOperation<E = never> = (
+  input: ExperimentalJobCancelInput,
+) => Effect.Effect<ExperimentalJobCancelOutput, E>
+
 export type ExperimentalPreferenceGetInput = {
   readonly key:
     | "model"
@@ -2845,7 +2848,7 @@ export interface ExperimentalApi<E = never> {
     readonly update: ExperimentalArtifactsUpdateOperation<E>
     readonly delete: ExperimentalArtifactsDeleteOperation<E>
   }
-  readonly job: { readonly list: ExperimentalJobListOperation<E> }
+  readonly job: { readonly list: ExperimentalJobListOperation<E>; readonly cancel: ExperimentalJobCancelOperation<E> }
   readonly preference: {
     readonly get: ExperimentalPreferenceGetOperation<E>
     readonly set: ExperimentalPreferenceSetOperation<E>

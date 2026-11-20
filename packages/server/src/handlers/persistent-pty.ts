@@ -43,6 +43,7 @@ export const PersistentPtyHandler = HttpApiBuilder.group(Api, "server.experiment
       .handle("preference.get", (ctx) => preference.get(ctx.params.key))
       .handle("preference.set", (ctx) => preference.set(ctx.params.key, ctx.payload.value))
       .handle("job.list", (ctx) => job.list(ctx.query))
+      .handle("job.cancel", (ctx) => job.cancel(ctx.params.id))
       .handle("artifacts.providers", (ctx) => artifact.providers(ctx.query, ctx.request))
       .handle("artifacts.list", (ctx) => artifact.list(ctx.query, ctx.request))
       .handle("artifacts.create", (ctx) => artifact.create(ctx.query, ctx.payload, ctx.request))

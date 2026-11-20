@@ -26,7 +26,7 @@ const execution = Layer.succeed(
   }),
 )
 
-const it = testEffect(makePluginTestLayer(undefined, undefined, undefined, [SessionExecution.node.replace(execution)]))
+const it = testEffect(makePluginTestLayer(undefined, undefined, [SessionExecution.node.replace(execution)]))
 
 it.effect("voice tools act on the session on screen and report back to the call", () =>
   Effect.gen(function* () {

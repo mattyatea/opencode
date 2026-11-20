@@ -120,11 +120,12 @@ export const ModelsInput = Schema.Struct({
   provider: Schema.optionalKey(Schema.String).annotate({
     description: "Provider ID or name to filter by. Try your own provider first.",
   }),
-  type: Schema.optionalKey(Schema.Literals(["chat", "image"])).annotate({
+  type: Schema.optionalKey(Schema.Literals(["chat", "image", "video"])).annotate({
     description: [
       'Which kind of model to list. Defaults to "chat".',
       '"chat": a language model (LLM). Powers sessions, agents and subagents, and can call tools.',
       '"image": generates or edits images from a prompt. It can\'t chat or call tools.',
+      '"video": generates videos from a prompt. It can\'t chat or call tools.',
     ].join("\n"),
   }),
   all: Schema.optionalKey(Schema.Boolean).annotate({
@@ -186,11 +187,13 @@ export const Plugin = {
             ].join("\n"),
           ),
         )
-        event.system.push(
-          SystemPart.make(
-            "When you create a worktree outside the current working directory and intend to use it as your primary working directory, consider using `execute` to call `tools.opencode.session_move` and make the worktree the session's working directory.",
-          ),
-        )
+        const text =
+          "execute" in event.tools
+            ? "When you create a worktree outside the current working directory and intend to use it as your primary working directory, consider using `execute` to call `tools.opencode.session_move` and make the worktree the session's working directory."
+            : "opencode_session_move" in event.tools
+              ? "When you create a worktree outside the current working directory and intend to use it as your primary working directory, consider calling `opencode_session_move` to make the worktree the session's working directory."
+              : undefined
+        if (text) event.system.push(SystemPart.make(text))
       })
     yield* ctx.session.hook("context", hook)
     yield* ctx.session.hook("compaction", hook)
@@ -228,7 +231,7 @@ export const Plugin = {
             "Move a session to another directory, or omit sessionID to move the current session. The current session moves at the next safe boundary; do not run destination-dependent tools in the same execute call.",
           input: MoveInput,
           output: MoveOutput,
-          options: { namespace: "opencode", codemode: true, pinned: true },
+          options: { namespace: "opencode", codemode: { pinned: true } },
           execute: (input, context) =>
             Effect.gen(function* () {
               const sessionID = input.sessionID ?? context.sessionID
@@ -264,7 +267,7 @@ export const Plugin = {
           description: "Create a named worktree. Returns its directory.",
           input: WorktreeCreateInput,
           output: Worktree.Info,
-          options: { namespace: "opencode", codemode: true, pinned: true },
+          options: { namespace: "opencode", codemode: { pinned: true } },
           execute: (input) =>
             ctx.worktree.create({ projectID: ctx.location.project.id, name: input.name }).pipe(
               Effect.map((output) => ({ output, content: `Created worktree in ${output.directory}.` })),
@@ -278,7 +281,7 @@ export const Plugin = {
           description: "List a repository's worktrees.",
           input: Schema.Struct({}),
           output: Schema.Struct({ worktrees: Worktree.List }),
-          options: { namespace: "opencode", codemode: true, pinned: true },
+          options: { namespace: "opencode", codemode: { pinned: true } },
           execute: () =>
             ctx.worktree.list({ projectID: ctx.location.project.id }).pipe(
               Effect.map((worktrees) => ({ output: { worktrees } })),
@@ -291,7 +294,7 @@ export const Plugin = {
             "Remove a worktree. The repository location selects configuration; directory identifies the worktree to remove.",
           input: WorktreeRemoveInput,
           output: WorktreeRemoveOutput,
-          options: { namespace: "opencode", codemode: true, pinned: true, permission: "edit" },
+          options: { namespace: "opencode", codemode: { pinned: true }, permission: "edit" },
           execute: (input, context) =>
             Effect.gen(function* () {
               // Removing a worktree deletes files, so it requires the same approval as editing them.

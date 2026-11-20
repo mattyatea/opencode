@@ -61,7 +61,7 @@ const permission = permissionLayer({
 })
 
 const it = testEffect(
-  makePluginTestLayer(permission, undefined, undefined, [
+  makePluginTestLayer(permission, undefined, [
     SessionExecution.node.replace(execution),
     Bus.node.replace(Bus.configured({ persist: true })),
   ]),

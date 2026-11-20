@@ -302,6 +302,8 @@ import type {
   ExperimentalArtifactsDeleteOutput,
   ExperimentalJobListInput,
   ExperimentalJobListOutput,
+  ExperimentalJobCancelInput,
+  ExperimentalJobCancelOutput,
   ExperimentalPreferenceGetInput,
   ExperimentalPreferenceGetOutput,
   ExperimentalPreferenceSetInput,
@@ -1961,6 +1963,11 @@ const EndpointExperimentalJobList = (raw: RawClient["server.experimental"]) => (
     ),
   )
 
+const EndpointExperimentalJobCancel = (raw: RawClient["server.experimental"]) => (input: ExperimentalJobCancelInput) =>
+  preserveEffect<ExperimentalJobCancelOutput>()(
+    raw["job.cancel"]({ params: { id: input["id"] } }).pipe(Effect.mapError(mapClientError)),
+  )
+
 const EndpointExperimentalPreferenceGet =
   (raw: RawClient["server.experimental"]) => (input: ExperimentalPreferenceGetInput) =>
     preserveEffect<ExperimentalPreferenceGetOutput>()(
@@ -2007,7 +2014,7 @@ const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
     update: EndpointExperimentalArtifactsUpdate(raw),
     delete: EndpointExperimentalArtifactsDelete(raw),
   },
-  job: { list: EndpointExperimentalJobList(raw) },
+  job: { list: EndpointExperimentalJobList(raw), cancel: EndpointExperimentalJobCancel(raw) },
   preference: { get: EndpointExperimentalPreferenceGet(raw), set: EndpointExperimentalPreferenceSet(raw) },
 })
 

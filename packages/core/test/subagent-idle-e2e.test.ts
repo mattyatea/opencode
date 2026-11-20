@@ -69,6 +69,7 @@ const pluginSupervisor = makeLocationNode({
     FileAccess.node,
     Flag.node,
     Job.node,
+    Location.node,
     Model.node,
     Permission.node,
     PluginHooks.node,
@@ -95,6 +96,7 @@ const nodes = LayerNode.group([
 const modelLayer = Layer.succeed(
   SessionRunnerModel.Service,
   SessionRunnerModel.Service.of({
+    select: (session) => Effect.fail(new SessionRunnerModel.ModelNotSelectedError({ sessionID: session.id })),
     resolve: (_session, _available, request) =>
       Effect.succeed(
         SessionRunnerModel.resolved(
@@ -353,7 +355,7 @@ describe("Code Mode session jobs", () => {
       Effect.gen(function* () {
         const s = yield* launch(enabled)
         if (!enabled) {
-          yield* TestClock.adjust("11 seconds")
+          yield* TestClock.adjust("121 seconds")
           expect(yield* s.state).toMatchObject({ state: { status: "running" } })
         }
         yield* s.release
@@ -369,7 +371,7 @@ describe("Code Mode session jobs", () => {
   e2e.effect("a slow script returns a receipt, then wakes its session with the result", () =>
     Effect.gen(function* () {
       const s = yield* launch(true)
-      yield* TestClock.adjust("10 seconds")
+      yield* TestClock.adjust("2 minutes")
       yield* s.idle
       const [job] = yield* s.h.jobs.pendingBackground
       expect(job).toMatchObject({ status: "running", recovery: { kind: "codemode", sessionID: s.h.parent.id } })

@@ -30,7 +30,7 @@ import {
   UnknownError,
 } from "@opencode/protocol/errors"
 import { AbsolutePath } from "@opencode/core/schema"
-import { awaitPlugins, locationErrors } from "../location"
+import { locationErrors } from "../location"
 import { failedMessageDecode, failedSnapshot, missingMessage, missingSession } from "./session-error"
 
 function missingForm(id: Form.ID) {
@@ -570,7 +570,6 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         "session.contextBreakdown",
         Effect.fn(function* (ctx) {
           yield* requireSession(ctx.params.sessionID)
-          yield* awaitPlugins
           const context = yield* SessionContext.Service
           const data = yield* context
             .breakdown(ctx.params.sessionID)
