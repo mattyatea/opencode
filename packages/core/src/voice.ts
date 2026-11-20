@@ -169,7 +169,7 @@ export const layer = Layer.effect(
         ),
       )
       const settings = yield* voiceConfig()
-      const subscription = (yield* flags.enabled("chatgpt_voice"))
+      const subscription = (yield* chatgptEnabled(settings))
         ? [
             {
               model: chatgptModel,
@@ -223,6 +223,10 @@ export const layer = Layer.effect(
         ),
       )
     })
+
+    // Choosing the ChatGPT plan as the provider opts in, so release builds, which keep flags off, can use it too.
+    const chatgptEnabled = (settings: { readonly provider?: string } | undefined) =>
+      settings?.provider === "chatgpt" ? Effect.succeed(true) : flags.enabled("chatgpt_voice")
 
     const callEffect = <A>(name: string, work: () => A | Promise<A>) =>
       Effect.tryPromise({
@@ -369,12 +373,14 @@ export const layer = Layer.effect(
       })
 
     const callStart = Effect.fn("Voice.call.start")(function* (input: CallInput) {
-      if (!(yield* flags.enabled("chatgpt_voice")))
+      const voice = yield* voiceConfig()
+      if (!(yield* chatgptEnabled(voice)))
         return yield* new UnavailableError({
           service: "chatgpt",
-          message: "Voice on the ChatGPT plan is turned off. Enable the chatgpt_voice flag.",
+          message:
+            "Voice on the ChatGPT plan is turned off. Choose it as the voice provider, or enable the chatgpt_voice flag.",
         })
-      const settings = (yield* voiceConfig())?.chatgpt
+      const settings = voice?.chatgpt
       const credentials = yield* chatgptCredentials(settings?.token ?? "auto")
       const started = yield* callEffect("start", () =>
         chatgpt.start(credentials, input.sdp, {
