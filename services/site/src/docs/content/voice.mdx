@@ -32,15 +32,15 @@ ChatGPT plan otherwise.
    ChatGPT with a Codex sign-in and joins its control connection. Audio flows
    directly between Desktop and OpenAI.
 2. When you ask for something, the voice hands the request to OpenCode.
-3. OpenCode sends it to the call's voice session, which runs the `voice` agent
-   in the directory of the session on screen. The agent manages sessions with
-   voice tools: it lists, reads and messages sessions, waits for them, and asks
-   Desktop to show one.
-4. The voice speaks the agent's answer. When a session the agent sent work to
+3. OpenCode sends it to the call's voice session, which runs the `voice` agent in
+   the background. It is a child of the session on screen, like a subagent, so
+   it stays out of the session list.
+4. The agent decides what the request needs. Work for a session goes to it as a
+   clear instruction and shows up in that session; it goes to the session on
+   screen unless you name another one. Questions it can answer by reading
+   sessions need no message.
+5. The voice speaks the agent's answer. When a session the agent sent work to
    finishes, the voice reads its reply too.
-
-The voice session stays in the session list, so you can read what you asked and
-what happened.
 
 ### Sign-in
 
