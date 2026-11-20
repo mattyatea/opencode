@@ -358,12 +358,20 @@ export const layer = Layer.effect(
     ): Effect.Effect<Session.ID, unknown> =>
       Effect.gen(function* () {
         const parsed = model?.includes("/") ? Model.parse(model) : undefined
-        const session = yield* sessions.create({
+        const base = {
           title: "Voice call",
           agent: voiceAgentID,
-          location: Location.Ref.make({ directory: AbsolutePath.make(state.directory) }),
           ...(parsed ? { model: { providerID: parsed.providerID, id: parsed.modelID } } : {}),
-        })
+        }
+        const location = Location.Ref.make({ directory: AbsolutePath.make(state.directory) })
+        // A background child of the session on screen, like a subagent: it stays out of the session list, and the
+        // instructions it sends show up in the sessions they go to.
+        const parent = state.viewing?.id
+        const session = parent
+          ? yield* sessions
+              .create({ ...base, parentID: Session.ID.make(parent) })
+              .pipe(Effect.catch(() => sessions.create({ ...base, location })))
+          : yield* sessions.create({ ...base, location })
         state.unlink = VoiceRegistry.link(session.id, {
           viewing: () => state.viewing,
           open: (sessionID) => call.push({ type: "open", sessionID }),
