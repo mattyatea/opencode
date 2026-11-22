@@ -26,6 +26,20 @@ Choose one in **Settings > Voice**, or in any
 Without `provider`, a call uses an API key when the server has one, and the
 ChatGPT plan otherwise.
 
+## Working with sessions by voice
+
+Use **Call** in an empty composer. Calling from the new-session screen first creates and opens a
+main session in the selected project or worktree, without sending an empty message.
+
+- Ordinary instructions go to the main session, even if a child task is on screen.
+  Name a different session or child task to send work there instead.
+- Ask to delegate independent pieces of work in parallel to start separate child tasks under
+  the main session. You can ask for their status or send a follow-up without switching tabs.
+- Ask to create a new main session when work should be separate from the current task family.
+- Ask to switch the work model for the main session or a named child task. You can use models
+  from any provider available to that session. Switching a work model does not change the live
+  voice.
+
 ## How a ChatGPT plan call works
 
 1. Desktop sends its WebRTC offer to the server. The server creates the call on
@@ -33,12 +47,11 @@ ChatGPT plan otherwise.
    directly between Desktop and OpenAI.
 2. When you ask for something, the voice hands the request to OpenCode.
 3. OpenCode sends it to the call's voice session, which runs the `voice` agent in
-   the background. It is a child of the session on screen, like a subagent, so
+   the background. It is a child of the main session, like a subagent, so
    it stays out of the session list.
-4. The agent decides what the request needs. Work for a session goes to it as a
-   clear instruction and shows up in that session; it goes to the session on
-   screen unless you name another one. Questions it can answer by reading
-   sessions need no message.
+4. The agent sends work to the main session or the named session as a clear instruction.
+   It can create and manage separate child tasks, or answer questions by reading without
+   starting any work.
 5. The voice speaks the agent's answer. When a session the agent sent work to
    finishes, the voice reads its reply too.
 

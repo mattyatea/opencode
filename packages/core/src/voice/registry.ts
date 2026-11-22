@@ -5,12 +5,17 @@ export * as VoiceRegistry from "./registry.js"
  * runs in a project's, so the voice tools reach the call through this process-wide table instead of a service.
  */
 export interface Link {
-  /** The session Desktop shows, which "this session" and an omitted session_id mean. */
+  /** The session Desktop shows. Tools resolve its main session for an omitted session_id. */
   readonly viewing: () => { readonly id: string; readonly title?: string } | undefined
   /** Asks the client to show a session. */
   readonly open: (sessionID: string) => void
   /** Has the voice read a session's reply aloud once the work just sent to it finishes. */
-  readonly watch: (input: { readonly sessionID: string; readonly title: string; readonly request: string }) => void
+  readonly watch: (input: {
+    readonly sessionID: string
+    readonly after: string
+    readonly title: string
+    readonly request: string
+  }) => void
 }
 
 const links = new Map<string, Link>()

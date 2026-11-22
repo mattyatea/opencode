@@ -7,7 +7,7 @@ import { ListAnchor, ListCursor, ListFilter } from "@opencode/schema/session"
 import { and, desc, eq, inArray, sql } from "drizzle-orm"
 import { SessionTask } from "@opencode/schema/session-task"
 import { Project } from "./project.js"
-import { Model } from "@opencode/schema/model"
+import { Model } from "./model.js"
 import { Location } from "./location.js"
 import type { FileSystem } from "./filesystem.js"
 import { SessionMessage } from "./session/message.js"
@@ -218,6 +218,9 @@ export interface Interface {
     follow?: boolean
   }) => Stream.Stream<SessionEvent.DurableEvent | EventLog.Synced, NotFoundError>
   readonly switchAgent: (input: { sessionID: SessionSchema.ID; agent: Agent.ID }) => Effect.Effect<void, NotFoundError>
+  readonly availableModels: (
+    session: SessionSchema.Info,
+  ) => Effect.Effect<readonly Model.Info[], FileSystem.DirectoryNotFoundError>
   readonly switchModel: (input: { sessionID: SessionSchema.ID; model: Model.Ref }) => Effect.Effect<void, NotFoundError>
   readonly rename: (input: { sessionID: SessionSchema.ID; title: string }) => Effect.Effect<void, NotFoundError>
   readonly archive: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
@@ -677,6 +680,11 @@ const layer = Layer.effect(
       shell: (input) => sessions.forSession(input.sessionID).shell(input),
       skill: (input) => sessions.forSession(input.sessionID).skill(input),
       switchAgent: (input) => sessions.forSession(input.sessionID).switchAgent(input),
+      availableModels: (session) =>
+        Model.Service.pipe(
+          Effect.flatMap((models) => models.available()),
+          instances.provide(session),
+        ),
       switchModel: (input) => sessions.forSession(input.sessionID).switchModel(input),
       rename: (input) => sessions.forSession(input.sessionID).rename(input),
       archive: (sessionID) => sessions.forSession(sessionID).archive(),

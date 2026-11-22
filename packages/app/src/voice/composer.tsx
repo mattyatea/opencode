@@ -65,22 +65,36 @@ export function VoiceComposer(props: ParentProps<{ session: SessionInfo | undefi
 export function createVoiceCallAction(session: () => SessionInfo | undefined) {
   const voice = useVoice()
   const server = useServer()
+  return createVoiceButton(
+    () => !!session(),
+    () => {
+      const current = session()
+      if (current) voice.start(server.key, server.ctx, current)
+    },
+  )
+}
+
+export function createVoiceButton(ready: () => boolean, start: () => void) {
+  const voice = useVoice()
+  const server = useServer()
   const language = useLanguage()
   const platform = usePlatform()
 
-  const [models, { refetch }] = createResource(() =>
-    server.ctx.sdk.api.experimental.voice.models().catch(() => undefined),
+  const desktop = platform.platform === "desktop"
+  const [models, { refetch }] = createResource(
+    () => desktop,
+    () => server.ctx.sdk.api.experimental.voice.models().catch(() => undefined),
   )
 
   // A provider chosen or signed in from Settings shows up after a config change.
-  onCleanup(server.ctx.sdk.event.on("config.updated", () => void refetch()))
+  if (desktop) onCleanup(server.ctx.sdk.event.on("config.updated", () => void refetch()))
 
   // Read only once loaded: the composer must not suspend while the server answers.
   const offered = () =>
     (models.state === "ready" || models.state === "refreshing") &&
     !!models.latest?.models.some((model) => model.available && model.transports.includes("webrtc"))
 
-  const available = () => platform.platform === "desktop" && offered() && !!session() && voice.view().canStart
+  const available = () => desktop && offered() && ready() && voice.view().canStart
 
   // One button for as long as calls can start, so the composer doesn't rebuild it on every read.
   return createMemo(() =>
@@ -95,9 +109,7 @@ export function createVoiceCallAction(session: () => SessionInfo | undefined) {
           aria-label={language.t("voice.call")}
           onClick={(event) => {
             event.preventDefault()
-            const current = untrack(session)
-
-            if (current) voice.start(server.key, server.ctx, current)
+            if (untrack(available)) untrack(start)
           }}
         />
       </Tooltip>

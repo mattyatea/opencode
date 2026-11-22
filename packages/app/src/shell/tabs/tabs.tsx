@@ -58,8 +58,7 @@ export type Tab = typeof TabStorage.Tab.Type
 
 export type PendingSession = {
   draft: DraftTab
-  message: SessionMessageUser
-  selection: ComposerSelection
+  first?: { message: SessionMessageUser; selection: ComposerSelection }
   composer: ComposerState
   view: Accessor<NewSessionStartView>
 }

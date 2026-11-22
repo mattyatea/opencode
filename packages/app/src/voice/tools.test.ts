@@ -57,6 +57,7 @@ function setup(
     open: [] as string[],
     background: [] as string[],
     prompts: [] as { sessionID: string; text: string }[],
+    createdTasks: [] as { sessionID: string; title: string }[],
     switched: [] as unknown[],
   }
 
@@ -92,11 +93,28 @@ function setup(
         },
         message: { list: async () => empty },
         model: { list: async () => ({ data: models }) },
+        experimental: {
+          session: {
+            tasks: {
+              create: async (request: { sessionID: string; title: string }) => {
+                calls.createdTasks.push(request)
+                const task = session(`ses_task_${calls.createdTasks.length}`, request.title, {
+                  experimental: { taskParentID: request.sessionID },
+                })
+                sessions.push(task)
+                return task
+              },
+              tree: async ({ sessionID }: { sessionID: string }) =>
+                sessions.filter((item) => item.id === sessionID || item.experimental?.taskParentID === sessionID),
+            },
+          },
+        },
       },
     },
     data: {
       session: {
         prompt: async (request: { sessionID: string; text: string }) => calls.prompts.push(request),
+        status: (id: string) => (calls.prompts.some((prompt) => prompt.sessionID === id) ? "running" : "idle"),
       },
     },
   } as unknown as ServerCtx
@@ -117,6 +135,34 @@ function setup(
 
   return { calls, request, run }
 }
+
+test("voice keeps work on the main session and starts independent tasks beneath it without switching tabs", async () => {
+  const voice = setup({ sessions: [session("ses_child", "Child", { experimental: { taskParentID: "ses_here" } })] })
+  voice.request.sessionID = "ses_child"
+
+  expect((await voice.run("send_message", { text: "Plan the release" })).sessionID).toBe("ses_here")
+  expect((await voice.run("create_task", { title: "Build", text: "Check the build" })).started).toBe(true)
+  expect((await voice.run("create_task", { title: "Docs", text: "Check the docs" })).started).toBe(true)
+  expect(voice.calls.createdTasks).toEqual([
+    { sessionID: "ses_here", title: "Build" },
+    { sessionID: "ses_here", title: "Docs" },
+  ])
+  expect(voice.calls.prompts.map((prompt) => prompt.sessionID)).toEqual(["ses_here", "ses_task_1", "ses_task_2"])
+  expect(await voice.run("list_tasks")).toEqual([
+    expect.objectContaining({ id: "ses_child", status: "idle" }),
+    expect.objectContaining({ id: "ses_task_1", status: "running" }),
+    expect.objectContaining({ id: "ses_task_2", status: "running" }),
+  ])
+  expect(await voice.run("switch_model", { model: "google/gemini-2.5-pro", session_id: "ses_task_1" })).toEqual({
+    switched_to: "Gemini 2.5 Pro",
+    variant: "default",
+    session: "Build",
+  })
+  expect(voice.calls.switched).toEqual([
+    { sessionID: "ses_task_1", model: { id: "gemini-2.5-pro", providerID: "google", variant: undefined } },
+  ])
+  expect(voice.calls.open).toEqual([])
+})
 
 describe("open_session", () => {
   test("opens the session and later tools default to it", async () => {

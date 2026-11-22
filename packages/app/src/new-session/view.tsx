@@ -2,7 +2,7 @@ import { Tooltip } from "@opencode/ui/tooltip"
 import { Icon } from "@opencode/ui/icon"
 import { Keybind } from "@opencode/ui/keybind"
 import { useCommand } from "@/shell/commands/command"
-import { Match, Show, Switch, createComputed, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { Match, Show, Switch, createComputed, createMemo, createSignal, onCleanup, untrack, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import {
@@ -60,6 +60,7 @@ export function NewSessionView(props: {
   project: PromptProjectController
   workspace: NewSessionWorkspaceController
   location: ReturnType<typeof useNewSessionLocationDialog>
+  voiceAction?: JSX.Element
 }) {
   const [onboarding, setOnboarding, , onboardingReady] = persisted(
     Persist.global("workspace-onboarding"),
@@ -117,6 +118,7 @@ export function NewSessionView(props: {
                   <Composer
                     model={props.composer}
                     actions={<ComposerDictation controller={props.composer} />}
+                    idleAction={props.voiceAction}
                     extraControls={
                       <PluginSlot
                         at="composer.controls"
