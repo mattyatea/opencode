@@ -2,7 +2,7 @@ import { createPromptProjectController } from "@/new-session/project/selector"
 import { useNewSessionLocationDialog } from "@/new-session/location/dialog"
 import { useTabs, type DraftTab } from "@/shell/tabs/tabs"
 import { useLayout } from "@/shell/state/layout"
-import { useSearchParams } from "@solidjs/router"
+import { useLocation, useSearchParams } from "@solidjs/router"
 import { createEffect, createMemo, createResource, on, untrack } from "solid-js"
 import { createComposerModel } from "@/composer/model"
 import { useComposerCommands } from "@/composer/commands"
@@ -11,12 +11,19 @@ import { NewSessionView } from "./view"
 import { createNewSessionWorkspaceController } from "./workspace/controller"
 import { useNewSessionCommands } from "./commands"
 import { createDraftMcpControls } from "./mcp"
+import { useServer } from "@/runtime/server/current"
+import { sessionHref } from "@/shell/routes/session"
+import { createVoiceButton } from "@/voice/composer"
+import { useVoice } from "@/voice/context"
 
 /** The draft-only Session page. Submitting promotes the draft into a real Session. */
 export default function NewSessionPage(props: { draftId: string }) {
   const [search, setSearch] = useSearchParams<{ draftId?: string; prompt?: string }>()
   const tabs = useTabs()
   const layout = useLayout()
+  const server = useServer()
+  const route = useLocation()
+  const voice = useVoice()
 
   const draftTab = createMemo(() =>
     tabs.store.find((tab): tab is DraftTab => tab.type === "draft" && tab.draftID === search.draftId),
@@ -56,6 +63,16 @@ export default function NewSessionPage(props: { draftId: string }) {
 
   const project = createPromptProjectController({ controls: composer.project })
   const location = useNewSessionLocationDialog({ project, workspace, onDone: model.restoreFocus })
+  const voiceAction = createVoiceButton(
+    () => composer.ready() && !project.empty(),
+    () => {
+      void composer.startVoice().then((session) => {
+        // Worktree setup can take a while; don't open the microphone if the user moved to another tab.
+        if (session && route.pathname === sessionHref(server.key, session.id))
+          voice.start(server.key, server.ctx, session)
+      })
+    },
+  )
 
   useNewSessionCommands({
     restoreFocus: model.restoreFocus,
@@ -100,7 +117,13 @@ export default function NewSessionPage(props: { draftId: string }) {
     <div class="relative size-full overflow-hidden flex flex-col">
       {suspendUntilPromptReady()}
       <div class="flex-1 min-h-0 flex flex-col gap-2 px-[var(--shell-inline-inset,8px)] pb-[var(--shell-bottom-inset,8px)] pt-[var(--shell-top-inset,8px)]">
-        <NewSessionView composer={model} project={project} workspace={workspace} location={location} />
+        <NewSessionView
+          composer={model}
+          project={project}
+          workspace={workspace}
+          location={location}
+          voiceAction={voiceAction()}
+        />
       </div>
     </div>
   )

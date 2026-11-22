@@ -120,8 +120,11 @@ export function createVoiceCall(input: {
   function instructions(attempt: number, viewing: VoiceViewedSession) {
     const transport = connection?.attempt === attempt ? connection.transport : undefined
 
-    // A lost update only costs which session "here" means to the ChatGPT call's agent.
-    if (transport?.engine === "chatgpt") return void transport.view(viewing).catch(() => undefined)
+    // Don't keep accepting instructions against the old session if the server lost the update.
+    if (transport?.engine === "chatgpt")
+      return void transport
+        .view(viewing)
+        .catch(() => input.dispatch({ type: "call.dropped", attempt, failure: "connection" }))
     send(attempt, "connection", (transport) => transport.instructions(delegatorInstructions(viewing, tail.lines)))
   }
 

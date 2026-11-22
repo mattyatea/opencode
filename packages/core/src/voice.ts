@@ -22,7 +22,7 @@ import { Location } from "./location.js"
 import { Model } from "./model.js"
 import { voiceAgentID } from "./plugin/agent.js"
 import { Session } from "./session.js"
-import { messageText } from "./tool/plugin/voice.js"
+import { mainSession, messageText } from "./tool/plugin/voice.js"
 import { CallError, createChatGPTVoice, type Call as ChatGPTCall, type Event as CallEvent } from "./voice/chatgpt.js"
 import { codexCLICredentials } from "./voice/codex-cli.js"
 import { VoiceRegistry } from "./voice/registry.js"
@@ -324,17 +324,15 @@ export const layer = Layer.effect(
     /** Waits for a session the voice sent work to, then has the voice read its reply. */
     const announce = (
       call: ChatGPTCall,
-      input: { readonly sessionID: string; readonly title: string; readonly request: string },
+      input: { readonly sessionID: string; readonly after: string; readonly title: string; readonly request: string },
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const sessionID = Session.ID.make(input.sessionID)
-        const before = (yield* sessions.messages({ sessionID, order: "desc", limit: 1 }))[0]?.id
         yield* settle(sessionID)
         if (call.closed) return
         const recent = yield* sessions.messages({ sessionID, order: "desc", limit: 20 })
         const reply = recent.find(
-          (message) =>
-            message.type === "assistant" && (before === undefined || message.id > before) && messageText(message),
+          (message) => message.type === "assistant" && message.id > input.after && messageText(message),
         )
         if (!reply) return
         const text = messageText(reply)
@@ -363,15 +361,16 @@ export const layer = Layer.effect(
           agent: voiceAgentID,
           ...(parsed ? { model: { providerID: parsed.providerID, id: parsed.modelID } } : {}),
         }
-        const location = Location.Ref.make({ directory: AbsolutePath.make(state.directory) })
-        // A background child of the session on screen, like a subagent: it stays out of the session list, and the
-        // instructions it sends show up in the sessions they go to.
-        const parent = state.viewing?.id
-        const session = parent
-          ? yield* sessions
-              .create({ ...base, parentID: Session.ID.make(parent) })
-              .pipe(Effect.catch(() => sessions.create({ ...base, location })))
-          : yield* sessions.create({ ...base, location })
+        const viewing = state.viewing
+        const main = viewing
+          ? yield* mainSession(sessions, viewing.id)
+          : yield* sessions.create({ location: Location.Ref.make({ directory: AbsolutePath.make(state.directory) }) })
+        if (!state.viewing) {
+          state.viewing = { id: main.id, title: main.title }
+          call.push({ type: "open", sessionID: main.id })
+        }
+        // Keep the voice helper out of the session list even when a child task is on screen.
+        const session = yield* sessions.create({ ...base, parentID: main.id })
         state.unlink = VoiceRegistry.link(session.id, {
           viewing: () => state.viewing,
           open: (sessionID) => call.push({ type: "open", sessionID }),

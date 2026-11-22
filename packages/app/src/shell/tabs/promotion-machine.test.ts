@@ -28,8 +28,10 @@ const target: ComposerTarget = createMemoryComposerState().capture()
 
 const pending: PendingSession = {
   draft,
-  message: { id: "msg_pending", type: "user", text: "Hello", time: { created: 1 } },
-  selection: { agent: "build", model: { providerID: "provider", modelID: "model" } },
+  first: {
+    message: { id: "msg_pending", type: "user", text: "Hello", time: { created: 1 } },
+    selection: { agent: "build", model: { providerID: "provider", modelID: "model" } },
+  },
   composer: createMemoryComposerState(),
   view: () => viewNewSessionStart(createNewSessionStartState()),
 }

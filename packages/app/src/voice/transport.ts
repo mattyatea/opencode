@@ -66,6 +66,8 @@ export class VoiceTransport {
   engine: VoiceEngine = "live"
   /** The ChatGPT call this transport started, once the server answered. */
   private callID?: string
+  /** Keep rapid tab switches in order on the server. */
+  private viewUpdate = Promise.resolve()
   /** Settles once the server stopped the ChatGPT call; every close stops it, with or without a handshake. */
   private callStopped?: Promise<unknown>
 
@@ -140,9 +142,12 @@ export class VoiceTransport {
 
   /** Tells a ChatGPT call which session is on screen. */
   view(viewing: VoiceJoinTarget) {
-    return this.chatgpt((voice, callID) =>
-      voice.view({ callID, id: viewing.id, title: viewing.title }, { signal: this.signal }),
+    this.viewUpdate = this.viewUpdate.then(() =>
+      this.chatgpt((voice, callID) =>
+        voice.view({ callID, id: viewing.id, title: viewing.title }, { signal: this.signal }),
+      ),
     )
+    return this.viewUpdate
   }
 
   /** Has a ChatGPT call's voice say text. */

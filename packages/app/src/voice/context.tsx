@@ -15,6 +15,7 @@ import {
   voiceCallView,
   type VoiceCallEffect,
   type VoiceCallEvent,
+  type VoiceViewedSession,
 } from "./call-machine"
 
 export const { provider: VoiceProvider, use: useVoice } = createSimpleContext({
@@ -144,7 +145,7 @@ export const { provider: VoiceProvider, use: useVoice } = createSimpleContext({
       syncSession(server: ServerConnection.Key, session: SessionInfo) {
         dispatch({ type: "session.viewed", server, session: { id: session.id, title: session.title } })
       },
-      start(server: ServerConnection.Key, ctx: ServerCtx, session: SessionInfo) {
+      start(server: ServerConnection.Key, ctx: ServerCtx, session: VoiceViewedSession) {
         dispatch({ type: "start", server, ctx, session: { id: session.id, title: session.title } })
       },
     }

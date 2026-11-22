@@ -15,12 +15,14 @@ Do not speak until the user speaks.`
 
 const instructions = `You are the delegator behind OpenCode's Desktop voice assistant. The user talks to a voice agent while Desktop shows one session at a time; it hands you what they asked, you act with tools and reply with what it should say.
 You manage sessions; you never write code yourself. Coding work happens by sending a message to a session, whose own agent does the work.
-- "This session", "here", "it" mean the viewed session below.
+- "This session", "here", "it" mean the main session of the viewed session below.
+- Ordinary work goes to the main session: omit session_id, even if a child is on screen. For an explicitly named child, use list_tasks and pass its exact ID to send_message or read_session.
+- For work the user asks to delegate or run in parallel, call create_task for each independent piece of work. Tasks run in the background under the current main session; do not wait for one to finish before creating another. Create a separate main session only when asked.
 - To switch what the user sees, call open_session. Do NOT call open_session just to message, read, or check another session: pass session_id to send_message or read_session so the user's view stays put unless they asked to switch. The screen moved only if open_session returned opened.
 - To find a session by name, or before creating one, use search_sessions. Use the exact session IDs returned by tools.
 - Messages steer by default. Queue one when the user says to do it after the current work ("when it's done, also…").
-- To change the model a session uses ("use Opus", "switch to GPT-5.5 on high"), call list_models with a query to get its id, then switch_model (no session_id means the one on screen). Switch only when the user asks; if several models fit what they said, ask which one.
-- To start work, send_message to the right session (usually the viewed one), then answer right away that it started; the app speaks the session's reply when it lands. Only wait_for_session when the user asked for the result now or the work is a quick lookup.
+- To change the model a session uses ("use Opus", "switch to GPT-5.5 on high"), call list_models with a query to get its id, then switch_model (no session_id means the main session). Switch only when the user asks; if several models fit what they said, ask which one. This never changes the live voice model.
+- Once work is admitted, answer right away that it started; the app speaks the session's reply when it lands. Only wait_for_session when the user asked for the result now or the work is a quick lookup.
 - For any status or "did it respond?" question, always call read_session (or list_sessions) in this turn rather than answering from earlier turns or assuming work is still running.
 - What a session already wrote, you read; never ask it to restate or recap it. Reads contain text-only excerpts of at most 400 characters per message; the cursor continues older messages, not the remainder of an excerpt.
 - Write messages to sessions as clear instructions, not as a transcript, keeping the user's exact intent, audience, and destination: a note for themselves stays a private note, and goes where they said.
@@ -35,7 +37,7 @@ export function delegatorInstructions(viewing: { id: string; title?: string }, t
   return `${instructions}\nViewed session: ${JSON.stringify({ id: viewing.id, title: viewing.title })}\nRecent voice conversation:\n${tail}`
 }
 
-const session = { session_id: { type: "string", description: "Omit for the viewed session" } }
+const session = { session_id: { type: "string", description: "Omit for the current main session" } }
 
 const limit = { type: "integer", minimum: 1, maximum: 100 }
 
@@ -61,9 +63,23 @@ const definitions = [
   },
   {
     name: "create_session",
-    description: "Create a session in a known project or worktree directory on this server. Does not move the screen.",
+    description:
+      "Create a new main session. Omit directory to use the current main session's project or worktree. Does not move the screen.",
     properties: { directory: { type: "string" }, title: { type: "string" } },
-    required: ["directory"],
+    required: [],
+  },
+  {
+    name: "create_task",
+    description:
+      "Create and start an interactive child task under the current main session without switching the screen.",
+    properties: { title: { type: "string" }, text: { type: "string" } },
+    required: ["title", "text"],
+  },
+  {
+    name: "list_tasks",
+    description: "List the current main session's interactive tasks. Excludes subagents and archived tasks.",
+    properties: {},
+    required: [],
   },
   {
     name: "send_message",

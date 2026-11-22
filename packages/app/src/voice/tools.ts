@@ -76,6 +76,22 @@ export class VoiceTools {
     const sessionID = args.session_id ?? request.sessionID
     const options = { signal }
 
+    const mainSession = async () => {
+      let session = await api.session.get({ sessionID: request.sessionID }, options)
+
+      while (true) {
+        const parent = session.parentID ?? session.experimental?.taskParentID
+        if (!parent) return session
+        session = await api.session.get({ sessionID: parent }, options)
+      }
+    }
+
+    const target = async () => {
+      const session = await (args.session_id ? api.session.get({ sessionID }, options) : mainSession())
+      if (session.agent === "voice") throw new Error("The hidden voice helper is not a work session")
+      return session
+    }
+
     const row = (session: SessionInfo) => ({
       id: session.id,
       title: session.title ?? session.id,
@@ -86,7 +102,7 @@ export class VoiceTools {
     if (call.name === "list_sessions") {
       const sessions = await api.session.list({ limit: args.limit ?? 15, parentID: null, archived: false }, options)
 
-      return sessions.data.map(row)
+      return sessions.data.filter((session) => session.agent !== "voice").map(row)
     }
 
     if (call.name === "search_sessions") {
@@ -127,22 +143,21 @@ export class VoiceTools {
         (search.score(session) ?? 0) * 4 + (session.parentID ? 0 : 2) + (tabs.has(session.id) ? 1 : 0)
 
       return [...recent.data.filter((session) => search.score(session) !== undefined), ...found]
-        .filter((session) => !seen.has(session.id) && !!seen.add(session.id))
+        .filter((session) => session.agent !== "voice" && !seen.has(session.id) && !!seen.add(session.id))
         .toSorted((a, b) => rank(b) - rank(a) || b.time.updated - a.time.updated)
         .slice(0, Math.min(args.limit ?? 8, 20))
         .map((session) => ({ ...row(session), open_tab: tabs.has(session.id) }))
     }
 
     if (call.name === "create_session") {
-      const directory = args.directory
+      const source = await mainSession()
+      const directory = args.directory ?? source.location.directory
 
-      if (!directory) throw new Error("directory required")
-      const projects = await api.project.list({ archived: false }, options)
-
-      if (!projects.some((project) => project.canonical === directory || project.sandboxes.includes(directory)))
-        return { error: "Directory is not a known project or worktree on this server. No session was created." }
-
-      const source = await api.session.get({ sessionID: request.sessionID }, options)
+      if (args.directory && args.directory !== source.location.directory) {
+        const projects = await api.project.list({ archived: false }, options)
+        if (!projects.some((project) => project.canonical === directory || project.sandboxes.includes(directory)))
+          return { error: "Directory is not a known project or worktree on this server. No session was created." }
+      }
       signal.throwIfAborted()
 
       const created = this.ctx.data.session.create({
@@ -157,11 +172,41 @@ export class VoiceTools {
       return { session_id: created.id }
     }
 
+    if (call.name === "create_task") {
+      if (!args.title?.trim() || !args.text?.trim()) throw new Error("title and text required")
+      const main = await mainSession()
+      const task = await api.experimental.session.tasks.create({ sessionID: main.id, title: args.title }, options)
+      const result = await this.sendMessage(task, args.text, "steer", request, signal).catch(() => undefined)
+      return {
+        task_id: task.id,
+        title: task.title,
+        started: result?.admitted === true,
+        status: result?.status ?? "Task created; prompt admission uncertain. Do not create it again.",
+      }
+    }
+
+    if (call.name === "list_tasks") {
+      const main = await mainSession()
+      const tasks = await api.experimental.session.tasks.tree({ sessionID: main.id }, options)
+      return tasks.flatMap((task) =>
+        task.experimental?.taskParentID && !task.time.archived
+          ? [
+              {
+                ...row(task),
+                parent_id: task.experimental.taskParentID,
+                status: this.ctx.data.session.status(task.id) === "running" ? "running" : (task.outcome ?? "idle"),
+              },
+            ]
+          : [],
+      )
+    }
+
     if (call.name === "open_session") {
       if (!args.session_id) throw new Error("session_id required")
       const session = await api.session.get({ sessionID: args.session_id }, options).catch(() => undefined)
 
-      if (!session) return { error: "No session with that ID on this server. The screen did not move." }
+      if (!session || session.agent === "voice")
+        return { error: "No visible session with that ID on this server. The screen did not move." }
 
       if (session.time.archived) return { error: "That session is archived. The screen did not move." }
       signal.throwIfAborted()
@@ -180,65 +225,20 @@ export class VoiceTools {
     }
 
     if (call.name === "interrupt_session") {
-      await api.session.interrupt({ sessionID }, options)
+      const session = await target()
+      await api.session.interrupt({ sessionID: session.id }, options)
 
-      return { interrupted: sessionID }
+      return { interrupted: session.id }
     }
 
     if (call.name === "send_message") {
       if (!args.text?.trim()) throw new Error("text required")
-      const session = await api.session.get({ sessionID }, options)
-      signal.throwIfAborted()
-      const id = SessionMessage.ID.create()
-      const delivery = args.delivery ?? "steer"
-      const prompt = { sessionID, promptID: id, title: session.title ?? session.id, instruction: args.text }
-      const explained = this.explained.get(sessionID)
-      const full = explained === undefined || Date.now() - explained > headerLapse
-
-      // Like a typed steer, move blocking shells to the background so the agent reads it next. Tried
-      // once and briefly: the steer goes either way, and an idle session makes it a no-op.
-      if (delivery === "steer")
-        await api.session
-          .background({ sessionID }, { signal: AbortSignal.any([signal, AbortSignal.timeout(1500)]) })
-          .catch(() => undefined)
-      signal.throwIfAborted()
-      // Register before admission: a network failure may still have delivered
-      // the prompt. Keep this ID's watch across a dropped call and Rejoin.
-      this.replies.sent(prompt)
-
-      const admission = {
-        sessionID,
-        id,
-        delivery,
-        text: formatHandoff({
-          instruction: args.text,
-          transcript: request.transcript,
-          context: `Session ${JSON.stringify(prompt.title)} in project ${JSON.stringify(folder(session.location.directory))}.`,
-          full,
-        }),
-      }
-
-      const result = await this.ctx.data.session.prompt(admission).then(
-        () => ({ admitted: true }),
-        async () => {
-          const inbox = await api.session.inbox.list({ sessionID }, options)
-          const history = await this.history(sessionID, signal)
-
-          return { admitted: inbox.some((item) => item.id === id) || history.some((message) => message.id === id) }
-        },
-      )
-
-      if (result.admitted && full) this.explained.set(sessionID, Date.now())
-
-      return {
-        ...prompt,
-        ...result,
-        status: result.admitted ? "Work admitted; its reply will be announced." : "Admission uncertain; do not resend.",
-      }
+      const session = await target()
+      return this.sendMessage(session, args.text, args.delivery ?? "steer", request, signal)
     }
 
     if (call.name === "list_models") {
-      const session = await api.session.get({ sessionID }, options)
+      const session = await target()
       const catalog = await api.model.list({ location: { directory: session.location.directory } }, options)
       const current = session.model
 
@@ -269,7 +269,7 @@ export class VoiceTools {
       const wanted = args.model?.trim()
 
       if (!wanted) throw new Error("model required")
-      const session = await api.session.get({ sessionID }, options)
+      const session = await target()
       const catalog = await api.model.list({ location: { directory: session.location.directory } }, options)
       const enabled = catalog.data.filter((item) => item.enabled)
 
@@ -293,7 +293,7 @@ export class VoiceTools {
         (session.model?.variant && offered.includes(session.model.variant) ? session.model.variant : undefined)
 
       await api.session.switchModel(
-        { sessionID, model: { id: model.id, providerID: model.providerID, variant } },
+        { sessionID: session.id, model: { id: model.id, providerID: model.providerID, variant } },
         options,
       )
 
@@ -301,24 +301,27 @@ export class VoiceTools {
     }
 
     if (call.name === "read_session" || call.name === "wait_for_session") {
+      const session = await target()
       if (call.name === "wait_for_session") {
         await api.experimental.session.wait(
-          { sessionID },
+          { sessionID: session.id },
           { signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) },
         )
       }
 
-      const [session, messages] = await Promise.all([
-        api.session.get({ sessionID }, options),
-        api.message.list(
-          { sessionID, limit: args.limit ?? 20, order: args.cursor ? undefined : "desc", cursor: args.cursor },
-          options,
-        ),
-      ])
+      const messages = await api.message.list(
+        {
+          sessionID: session.id,
+          limit: args.limit ?? 20,
+          order: args.cursor ? undefined : "desc",
+          cursor: args.cursor,
+        },
+        options,
+      )
 
       const observed = this.observed.get(request.id) ?? new Map<string, string[]>()
-      observed.set(sessionID, [
-        ...(observed.get(sessionID) ?? []),
+      observed.set(session.id, [
+        ...(observed.get(session.id) ?? []),
         ...messages.data
           .filter((message) => message.type === "assistant" && message.time.completed)
           .map((message) => message.id),
@@ -332,5 +335,56 @@ export class VoiceTools {
     }
 
     throw new Error("Unknown voice tool")
+  }
+
+  private async sendMessage(
+    session: SessionInfo,
+    instruction: string,
+    delivery: "steer" | "queue",
+    request: Request,
+    signal: AbortSignal,
+  ) {
+    const api = this.ctx.sdk.api
+    const sessionID = session.id
+    const id = SessionMessage.ID.create()
+    const prompt = { sessionID, promptID: id, title: session.title ?? sessionID, instruction }
+    const explained = this.explained.get(sessionID)
+    const full = explained === undefined || Date.now() - explained > headerLapse
+
+    // Like a typed steer, move blocking shells to the background so the agent reads it next.
+    if (delivery === "steer")
+      await api.session
+        .background({ sessionID }, { signal: AbortSignal.any([signal, AbortSignal.timeout(1500)]) })
+        .catch(() => undefined)
+    signal.throwIfAborted()
+    // A network failure may still have admitted this ID. Keep watching it across Rejoin.
+    this.replies.sent(prompt)
+
+    const admission = {
+      sessionID,
+      id,
+      delivery,
+      text: formatHandoff({
+        instruction,
+        transcript: request.transcript,
+        context: `Session ${JSON.stringify(prompt.title)} in project ${JSON.stringify(folder(session.location.directory))}.`,
+        full,
+      }),
+    }
+    const result = await this.ctx.data.session.prompt(admission).then(
+      () => ({ admitted: true }),
+      async () => {
+        const inbox = await api.session.inbox.list({ sessionID }, { signal })
+        const history = await this.history(sessionID, signal)
+        return { admitted: inbox.some((item) => item.id === id) || history.some((message) => message.id === id) }
+      },
+    )
+    if (result.admitted && full) this.explained.set(sessionID, Date.now())
+
+    return {
+      ...prompt,
+      ...result,
+      status: result.admitted ? "Work admitted; its reply will be announced." : "Admission uncertain; do not resend.",
+    }
   }
 }

@@ -1,7 +1,10 @@
 import { expect } from "bun:test"
 import { Location } from "@opencode/core/location"
+import { Model } from "@opencode/core/model"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
+import { voiceAgentID } from "@opencode/core/plugin/agent"
+import { Provider } from "@opencode/core/provider"
 import { Session } from "@opencode/core/session"
 import { SessionExecution } from "@opencode/core/session/execution"
 import { Tool } from "@opencode/core/tool"
@@ -28,7 +31,7 @@ const execution = Layer.succeed(
 
 const it = testEffect(makePluginTestLayer(undefined, undefined, [SessionExecution.node.replace(execution)]))
 
-it.effect("voice tools act on the session on screen and report back to the call", () =>
+it.effect("voice tools send to the main session and run independent child tasks without switching the screen", () =>
   Effect.gen(function* () {
     const plugins = yield* Plugin.Service
     const sessions = yield* Session.Service
@@ -36,13 +39,14 @@ it.effect("voice tools act on the session on screen and report back to the call"
     yield* VoiceTools.Plugin.effect(yield* PluginHost.make(plugins, "test"))
     const registry = yield* Tool.Service
     const here = Location.Ref.make({ directory: location.directory })
-    const voice = yield* sessions.create({ title: "Voice call", location: here })
     const login = yield* sessions.create({ title: "Fix login bug", location: here })
+    const voice = yield* sessions.create({ title: "Voice call", agent: voiceAgentID, parentID: login.id })
+    const child = yield* sessions.taskCreate({ sessionID: login.id, title: "Already open" })
     const docs = yield* sessions.create({ title: "Write docs", location: here })
     const opened: string[] = []
     const watched: string[] = []
     const unlink = VoiceRegistry.link(voice.id, {
-      viewing: () => ({ id: login.id, title: login.title }),
+      viewing: () => ({ id: child.id, title: child.title }),
       open: (sessionID) => opened.push(sessionID),
       watch: (input) => watched.push(`${input.title}: ${input.request}`),
     })
@@ -63,7 +67,7 @@ it.effect("voice tools act on the session on screen and report back to the call"
     const listed = yield* run("voice_search_sessions", { query: "docs" })
     expect(listed).toEqual([expect.objectContaining({ id: docs.id, title: "Write docs", on_screen: false })])
 
-    // An omitted session_id means the one on screen.
+    // The visible child doesn't become the default work destination.
     const sent = yield* run("voice_send_message", { text: "Add a regression test for the redirect" })
     expect(sent).toEqual({ sent: true, session_id: login.id, title: "Fix login bug" })
     expect(watched).toEqual(["Fix login bug: Add a regression test for the redirect"])
@@ -71,6 +75,44 @@ it.effect("voice tools act on the session on screen and report back to the call"
     expect(yield* run("voice_read_session", {})).toEqual(
       expect.objectContaining({ id: login.id, status: "running", on_screen: false, messages: [] }),
     )
+
+    const check = yield* run("voice_create_task", { title: "Check redirect", text: "Understand the redirect" })
+    const test = yield* run("voice_create_task", { title: "Check coverage", text: "Read the tests" })
+    expect(check.started).toBe(true)
+    expect(test.started).toBe(true)
+    expect((yield* sessions.get(check.task_id)).experimental?.taskParentID).toBe(login.id)
+    expect((yield* sessions.get(test.task_id)).experimental?.taskParentID).toBe(login.id)
+    expect(yield* sessions.inbox(check.task_id)).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ text: "Understand the redirect" }) }),
+    ])
+    expect(yield* run("voice_list_tasks", {})).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: check.task_id, status: "running", parent_id: login.id }),
+        expect.objectContaining({ id: test.task_id, status: "running", parent_id: login.id }),
+      ]),
+    )
+    expect(opened).toEqual([])
+
+    const created = yield* run("voice_create_session", { title: "Another project task" })
+    const main = yield* sessions.get(created.session_id)
+    expect(main.parentID).toBeUndefined()
+    expect(main.experimental?.taskParentID).toBeUndefined()
+    expect(main.location).toEqual(login.location)
+
+    const providers = yield* Provider.Service
+    yield* providers.transform((editor) => {
+      editor.models.update(Provider.ID.make("test"), Model.ID.make("override"), (model) => {
+        model.variants = [{ id: Model.VariantID.make("fast") }]
+      })
+    })
+    expect((yield* run("voice_list_models", { query: "test override", session_id: check.task_id })).models).toEqual([
+      expect.objectContaining({ id: "test/override", variants: ["fast"] }),
+    ])
+    expect(
+      yield* run("voice_switch_model", { model: "test/override", variant: "fast", session_id: check.task_id }),
+    ).toMatchObject({ session_id: check.task_id, variant: "fast" })
+    expect((yield* sessions.get(check.task_id)).model).toEqual(Model.Ref.parse("test/override#fast"))
+    expect((yield* sessions.get(login.id)).model).toEqual(login.model)
 
     expect(yield* run("voice_open_session", { session_id: docs.id })).toEqual({
       requested: true,
