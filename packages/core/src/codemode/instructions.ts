@@ -16,9 +16,9 @@ Scope discovery with a known tool-owner \`namespace\` (not a workspace, account,
 
 - ${searchSignature}` : "The catalog is complete. Do not guess tool names."}
 
-When the needed fields or conditions are known, fetch, filter, join, and aggregate inside one execution; return only the evidence needed to answer. Do not return a large result just to inspect its structure in another model step. When the needed subset is unknown, inspect keys, counts, or a bounded sample first. Small results and tasks requiring every row's meaning may need the full content; do not discard required evidence just to make the return smaller.
+Use one execute per group of reads. If the inputs are known and independent, start them together with Promise.allSettled; if B needs A’s result, await A, then batch the known B inputs in the same script. Never parallelize ordered writes.
 
-Reduce results before returning them: filter by the requested facts, select only necessary fields, and bound lists and text. Do not return entire catalogs, raw response objects, or full Promise.allSettled results when a small evidence table suffices. Keep source IDs/URLs, relevant timestamps, errors, and truncation/pagination signals. Batch independent calls in one execution when possible, but do not hide partial failures or guess missing facts. For code or values, retrieve content with a small context window; filenames alone are only sufficient when the task asks for paths. If output is saved to a file, search or read only the necessary range instead of reloading the entire file. Tool outputs keep their existing capture limits: do not treat a truncated page, search, or shell result as complete. Code Mode does not bypass a tool's permissions or approvals. Tools kept on the native list, such as editing and interactive tools, must still be called directly.
+Filter and join before returning. For each requested item return only its ID/source and the fields that answer the question, or its error; retain relevant timestamps and pagination/truncation. For code facts include matching lines. For unknown shapes inspect keys or a bounded sample; return all rows when their meaning is required. Read saved output by range. A truncated result is not complete. Use native tools directly and respect permissions.
 
 ## Code Mode tools (call only inside \`execute\`)`
 
