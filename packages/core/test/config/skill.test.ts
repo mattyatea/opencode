@@ -332,6 +332,8 @@ describe("ConfigSkillPlugin.Plugin", () => {
           yield* Effect.promise(() => fs.rm(path.join(tmp.path, "review"), { recursive: true }))
           yield* emitAndWait({ type: "delete", path: path.join(tmp.path, "review", "SKILL.md") })
           expect((yield* skill.list()).map((item) => item.id)).toEqual([Skill.ID.make("deploy")])
+          const watcher = yield* Watcher.Test
+          expect(yield* watcher.subscriptions()).toHaveLength(1)
         }),
       ),
     ),
@@ -398,8 +400,56 @@ describe("ConfigSkillPlugin.Plugin", () => {
             { path: first, type: "directory", ignore: SkillScan.ignore.toSorted() },
             { path: source, type: "file" },
             { path: second, type: "directory", ignore: SkillScan.ignore.toSorted() },
-            { path: source, type: "file" },
           ])
+        }),
+      ),
+    ),
+  )
+
+  it.live("retries ended watches and releases only obsolete watches before shutdown", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const source = path.join(tmp.path, "source")
+          const stable = path.join(tmp.path, "stable")
+          yield* Effect.promise(async () => {
+            await fs.mkdir(path.join(source, "deploy"), { recursive: true })
+            await write(source, "deploy", "Deploy")
+            await fs.mkdir(path.join(stable, "review"), { recursive: true })
+          })
+          const watcher = yield* Watcher.Test
+          const closed: string[] = []
+          let attempts = 0
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const skill = yield* start([source, stable], tmp.path)
+              expect((yield* skill.list()).map((item) => item.id)).toEqual([Skill.ID.make("deploy")])
+              expect(yield* watcher.subscriptions()).toHaveLength(1)
+
+              yield* Effect.promise(() => write(stable, "review", "Review"))
+              yield* emitAndWait({ type: "create", path: path.join(stable, "review", "SKILL.md") })
+              expect(yield* watcher.subscriptions()).toHaveLength(2)
+              expect(closed).toEqual([])
+
+              yield* Effect.promise(() => fs.rm(source, { recursive: true }))
+              yield* emitAndWait({ type: "delete", path: source })
+              expect(yield* watcher.subscriptions()).toHaveLength(3)
+              expect(closed).toEqual([`directory:${source}`])
+            }).pipe(
+              Effect.provideService(
+                Watcher.Service,
+                Watcher.Service.of({
+                  subscribe: (input, ready) => {
+                    if (input.path === source && attempts++ === 0) return Effect.succeed(Stream.empty)
+                    return watcher.subscribe(input, ready).pipe(
+                      Effect.map(Stream.ensuring(Effect.sync(() => closed.push(`${input.type}:${input.path}`)))),
+                    )
+                  },
+                }),
+              ),
+            ),
+          )
+          expect(closed.toSorted()).toEqual([`directory:${source}`, `directory:${stable}`, `file:${source}`].toSorted())
         }),
       ),
     ),
