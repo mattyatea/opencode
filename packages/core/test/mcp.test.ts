@@ -338,6 +338,7 @@ function resourceServer(
         state,
         url: http.url.toString(),
         clientVersion: () => current.protocol.getClientVersion(),
+        ping: () => current.protocol.ping(),
         sendToolListChanged: () =>
           modern ? Promise.resolve(modern.notify.toolsChanged()) : current.protocol.sendToolListChanged(),
         sendResourceListChanged: () =>
@@ -2111,6 +2112,49 @@ test("isolates nested configured MCP mutations and reconciles them", async () =>
     ),
   )
 })
+
+testEffect(Layer.empty).live("coalesces tool relists during a failed refresh and loads the latest catalog", () =>
+  Effect.gen(function* () {
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let lists = 0
+    const server = yield* resourceServer({
+      listChanged: true,
+      respond: async (request) => {
+        const body: unknown = request.method === "POST" ? await request.clone().json() : undefined
+        if (!isJSONRPCRequest(body) || body.method !== "tools/list" || ++lists !== 2) return undefined
+        entered.resolve()
+        await release.promise
+        return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32603, message: "list failed" } })
+      },
+    })
+    const published: string[] = []
+    yield* Effect.gen(function* () {
+      const service = yield* Mcp.Service
+      expect(yield* settled(service)).toEqual({ status: "connected" })
+      published.length = 0
+      yield* Effect.promise(server.sendToolListChanged)
+      yield* Effect.promise(() => entered.promise)
+      server.state.extraTools = [{ name: "latest", inputSchema: { type: "object" } }]
+      yield* Effect.promise(async () => {
+        for (let i = 1; i < 20; i++) await server.sendToolListChanged()
+        // The ping follows the notifications on the same stream: their callbacks have reached the client.
+        await server.sendResourceListChanged()
+        await server.ping()
+        release.resolve()
+      })
+      // Resource changes take the same connection lock, so this marks the end of the queued burst.
+      yield* Effect.sync(() => published.includes(McpEvent.ResourcesChanged.type)).pipe(
+        Effect.repeat({ until: Boolean, schedule: Schedule.spaced("1 millis") }),
+      )
+      expect((yield* service.tools()).map((tool) => tool.name)).toContain("latest")
+      expect(lists).toBe(3) // Initial list, failed refresh, one trailing refresh.
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => release.resolve())),
+      Effect.provide(resourceMcpLayer(server.url, undefined, undefined, { published })),
+    )
+  }),
+)
 
 test("publishes MCP changes while live but not while the location shuts down", async () => {
   const published: string[] = []

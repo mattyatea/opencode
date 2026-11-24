@@ -20,7 +20,7 @@ import { EventTable } from "@opencode/core/event/sql"
 import { Tool } from "@opencode/core/tool"
 import { OpenCodeTools } from "@opencode/core/tool/plugin/opencode"
 import { Effect, Layer } from "effect"
-import { eq } from "drizzle-orm"
+import { eq, inArray } from "drizzle-orm"
 import { tmpdirScoped } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
 import { permissionLayer } from "./lib/permission"
@@ -396,6 +396,38 @@ it.live(
         .pipe(Effect.orDie)
       expect(events.map((event) => event.type)).toContain(Bus.versionedType(SessionEvent.TaskDetached.type, 1))
     }),
+)
+
+it.live("task trees include archived relatives in update order and stop at project boundaries", () =>
+  Effect.gen(function* () {
+    const { sessions, caller, alphaID, database } = yield* setup()
+    const archived = yield* sessions.taskCreate({ sessionID: caller.id, title: "Archived" })
+    const leaf = yield* sessions.taskCreate({ sessionID: archived.id, title: "Leaf" })
+    const sibling = yield* sessions.taskCreate({ sessionID: caller.id, title: "Sibling" })
+    const subagent = yield* sessions.create({ parentID: caller.id })
+    yield* database.db
+      .update(SessionTable)
+      .set({ time_archived: 1, time_updated: 3 })
+      .where(eq(SessionTable.id, archived.id))
+      .run()
+    yield* database.db
+      .update(SessionTable)
+      .set({ time_updated: 2 })
+      .where(inArray(SessionTable.id, [leaf.id, caller.id, sibling.id]))
+      .run()
+    expect((yield* sessions.taskTree(leaf.id)).map((item) => item.id)).toEqual([
+      archived.id,
+      ...[leaf.id, caller.id, sibling.id].sort().reverse(),
+    ])
+    expect(yield* sessions.taskTree(subagent.id)).toEqual([])
+
+    // Seed an out-of-project link to exercise the read boundary in both directions.
+    yield* database.db.update(SessionTable).set({ project_id: alphaID }).where(eq(SessionTable.id, archived.id)).run()
+    expect((yield* sessions.taskTree(leaf.id)).map((item) => item.id)).toEqual([leaf.id])
+    expect((yield* sessions.taskTree(caller.id)).map((item) => item.id)).toEqual(
+      [caller.id, sibling.id].sort().reverse(),
+    )
+  }),
 )
 
 it.live("a child task starts on its parent's model", () =>

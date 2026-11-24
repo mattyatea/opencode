@@ -154,7 +154,19 @@ export function make(input: Input): Connection {
     // Background refreshes (list-changed) can observe the expiry too; they do not retry, so
     // reconnect here for them. Foreground calls reconnect through `recovering`.
     client.onSessionExpired(() => input.fork(recover(client)))
-    client.onToolsChanged(() => live(refreshTools(client).pipe(Effect.andThen(input.events.changed("tools")))))
+    // Queue at most one relist behind the connection lock. Once it starts, a change during the
+    // request can queue a trailing relist, even if the in-flight request fails.
+    let queued = false
+    client.onToolsChanged(() => {
+      if (queued) return
+      queued = true
+      live(
+        Effect.suspend(() => {
+          queued = false
+          return refreshTools(client).pipe(Effect.andThen(input.events.changed("tools")))
+        }),
+      )
+    })
     client.onPromptsChanged(() => live(refreshPrompts(client)))
     client.onResourcesChanged(() => live(input.events.changed("resources")))
   }

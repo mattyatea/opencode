@@ -29,6 +29,7 @@ import { Slug } from "./util/slug.js"
 import path from "path"
 import { SessionRunner } from "./session/runner/index.js"
 import { SessionStore } from "./session/store.js"
+import { fromRow } from "./session/info.js"
 import { SessionExecution } from "./session/execution.js"
 import {
   AttachmentError,
@@ -399,15 +400,30 @@ const layer = Layer.effect(
       }),
       taskTree: Effect.fn("Session.taskTree")(function* (sessionID) {
         const current = yield* result.get(sessionID)
-        const all = (yield* store.list({ project: current.projectID })).filter((item) => !item.parentID)
-        const byID = new Map(all.map((item) => [item.id, item]))
-        const root = (item: SessionSchema.Info): SessionSchema.ID => {
-          const parent = item.experimental?.taskParentID
-          const ancestor = parent ? byID.get(parent) : undefined
-          return ancestor ? root(ancestor) : item.id
-        }
-        const rootID = root(current)
-        return all.filter((item) => root(item) === rootID)
+        const start = current.parentID ? current.experimental?.taskParentID : current.id
+        if (!start) return []
+        // Walk task links in both directions. UNION visits each member once; CROSS JOIN
+        // keeps the current member on the outside of each indexed lookup.
+        const rows = yield* db
+          .select()
+          .from(SessionTable)
+          .where(
+            sql`${SessionTable.id} in (
+              with recursive eligible as not materialized (
+                select id, task_parent_id from ${SessionTable}
+                where project_id = ${current.projectID} and parent_id is null
+              ), family(id, task_parent_id) as (
+                select * from eligible where id = ${start}
+                union select p.* from family f cross join eligible p on p.id = f.task_parent_id
+                union select c.* from family f cross join eligible c on c.task_parent_id = f.id
+              )
+              select id from family
+            )`,
+          )
+          .orderBy(desc(SessionTable.time_updated), desc(SessionTable.id))
+          .all()
+          .pipe(Effect.orDie)
+        return rows.map(fromRow)
       }),
       taskMessage: Effect.fn("Session.taskMessage")(function* (input) {
         const source = yield* result.get(input.sessionID)
