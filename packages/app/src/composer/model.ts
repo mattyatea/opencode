@@ -2,7 +2,7 @@ import { ImagePreview } from "@opencode/ui/image-preview"
 import { useDialog } from "@opencode/ui/context/dialog"
 import type { ReferenceInfo } from "@opencode/client/promise"
 import type { Links, MountedSession } from "@opencode/plugin/gui"
-import { createComponent, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
+import { batch, createComponent, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
 import { Predicate } from "effect"
 import type { ComposerSuggestion } from "./types"
 import { createComposerEditor, type ComposerEditorModel } from "./editor/interaction"
@@ -21,11 +21,9 @@ import { readLocalImage } from "@/runtime/server/image"
 import { showToast } from "@/shell/notifications/toast"
 import { formatServerError } from "@/runtime/server/errors"
 import { Skill } from "@opencode/schema/skill"
-import { Session } from "@opencode/schema/session"
 import { abort } from "@opencode/util/abort"
-import { parseSessionMention } from "@opencode/util/session-mention"
 import { createKnownServerSessions, createServerSessionEntries } from "@/shell/commands/palette"
-import { rankSessionTitle } from "./session-match"
+import { sessionMentionSuggestions } from "./session-match"
 import { useTabs } from "@/shell/tabs/tabs"
 import type { ComposerAdapter, ComposerControls, ComposerQueue } from "./adapter"
 import { isAttachment } from "./prompt-parts"
@@ -212,7 +210,7 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
     projects: server.ctx.projects.list,
     load: async (search, signal) => {
       const page = await serverSDK.api.session.list({ parentID: null, search, archived: false, limit: 50 }, { signal })
-      page.data.forEach(data.session.remember)
+      batch(() => page.data.forEach(data.session.remember))
 
       return page
     },
@@ -225,7 +223,6 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
     untitled: () => language.t("command.session.new"),
     category: () => language.t("command.category.session"),
     recentCategory: () => language.t("palette.group.recentSessions"),
-    recentLimit: Number.POSITIVE_INFINITY,
   })
 
   const context = createMemo<ComposerSuggestion[]>(() => [
@@ -368,54 +365,17 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
     context,
     // The server narrows by the first word; the title match then needs the whole query.
     requestSessionSearch: (word, signal) => sessions.search(word, signal).then(() => undefined),
-    searchSessions: (query) => {
-      const project = sdk().current?.project.id
-
-      const open = new Set(
-        tabs.store.flatMap((tab) => (tab.type === "session" && tab.server === server.key ? [tab.sessionId] : [])),
-      )
-
-      return sessions
-        .items("")
-        .flatMap((entry) => {
-          if (adapter.kind === "active-session" && entry.sessionID === adapter.session().id) return []
-          const mention = entry.sessionID && parseSessionMention(entry.sessionID)
-
-          if (!mention) return []
-          const local = !project || entry.project?.id === project || entry.directory === sdk().directory
-
-          // A bare `@` offers this project's recent sessions; other projects appear once a title is typed.
-          if (!query && !local) return []
-          const rank = query ? rankSessionTitle(entry.title, query) : 0
-
-          if (rank === undefined) return []
-
-          const suggestion: ComposerSuggestion = {
-            id: `session:${mention.id}`,
-            kind: "session",
-            label: entry.title,
-            description: entry.description,
-            mention: {
-              type: "session",
-              id: Session.ID.make(mention.id),
-              content: `@${entry.title}`,
-              start: 0,
-              end: 0,
-            },
-          }
-
-          return [{ suggestion, local, rank, open: open.has(mention.id), updated: entry.updated ?? 0 }]
-        })
-        .toSorted(
-          (a, b) =>
-            Number(b.local) - Number(a.local) ||
-            a.rank - b.rank ||
-            Number(b.open) - Number(a.open) ||
-            b.updated - a.updated,
-        )
-        .slice(0, 5)
-        .map((item) => item.suggestion)
-    },
+    searchSessions: (query) =>
+      sessionMentionSuggestions(sessions.known(), query, {
+        current: adapter.kind === "active-session" ? adapter.session().id : undefined,
+        project: sdk().current?.project.id,
+        directory: sdk().directory,
+        projects: server.ctx.projects.list(),
+        open: new Set(
+          tabs.store.flatMap((tab) => (tab.type === "session" && tab.server === server.key ? [tab.sessionId] : [])),
+        ),
+        untitled: language.t("command.session.new"),
+      }),
     searchContextFiles: async (query, signal) =>
       (await files.searchFilesAndDirectories(query, { signal })).map((path) => ({
         id: `file:${path}`,
