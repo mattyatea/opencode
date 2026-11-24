@@ -1,17 +1,19 @@
 import { expect } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "path"
 import { Clock, Deferred, Effect, Fiber, Logger, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { Command } from "@opencode/core/command"
 import { Bus } from "@opencode/core/bus"
+import { Config } from "@opencode/core/config"
+import { ConfigPluginSource } from "@opencode/core/config/plugin/source"
 import { Credential } from "@opencode/core/credential"
 import { Integration } from "@opencode/core/integration"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
 import { Rpc } from "@opencode/core/rpc"
-import { Event } from "@opencode/schema/config"
+import { Document, Event, Info } from "@opencode/schema/config"
 import { PluginModule } from "@opencode/core/plugin/module"
 import { Session } from "@opencode/core/session"
 import { SessionSchema } from "@opencode/core/session/schema"
@@ -119,14 +121,17 @@ it.live("serves a local plugin's GUI bundle, and reloads it alone when only the 
       Effect.promise(() => mkdtemp(path.join(tmpdir(), "opencode-plugin-gui-"))),
       (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
     )
-    const starts = path.join(directory, "starts")
+    const lifecycle = path.join(directory, "lifecycle")
+    const gui = path.join(directory, "gui-experimental.js")
     const bundle = "module.exports = { default: function setup() {}, main: function main() {} }"
     yield* Effect.promise(async () => {
       await writeFile(
         path.join(directory, "index.ts"),
-        `import { appendFileSync } from "node:fs"\nexport default { id: "fixture.gui", setup() { appendFileSync(${JSON.stringify(starts)}, "x") } }`,
+        `import { appendFileSync } from "node:fs"
+         const mark = (event) => appendFileSync(${JSON.stringify(lifecycle)}, event)
+         export default { id: "fixture.gui", setup() { mark("+"); return () => mark("-") } }`,
       )
-      await writeFile(path.join(directory, "gui-experimental.js"), bundle)
+      await writeFile(gui, bundle)
     })
     const updates: string[] = []
     yield* Effect.acquireRelease(
@@ -135,14 +140,35 @@ it.live("serves a local plugin's GUI bundle, and reloads it alone when only the 
       ),
       (unsubscribe) => unsubscribe,
     )
-    const modules = yield* PluginModule.make().pipe(Effect.provide(Watcher.testLayer))
+    const config = yield* Config.Test
+    yield* config.setEntries([
+      new Document({
+        type: "document",
+        info: new Info({ plugins: [{ package: directory, options: { token: "secret" } }] }),
+      }),
+    ])
+    const sources = yield* ConfigPluginSource.Service
+    const modules = yield* PluginModule.make()
     const load = Effect.gen(function* () {
-      const definition = yield* modules.load({ type: "add", target: directory, options: { token: "secret" } })
+      const operation = (yield* sources.operations()).find((op) => op.type === "add" && op.target === directory)
+      if (operation?.type !== "add") return yield* Effect.die("Local plugin was not discovered")
+      const definition = yield* modules.load(operation)
       if ("pending" in definition || "blocked" in definition) return yield* Effect.die("Local plugin was not loaded")
       return definition
     })
     const first = yield* load
-    yield* plugins.activate([first])
+    const suffix: string[] = []
+    const next = {
+      id: "next",
+      revision: "1",
+      effect: () =>
+        Effect.gen(function* () {
+          suffix.push("+")
+          yield* Effect.addFinalizer(() => Effect.sync(() => suffix.push("-")))
+        }),
+    }
+    yield* plugins.activate([first, next])
+    yield* Effect.addFinalizer(() => plugins.activate([]))
     const id = Plugin.ID.make("fixture.gui")
 
     expect((yield* plugins.list()).find((plugin) => plugin.id === id)?.features).toEqual({ server: true, gui: true })
@@ -156,16 +182,24 @@ it.live("serves a local plugin's GUI bundle, and reloads it alone when only the 
 
     // Editing only the bundle reloads the GUI, as editing a TUI entry reloads only the TUI: the server entry keeps
     // running, and the app hears of the new bundle.
-    yield* Effect.promise(() => writeFile(path.join(directory, "gui-experimental.js"), `${bundle}\n// edited`))
+    yield* Effect.promise(async () => {
+      await writeFile(gui, `${bundle}\n// edited`)
+      const newer = new Date(Date.now() + 10_000)
+      await utimes(gui, newer, newer)
+    })
     const edited = yield* load
     const published = updates.length
-    yield* plugins.activate([edited])
+    yield* plugins.activate([edited, next])
 
-    expect(edited.revision).toBe(first.revision)
-    expect((yield* plugins.gui(id))?.revision).not.toBe(served?.revision)
+    expect({ plugin: yield* Effect.promise(() => Bun.file(lifecycle).text()), next: suffix.join("") }).toEqual({
+      plugin: "+",
+      next: "+",
+    })
+    const updated = yield* plugins.gui(id)
+    expect(updated?.code).toBe(`${bundle}\n// edited`)
+    expect(updated?.revision).not.toBe(served?.revision)
     expect(updates.length).toBe(published + 1)
-    expect(yield* Effect.promise(() => Bun.file(starts).text())).toBe("x")
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(ConfigPluginSource.layer), Effect.provide(Watcher.testLayer), Effect.scoped),
 )
 it.effect("unloading a plugin removes its commands and runs cleanup", () =>
   Effect.gen(function* () {

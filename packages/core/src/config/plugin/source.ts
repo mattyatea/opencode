@@ -177,7 +177,8 @@ const scan = Effect.fn("ConfigPluginSource.scan")(function* (
       }
       const times = yield* Effect.forEach(
         [
-          ...Object.values(entrypoints)
+          // The GUI bundle has its own content revision; rebuilding it must not restart server plugins.
+          ...[entrypoints.server, entrypoints.tui, entrypoints.rpc]
             .filter((entry) => entry !== undefined)
             .map((entry) => fileURLToPath(entry)),
           path.join(directory ? operation.target : path.dirname(operation.target), "package.json"),
