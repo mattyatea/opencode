@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, For, onCleanup, Show, startTransition } from "solid-js"
+import { createEffect, createMemo, For, Show, startTransition } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useQueries, useQueryClient } from "@tanstack/solid-query"
 import type { SessionInfo } from "@opencode/client/promise"
@@ -29,6 +29,7 @@ import { showToast } from "@/shell/notifications/toast"
 import { usePlatform } from "@/runtime/platform/platform"
 import { notifySessionTabsRemoved } from "./session-events"
 import { ProjectSectionsState, projectSection, sidebarProjectKey } from "./project-sections"
+import { createSidebarTaskChanges, createSidebarTaskTree } from "./sidebar-task-trees"
 
 export function ProjectSidebar() {
   const language = useLanguage()
@@ -78,6 +79,7 @@ export function ProjectSidebar() {
       enabled: ctx.sdk.connection.status() === "connected",
     })),
   }))
+  const taskChanges = createSidebarTaskChanges(() => connections().map(({ ctx }) => ctx.sdk.event))
 
   const projects = createMemo(() =>
     connections()
@@ -532,33 +534,19 @@ export function ProjectSidebar() {
                             <For each={sessions().map((session) => session.id)}>
                               {(sessionID) => {
                                 const session = () => item().sessions.find((session) => session.id === sessionID)
-                                const [tree, controls] = createResource(
-                                  () => sessionID,
-                                  async (id) => ({
-                                    id,
-                                    tasks: await item().ctx.sdk.api.experimental.session.tasks.tree({ sessionID: id }),
-                                  }),
+                                const family = createSidebarTaskTree(
+                                  () => item().ctx.sdk.event,
+                                  taskChanges,
+                                  () => item().ctx.sdk.api.experimental.session.tasks.tree({ sessionID }),
                                 )
                                 const tasks = () => {
+                                  const { tree } = family()
                                   if (tree.state !== "ready" && tree.state !== "refreshing") return []
-                                  if (tree.latest?.id !== sessionID) return []
                                   return tree.latest.tasks.filter((task) => !task.time.archived)
                                 }
                                 const children = (id: string) =>
                                   tasks().filter((task) => task.experimental?.taskParentID === id)
                                 const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
-                                onCleanup(
-                                  item().ctx.sdk.event.listen((event) => {
-                                    if (
-                                      event.type === "session.created" ||
-                                      event.type === "session.deleted" ||
-                                      event.type === "session.renamed" ||
-                                      event.type === "session.archived" ||
-                                      event.type === "session.unarchived"
-                                    )
-                                      void controls.refetch()
-                                  }),
-                                )
                                 const rows = createMemo(() => {
                                   const walk = (
                                     id: string,
@@ -699,12 +687,12 @@ export function ProjectSidebar() {
                                         </Menu.Context.Portal>
                                       </Menu.Context>
                                     </div>
-                                    <Show when={tree.error}>
+                                    <Show when={family().tree.error}>
                                       <p class="ps-8 pe-2 text-12 text-text-weak">{language.t("tasks.error")}</p>
                                       <button
                                         type="button"
                                         class="w-full ps-8 pe-2 text-start text-12 text-text-weak"
-                                        onClick={() => void controls.refetch()}
+                                        onClick={() => void family().refresh()}
                                       >
                                         {language.t("tasks.refresh")}
                                       </button>
