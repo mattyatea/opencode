@@ -29,6 +29,7 @@ test("ranks all known sessions before taking five and keeps bare @ local", () =>
     sandboxes: [`/sandbox/${id}`],
     time: { created: 1, updated: 1, active: 1 },
   })
+
   const session = (i: number, title: string, projectID: string): SessionInfo => ({
     id: `ses_${i.toString().padStart(26, "0")}`,
     title,
@@ -40,12 +41,14 @@ test("ranks all known sessions before taking five and keeps bare @ local", () =>
     cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
   })
+
   const current = session(0, "foo", "a")
   const remote = session(1, "foo", "b")
   const recent = session(2, "Foo Bar", "a")
   const older = session(3, "Foo Another", "a")
   const late = session(90, "Foo", "unmapped")
   late.location.directory = "/sandbox/a"
+
   const sessions = [
     current,
     remote,
@@ -55,6 +58,7 @@ test("ranks all known sessions before taking five and keeps bare @ local", () =>
     late,
     { ...late, id: "invalid" },
   ]
+
   const context = {
     current: current.id,
     project: "a",

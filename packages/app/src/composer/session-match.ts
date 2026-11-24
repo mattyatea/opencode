@@ -27,6 +27,7 @@ export function sessionMentionSuggestions(
   for (const session of sessions) {
     if (session.id === context.current || session.time.archived) continue
     const rank = query ? match(session.title || context.untitled) : 0
+
     if (rank === undefined) continue
 
     // If the ID has no project record, the directory/sandbox fallback can still identify a local session.
@@ -39,20 +40,25 @@ export function sessionMentionSuggestions(
 
     if (!query && !local) continue
     const mention = parseSessionMention(session.id)
+
     if (!mention) continue
 
     // Local first, then title match (exact / leading / later word), then open tabs. A tie keeps source recency.
     const score = (local ? 0 : 6) + rank * 2 + Number(!context.open.has(mention.id))
+
     if (best.length === 5 && score >= best[4]!.score) continue
     const index = best.findIndex((item) => score < item.score)
     best.splice(index < 0 ? best.length : index, 0, { session, id: mention.id, score })
+
     if (best.length > 5) best.pop()
+
     if (best.length === 5 && best[4]!.score === 0) break
   }
 
   return best.map(({ session, id }) => {
     const title = session.title || context.untitled
     const project = projectForSession(session, context.projects)
+
     return {
       id: `session:${id}`,
       kind: "session",
@@ -71,15 +77,21 @@ export function sessionMentionSuggestions(
 export function createSessionTitleRanker(query: string) {
   const text = query.toLowerCase()
   const words = text.split(" ")
+
   return (title: string) => {
     const value = title.toLowerCase()
+
     if (value === text) return 0
+
     if (!value.includes(words[0]!)) return
     const titleWords = value.split(/\s+/).filter(Boolean)
+
     const start = titleWords.findIndex((_, start) =>
       words.every((word, index) => titleWords[start + index]?.startsWith(word)),
     )
+
     if (start < 0) return
+
     return start === 0 ? 1 : 2
   }
 }

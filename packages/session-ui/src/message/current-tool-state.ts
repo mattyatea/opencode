@@ -92,6 +92,7 @@ export function executeToolCalls(metadata: ToolProps["metadata"], start = 0) {
 
 const isFailedCall = Schema.is(Schema.Struct({ tool: Schema.String, status: Schema.Literal("error") }))
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This predicate validates entries from open per-tool metadata.
 function callFailed(call: unknown) {
   // A script can have thousands of successful calls. Only check the error-call schema for a possible failure.
   return Predicate.hasProperty(call, "status") && call.status === "error" && isFailedCall(call)

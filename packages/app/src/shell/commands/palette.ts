@@ -297,6 +297,7 @@ export function createServerSessionEntries(props: {
   // The server's list carries each step's `time.updated` bump. Like Home, keep the cached time until a run ends.
   // Sort after `apply` so a pending send's bump decides which sessions make the recent group.
   const loaded = createMemo(() => sourceState().loaded)
+
   const known = createMemo(() => {
     const merged = mergeRootSessionIndex(props.known?.() ?? [], loaded())
 
