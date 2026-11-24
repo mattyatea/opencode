@@ -46,9 +46,8 @@ const description = (shell?: string, codeMode = false) =>
     "Execute a shell command and return its output.",
     ...(shell ? [`Commands run on ${OS} using ${shell}.`] : []),
     "Quote file paths containing spaces or special characters.",
-    "Prefer dedicated tools over shell commands when possible.",
-    "When output is large, the full result is saved to a file and a truncated preview is returned.",
-    "Rely on automatic truncation unless filtering the output is more useful.",
+    "For large results, select the needed fields or matching lines at the source; preserve errors and exit status.",
+    "Overflow is saved to a file; read it by range.",
     "Commands still running after their timeout move to the background.",
     // Code Mode has no background parameter.
     ...(codeMode ? [] : ["Background commands return immediately, and you will be notified when they complete."]),
