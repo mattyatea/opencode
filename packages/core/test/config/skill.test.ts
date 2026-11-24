@@ -108,7 +108,7 @@ const discover = (directory: string, global: string) =>
     ),
   )
 
-function emitAndWait(update: Watcher.Update) {
+function emitAndWait(...updates: Watcher.Update[]) {
   return Effect.gen(function* () {
     const watcher = yield* Watcher.Test
     const bus = yield* Bus.Service
@@ -118,7 +118,7 @@ function emitAndWait(update: Watcher.Update) {
       Effect.forkScoped,
     )
     yield* Effect.yieldNow
-    yield* watcher.emit(update)
+    for (const update of updates) yield* watcher.emit(update)
     yield* Deferred.await(deferred).pipe(Effect.timeout("2 seconds"))
     yield* Fiber.interrupt(fiber)
   })
@@ -401,6 +401,39 @@ describe("ConfigSkillPlugin.Plugin", () => {
             { path: source, type: "file" },
             { path: second, type: "directory", ignore: SkillScan.ignore.toSorted() },
           ])
+        }),
+      ),
+    ),
+  )
+
+  it.live("reopens a replaced directory even when another event is debounced last", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const source = path.join(tmp.path, "source")
+          const stable = path.join(tmp.path, "stable")
+          yield* Effect.promise(async () => {
+            await fs.mkdir(path.join(source, "deploy"), { recursive: true })
+            await write(source, "deploy", "Initial")
+            await fs.mkdir(stable)
+          })
+          const watcher = yield* Watcher.Test
+          const skill = yield* start([source, stable], tmp.path)
+          expect((yield* skill.list())[0]?.description).toBe("Initial")
+
+          yield* Effect.promise(async () => {
+            await fs.rename(source, path.join(tmp.path, "old"))
+            await fs.mkdir(path.join(source, "deploy"), { recursive: true })
+            await write(source, "deploy", "Recreated")
+          })
+          yield* emitAndWait({ type: "delete", path: source }, { type: "update", path: path.join(stable, "other.md") })
+          expect((yield* skill.list())[0]?.description).toBe("Recreated")
+          expect((yield* watcher.subscriptions()).map((watch) => watch.path)).toEqual([source, stable, source])
+
+          yield* Effect.promise(() => write(source, "deploy", "Updated again"))
+          yield* emitAndWait({ type: "update", path: path.join(source, "deploy", "SKILL.md") })
+          expect((yield* skill.list())[0]?.description).toBe("Updated again")
+          expect(yield* watcher.subscriptions()).toHaveLength(3)
         }),
       ),
     ),

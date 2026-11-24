@@ -31,6 +31,7 @@ export const Plugin = define({
       skills: [],
     }
     const watches = yield* FiberMap.make<string>()
+    const stale = new Set<string>()
     const changes = yield* PubSub.sliding<string>(1)
     const lock = Semaphore.makeUnsafe(1)
 
@@ -44,7 +45,15 @@ export const Plugin = define({
       yield* FiberMap.run(
         watches,
         key,
-        updates.pipe(Stream.runForEach((update) => PubSub.publish(changes, update.path).pipe(Effect.asVoid))),
+        updates.pipe(
+          Stream.runForEach((update) => {
+            // A replacement can detach the native watch without ending its stream.
+            // Record root events before debounce, even if reported as a create or update.
+            const root = `directory:${update.path}`
+            if (FiberMap.hasUnsafe(watches, root)) stale.add(root)
+            return PubSub.publish(changes, update.path)
+          }),
+        ),
         { startImmediately: true },
       )
       return key
@@ -151,6 +160,10 @@ export const Plugin = define({
 
     const refresh = Effect.fn("ConfigSkillPlugin.refresh")(
       function* (file?: string) {
+        for (const key of stale) {
+          stale.delete(key)
+          yield* FiberMap.remove(watches, key)
+        }
         const needed = new Set<string>()
         const skills = new Map<Skill.ID, Skill.Info>()
         const current = sources()
