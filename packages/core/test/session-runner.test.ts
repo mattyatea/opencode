@@ -3773,6 +3773,8 @@ describe("SessionRunnerLLM", () => {
       "Fourth real request",
     ])
     expect(JSON.stringify(s.requests[6].messages)).not.toContain('"encrypted":"first"')
+    // Native compaction never prepares an idle summary, so it does not need to read the transcript again.
+    expect(s.spans.filter((span) => span.name === "SessionStore.context")).toHaveLength(0)
     const compaction = yield* SessionCompaction.Service
     yield* compaction.transform((editor) => editor.configure({ auto: false }))
     yield* replaySessionProjection(sessionID)

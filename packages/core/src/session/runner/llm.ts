@@ -344,8 +344,8 @@ const layer = Layer.effect(
         retryAttempt = undefined
         const completed = yield* SessionStep.Outcome.$match(outcome, {
           Completed: Effect.fnUntraced(function* (outcome) {
-            // The Session is about to go idle, which leaves the background summary time to finish.
-            if (!outcome.needsContinuation)
+            // Only local compaction can use an idle background summary.
+            if (!outcome.needsContinuation && loaded.model.compaction?.type !== "native")
               yield* compaction.precompute(
                 store.context(sessionID).pipe(Effect.map((messages) => ({ ...loaded, messages }))),
               )
