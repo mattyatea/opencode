@@ -304,6 +304,11 @@ import type {
   ExperimentalJobListOutput,
   ExperimentalJobCancelInput,
   ExperimentalJobCancelOutput,
+  ExperimentalMachineListOutput,
+  ExperimentalMachineAddInput,
+  ExperimentalMachineAddOutput,
+  ExperimentalMachineRemoveInput,
+  ExperimentalMachineRemoveOutput,
   ExperimentalPreferenceGetInput,
   ExperimentalPreferenceGetOutput,
   ExperimentalPreferenceSetInput,
@@ -1968,6 +1973,29 @@ const EndpointExperimentalJobCancel = (raw: RawClient["server.experimental"]) =>
     raw["job.cancel"]({ params: { id: input["id"] } }).pipe(Effect.mapError(mapClientError)),
   )
 
+const EndpointExperimentalMachineList = (raw: RawClient["server.experimental"]) => () =>
+  preserveEffect<ExperimentalMachineListOutput>()(
+    raw["machine.list"]({}).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointExperimentalMachineAdd =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalMachineAddInput) =>
+    preserveEffect<ExperimentalMachineAddOutput>()(
+      raw["machine.add"]({ payload: { name: input["name"], reach: input["reach"], replace: input["replace"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalMachineRemove =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalMachineRemoveInput) =>
+    preserveEffect<ExperimentalMachineRemoveOutput>()(
+      raw["machine.remove"]({ params: { name: input["name"] } }).pipe(Effect.mapError(mapClientError)),
+    )
+
 const EndpointExperimentalPreferenceGet =
   (raw: RawClient["server.experimental"]) => (input: ExperimentalPreferenceGetInput) =>
     preserveEffect<ExperimentalPreferenceGetOutput>()(
@@ -2015,6 +2043,11 @@ const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
     delete: EndpointExperimentalArtifactsDelete(raw),
   },
   job: { list: EndpointExperimentalJobList(raw), cancel: EndpointExperimentalJobCancel(raw) },
+  machine: {
+    list: EndpointExperimentalMachineList(raw),
+    add: EndpointExperimentalMachineAdd(raw),
+    remove: EndpointExperimentalMachineRemove(raw),
+  },
   preference: { get: EndpointExperimentalPreferenceGet(raw), set: EndpointExperimentalPreferenceSet(raw) },
 })
 

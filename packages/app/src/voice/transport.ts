@@ -70,6 +70,7 @@ export class VoiceTransport {
   private viewUpdate = Promise.resolve()
   /** Settles once the server stopped the ChatGPT call; every close stops it, with or without a handshake. */
   private callStopped?: Promise<unknown>
+  private model = ""
 
   constructor(
     private readonly inputOptions: {
@@ -306,8 +307,15 @@ export class VoiceTransport {
     // The server picks the ChatGPT plan when voice.provider asks for it or no API key is available.
     this.engine = offered.default === "chatgpt-live" && usable("chatgpt-live") ? "chatgpt" : "live"
 
-    if (this.engine === "live" && !usable("gpt-live-1"))
-      return this.dispatch({ type: "step.failed", step: "offer", reason: "unavailable" })
+    if (this.engine === "live") {
+      // The server lists models newest first.
+      const live = offered.models.find(
+        (model) => model.engine === "openai-live" && model.available && model.transports.includes("webrtc"),
+      )
+
+      if (!live) return this.dispatch({ type: "step.failed", step: "offer", reason: "unavailable" })
+      this.model = live.model
+    }
 
     await this.peer.setLocalDescription(await this.peer.createOffer())
     this.dispatch({ type: "offer.ready", iceComplete: this.peer.iceGatheringState === "complete" })
@@ -318,9 +326,9 @@ export class VoiceTransport {
 
     const response = await this.inputOptions.voice.session(
       {
-        model: "gpt-live-1",
+        model: this.model,
         session: {
-          model: "gpt-live-1",
+          model: this.model,
           instructions: liveInstructions,
           audio: { output: { voice: "marin" } },
           delegation: {

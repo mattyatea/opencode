@@ -8,8 +8,11 @@ import { Machine } from "@opencode/core/machine/index"
 import { Machines } from "@opencode/core/machine/machines"
 import { Global } from "@opencode/util/global"
 import { LayerNode } from "@opencode/util/effect/layer-node"
+import { MachineTable } from "@opencode/core/machine/sql"
+import { eq } from "drizzle-orm"
+import { randomBytes } from "node:crypto"
 import path from "node:path"
-import { Cause, Context, Deferred, Effect, Fiber, Layer, Option, PlatformError, Queue, Stream } from "effect"
+import { Cause, Context, Deferred, Effect, Fiber, Layer, Option, PlatformError, Queue, Scheduler, Stream } from "effect"
 import { ChildProcess } from "effect/process"
 import { TestClock } from "effect/testing"
 import { makeWorker } from "./fixture/machine-worker"
@@ -22,13 +25,13 @@ const text = (value: Uint8Array) => new TextDecoder().decode(value)
 const cause = (error: PlatformError.PlatformError) => error.reason.cause
 
 const dial = (machines: Machines.Interface, id: Environment.ID) =>
-  makeWorker({ environment: { id }, connect: machines.connect })
+  makeWorker({ connect: (connection) => machines.connect(id, connection) })
 
-const connection = (name: string, os: string, arch: string) =>
+const connection = (os: string, arch: string) =>
   Effect.map(Queue.unbounded<Exclude<Machine.FromWorker, Machine.Hello>, Cause.Done>(), (queue) => ({
     hello: {
       type: "hello" as const,
-      name,
+      protocol: 2 as const,
       os,
       arch,
       home: "/home/worker",
@@ -124,6 +127,7 @@ const gatedIdentity = (key: Uint8Array, gate: Deferred.Deferred<void>, entered: 
         )
       }),
     sign: () => Effect.die("unused"),
+    seed: () => Effect.die("unused"),
   })
 }
 
@@ -184,13 +188,13 @@ service.effect("serves the newer of two connections and keeps it when the first 
   Effect.gen(function* () {
     const machines = yield* Machines.Service
     const id = yield* machines.add("gpu")
-    const first = yield* Effect.forkChild(machines.connect(yield* connection("gpu", "darwin", "arm64")), {
+    const first = yield* Effect.forkChild(machines.connect(id, yield* connection("darwin", "arm64")), {
       startImmediately: true,
     })
     expect(yield* machines.list()).toEqual([
       new Machines.Info({ id, online: true, paired: false, os: "darwin", arch: "arm64" }),
     ])
-    const second = yield* Effect.forkChild(machines.connect(yield* connection("gpu", "linux", "x64")), {
+    const second = yield* Effect.forkChild(machines.connect(id, yield* connection("linux", "x64")), {
       startImmediately: true,
     })
     expect(yield* machines.list()).toEqual([
@@ -211,10 +215,10 @@ service.effect("refuses a connection for a machine it does not know and serves n
     const id = yield* machines.add("gpu")
     const sent: Machine.ToWorker[] = []
     const error = yield* machines
-      .connect({
+      .connect(machineID("ghost"), {
         hello: {
           type: "hello",
-          name: "ghost",
+          protocol: 2,
           os: "linux",
           arch: "x64",
           home: "/home/ghost",
@@ -301,12 +305,16 @@ service.effect("removing a machine fails a running process at once", () =>
 service.effect("refuses a bad name and a name it already knows", () =>
   Effect.gen(function* () {
     const machines = yield* Machines.Service
-    for (const name of ["", "x", "Gpu", "9gpu", "gpu_1", "local"]) {
+    for (const name of ["", "x", "Gpu", "9gpu", "gpu_1", "local", "g".repeat(64)]) {
       expect(yield* machines.add(name).pipe(Effect.flip)).toBeInstanceOf(Machines.InvalidName)
     }
     const id = yield* machines.add("gpu-2")
     expect(yield* machines.add("gpu-2").pipe(Effect.flip)).toBeInstanceOf(Machines.AlreadyExists)
-    expect(yield* machines.list()).toEqual([new Machines.Info({ id, online: false, paired: false })])
+    const longest = yield* machines.add("g".repeat(63))
+    expect(yield* machines.list()).toEqual([
+      new Machines.Info({ id: longest, online: false, paired: false }),
+      new Machines.Info({ id, online: false, paired: false }),
+    ])
   }),
 )
 
@@ -605,5 +613,118 @@ it.effect("fails a join that was in flight when its machine was removed and re-a
         expect((yield* machines.list()).map((machine) => machine.paired)).toEqual([false])
       }),
     ).pipe(Effect.provide(layers, { local: true }))
+  }),
+)
+
+/**
+ * Runs `effect` one runtime operation at a time and interrupts it after `steps` of them. Returns false when it finished
+ * first, so a caller stepping `steps` up from 0 has interrupted it between every two operations it makes.
+ */
+const interruptAfter = <A, E>(effect: Effect.Effect<A, E>, steps: number) =>
+  Effect.gen(function* () {
+    const tasks: Array<() => void> = []
+    const scheduler: Scheduler.Scheduler = {
+      executionMode: "async",
+      // A resumed fiber spends its first operation on the resumption and its second on the work it yielded before, so it
+      // yields from its third: one step of real progress per task.
+      shouldYield: (fiber) => fiber.currentOpCount > 2,
+      makeDispatcher: () => ({
+        scheduleTask: (task) => {
+          tasks.push(task)
+        },
+        flush: () => {
+          while (tasks.length > 0) tasks.shift()?.()
+        },
+      }),
+    }
+    const fiber = yield* Effect.forkChild(effect.pipe(Effect.provideService(Scheduler.Scheduler, scheduler)), {
+      startImmediately: true,
+    })
+    // Every operation these tests interrupt is synchronous (bun:sqlite included), so the fiber is always either done
+    // or parked in `tasks`.
+    for (let taken = 0; taken < steps && tasks.length > 0; taken++) tasks.shift()?.()
+    if (fiber.pollUnsafe()) return false
+    fiber.interruptUnsafe()
+    while (tasks.length > 0) tasks.shift()?.()
+    yield* Fiber.await(fiber)
+    return true
+  })
+
+/** Whether the machine's row is on disk, and its key, read from the database rather than the service's memory. */
+const stored = (id: Environment.ID) =>
+  Effect.gen(function* () {
+    const db = (yield* Database.Service).db
+    return yield* db
+      .select({ key: MachineTable.key })
+      .from(MachineTable)
+      .where(eq(MachineTable.id, id))
+      .get()
+      .pipe(Effect.orDie)
+  })
+
+it.effect("an interrupted join leaves the machine paired on disk and in memory, or its invitation still good", () =>
+  Effect.gen(function* () {
+    const tmp = yield* tmpdirScoped()
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const machines = yield* Machines.Service
+        let steps = 0
+        for (; steps < 10_000; steps++) {
+          const id = yield* machines.add(`gpu-${steps}`)
+          const printed = yield* invite(machines, id)
+          const key = new Uint8Array(randomBytes(32))
+          if (!(yield* interruptAfter(machines.join({ secret: printed.secret, key }), steps))) break
+          const paired = Option.isSome(yield* machines.identify(key).pipe(Effect.option))
+          expect([steps, paired]).toEqual([steps, (yield* stored(id))?.key != null])
+          if (!paired) expect(yield* machines.join({ secret: printed.secret, key })).toBe(id)
+        }
+        expect(steps).toBeGreaterThan(10)
+        expect(steps).toBeLessThan(10_000)
+      }),
+    ).pipe(Effect.provide(tempLayers(tmp.path), { local: true }))
+  }),
+)
+
+it.effect("an interrupted remove forgets the machine on disk and in memory, or in neither", () =>
+  Effect.gen(function* () {
+    const tmp = yield* tmpdirScoped()
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const machines = yield* Machines.Service
+        let steps = 0
+        for (; steps < 10_000; steps++) {
+          const id = yield* machines.add(`gpu-${steps}`)
+          const key = new Uint8Array(randomBytes(32))
+          yield* machines.join({ secret: (yield* invite(machines, id)).secret, key })
+          if (!(yield* interruptAfter(machines.remove(id), steps))) break
+          const known = (yield* machines.list()).some((machine) => machine.id === id)
+          const paired = Option.isSome(yield* machines.identify(key).pipe(Effect.option))
+          const row = yield* stored(id)
+          expect([steps, known, paired]).toEqual([steps, row !== undefined, row !== undefined])
+        }
+        expect(steps).toBeGreaterThan(10)
+        expect(steps).toBeLessThan(10_000)
+      }),
+    ).pipe(Effect.provide(tempLayers(tmp.path), { local: true }))
+  }),
+)
+
+it.effect("an interrupted add knows the machine on disk and in memory, or in neither", () =>
+  Effect.gen(function* () {
+    const tmp = yield* tmpdirScoped()
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const machines = yield* Machines.Service
+        let steps = 0
+        for (; steps < 10_000; steps++) {
+          const id = machineID(`gpu-${steps}`)
+          if (!(yield* interruptAfter(machines.add(id), steps))) break
+          const known = (yield* machines.list()).some((machine) => machine.id === id)
+          expect([steps, known]).toEqual([steps, (yield* stored(id)) !== undefined])
+        }
+        expect(steps).toBeGreaterThan(10)
+        expect(steps).toBeLessThan(10_000)
+      }),
+    ).pipe(Effect.provide(tempLayers(tmp.path), { local: true }))
   }),
 )

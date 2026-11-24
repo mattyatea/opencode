@@ -146,7 +146,14 @@ afterEach(() => {
 
 type Voice = OpenCodeClient["experimental"]["voice"]
 
-const live = { model: "gpt-live-1", provider: "openai", available: true, transports: ["webrtc" as const] }
+const live = {
+  model: "gpt-live-1",
+  name: "GPT-Live 1",
+  engine: "openai-live",
+  provider: "openai",
+  available: true,
+  transports: ["webrtc" as const],
+}
 
 const unused = () => Promise.reject(new Error("unused"))
 
@@ -159,11 +166,8 @@ const noCall: Voice["call"] = {
 }
 
 function open(models: Voice["models"] = () => Promise.resolve({ models: [live] }), call = noCall) {
-  const voice: Voice = {
-    models,
-    session: () => Promise.resolve({ transport: { type: "webrtc", sdp: "v=0 answer" } }),
-    call,
-  }
+  const session = jest.fn<Voice["session"]>(() => Promise.resolve({ transport: { type: "webrtc", sdp: "v=0 answer" } }))
+  const voice: Voice = { models, session, call }
 
   const dropped = jest.fn()
   const received: VoiceCallEvent[] = []
@@ -177,7 +181,7 @@ function open(models: Voice["models"] = () => Promise.resolve({ models: [live] }
     dropped,
   })
 
-  return { transport, dropped, received, peer: FakePeer.last }
+  return { transport, dropped, received, session, peer: FakePeer.last }
 }
 
 // Lets the transport's awaited WebRTC calls settle; fake timers leave promise jobs alone.
@@ -201,6 +205,24 @@ const failure = (promise: Promise<unknown>) =>
     () => undefined,
     (error: VoiceFailure) => error.reason,
   )
+
+test("a call starts the newest available GPT-Live model the server lists", async () => {
+  const realtime = { ...live, model: "gpt-realtime-9", engine: "openai-realtime" }
+  const newest = { ...live, model: "gpt-live-3", available: false }
+  const result = open(() => Promise.resolve({ models: [realtime, newest, { ...live, model: "gpt-live-2" }, live] }))
+  void result.transport.join({ id: "ses_1" }, "")
+  await settle()
+
+  expect(result.session.mock.calls[0][0]).toMatchObject({ model: "gpt-live-2", session: { model: "gpt-live-2" } })
+})
+
+test("a server without an available GPT-Live model fails the join as unavailable", async () => {
+  const realtime = { ...live, model: "gpt-realtime-9", engine: "openai-realtime" }
+  const result = open(() => Promise.resolve({ models: [realtime, { ...live, available: false }] }))
+
+  expect(await failure(result.transport.join({ id: "ses_1" }, ""))).toBe("unavailable")
+  expect(result.session).not.toHaveBeenCalled()
+})
 
 test("a microphone granted after End is stopped at once, and the join fails as a connection failure", async () => {
   const result = open()
@@ -292,7 +314,14 @@ test("a rejected session.update keeps the live call open", async () => {
 })
 
 test("a ChatGPT call joins on the server's answer, relays its events, and stops the call when it ends", async () => {
-  const chatgpt = { model: "chatgpt-live", provider: "chatgpt", available: true, transports: ["webrtc" as const] }
+  const chatgpt = {
+    model: "chatgpt-live",
+    name: "GPT-Live (ChatGPT)",
+    engine: "chatgpt-live",
+    provider: "chatgpt",
+    available: true,
+    transports: ["webrtc" as const],
+  }
   const polls: PromiseWithResolvers<{ events: VoiceCallEvent[]; closed: boolean }>[] = []
   const started: Parameters<Voice["call"]["start"]>[0][] = []
   const stopped: string[] = []

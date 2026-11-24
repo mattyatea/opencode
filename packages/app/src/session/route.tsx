@@ -24,6 +24,7 @@ import { useTabs, type PendingSession } from "@/shell/tabs/tabs"
 import { requireServerKey } from "@/shell/routes/session"
 import { ErrorPage } from "@/shell/errors/error"
 import { useSessionModel } from "./model"
+import { inlineQuotes } from "./timeline/inline-quotes"
 import { SessionPanelFrame } from "./session-frame"
 import { SessionIdentityHeader } from "./session-identity-header"
 import { ServerSignedOutPanel, ServerUnavailablePanel } from "./server-unavailable-panel"
@@ -167,6 +168,7 @@ function PreparingSession(props: { sessionID: string; pending: PendingSession })
                   sessionID={props.sessionID}
                   message={first.message}
                   fold={settings.general.foldUserMessages()}
+                  inlineQuotes={inlineQuotes}
                   comments={readPromptPresentation(first.message.metadata)?.comments}
                   historicalAgent={first.selection.agent}
                   historicalModel={{

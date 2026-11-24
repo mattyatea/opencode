@@ -3,6 +3,7 @@ import { createRoot, createSignal } from "solid-js"
 import type { IpcClient, SessionRef, SetupContext } from "@opencode/plugin/gui"
 import { liveAccessor } from "@opencode/plugin/gui/host"
 import { Browser } from "../../plugin-browser/src/rpc"
+import { BrowserHistory } from "../../gui-plugins/src/browser/history/ipc"
 import type definition from "../../gui-plugins/src/browser/index"
 import type { BrowserPane, PaneEvent } from "../../gui-plugins/src/browser/ipc"
 import { createModel } from "../../gui-plugins/src/browser/model"
@@ -93,16 +94,20 @@ function fixture(
   })
 
   const history = { value: { visits: [] }, set: () => undefined }
+  // Main's history of every page is away, as on the web: these cases are about the pane.
+  const away = liveAccessor(() => ({ status: "inactive" }))
+  // The tabs the last run saved for the strip, which the model writes with every inventory: none here.
+  const tabs = { value: { sessions: [] }, set: () => undefined }
 
   const fake = {
     id: "browser",
     t: (key: string, params?: Record<string, string>) => (params ? `${key} ${JSON.stringify(params)}` : key),
-    use: () => live,
+    use: (token: { readonly id: string }) => (token.id === BrowserHistory.id ? away : live),
     sessions: { current, list: () => refs },
     screen: { current: () => undefined },
     links: { open: () => undefined },
-    layout: { narrow: () => false, stored: () => [], state: () => "closed", open() {}, close() {}, side: { opened: () => false } },
-    stores: { history },
+    layout: { narrow: () => false, ready: () => false, stored: () => [], state: () => "closed", open() {}, close() {}, side: { opened: () => false } },
+    stores: { history, tabs },
   }
 
   // SAFETY: the model reads only these context fields, and these fields of a session and its server.
@@ -396,13 +401,14 @@ test("a command main rejects says what the person tried, never the app's generic
     await Bun.sleep(0)
     app.emit("ses_alpha", { tabs: [page], focusedTabID: page.id })
 
-    // A message main never sent before: the notice names the reload, offers it again, and the code is logged.
+    // A message main never sent before: the notice names the reload, offers it again, and the code and the action are
+    // logged as text, which the desktop log keeps.
     app.rejections.push("something new in main")
     app.model.command(alpha, { type: "reload", tabID: page.id })
     await Bun.sleep(0)
     expect(app.model.failure(alpha, page.id)).toMatchObject({ text: "failed.command.reload", lasting: false })
     expect(app.model.failure(alpha, page.id)?.retry).toBeFunction()
-    expect(warned).toHaveBeenCalledWith("[browser] unmapped failure", { code: "something new in main", action: "reload" })
+    expect(warned).toHaveBeenCalledWith("[browser] unmapped failure: something new in main (action: reload)")
     // It belongs to the tab the command was for.
     expect(app.model.failure(alpha, tab("b").id)).toBeUndefined()
 

@@ -3,6 +3,7 @@ export * as Voice from "./voice.js"
 import { type AIError } from "@opencode/ai/effect"
 import {
   Realtime,
+  type RealtimeEngine,
   type RealtimeSession,
   type RealtimeTransport,
   type RealtimeTransportInput,
@@ -41,9 +42,12 @@ export interface Viewing {
   readonly id: string
   readonly title?: string
 }
+import { ModelsDev } from "./models-dev.js"
 
 export interface ModelInfo {
   readonly model: string
+  readonly name: string
+  readonly engine: string
   readonly provider: string
   readonly transports: readonly RealtimeTransportType[]
   readonly available: boolean
@@ -138,6 +142,7 @@ export const layer = Layer.effect(
     )
 
     const voiceConfig = () => config.entries().pipe(Effect.map((entries) => Config.latest(entries, "voice")))
+    const modelsDev = yield* ModelsDev.Service
 
     // Integration lists the active credential first, then newer stored credentials, then non-empty env vars.
     const findConnection = (provider: string, methods: readonly string[] = ["key"]) =>
@@ -149,7 +154,7 @@ export const layer = Layer.effect(
 
     // Where an engine's sessions start: its provider with the server's key or, for GPT-Live without an OpenAI key,
     // OpenCode's hosted GPT-Live with the server's OpenCode Console connection, whose sign-in works as well as a key.
-    const source = Effect.fnUntraced(function* (engine: (typeof Realtime.engines)[number]) {
+    const source = Effect.fnUntraced(function* (engine: RealtimeEngine) {
       const connection = yield* findConnection(engine.provider)
       if (connection) return { provider: engine.provider, connection }
       if (engine.id !== "openai-live") return undefined
@@ -157,22 +162,43 @@ export const layer = Layer.effect(
       return hosted && { provider: openCodeLive.provider, connection: hosted }
     })
 
-    const models = Effect.fn("Voice.models")(function* () {
-      const list = yield* Effect.forEach(Realtime.engines, (engine) =>
+    // Each engine's models.dev voice models from the provider that would start them, newest first.
+    const offered = Effect.fnUntraced(function* () {
+      const catalog = yield* modelsDev.get()
+      const lists = yield* Effect.forEach(Realtime.engines, (engine) =>
         source(engine).pipe(
-          Effect.map((found) => ({
-            model: engine.model,
-            provider: found?.provider ?? engine.provider,
-            transports: engine.transports,
-            available: found !== undefined,
-          })),
+          Effect.map((found) => {
+            const provider = found?.provider ?? engine.provider
+            return (catalog.find((item) => item.info.id === provider)?.voices ?? [])
+              .filter((voice) => voice.api === engine.api)
+              .toSorted((a, b) => b.releaseDate.localeCompare(a.releaseDate))
+              .map((voice) => ({
+                engine,
+                found,
+                info: {
+                  model: voice.id,
+                  name: voice.name,
+                  engine: engine.id,
+                  provider,
+                  transports: engine.transports,
+                  available: found !== undefined,
+                },
+              }))
+          }),
         ),
       )
+      return lists.flat()
+    })
+
+    const models = Effect.fn("Voice.models")(function* () {
+      const list = (yield* offered()).map((item) => item.info)
       const settings = yield* voiceConfig()
-      const subscription = (yield* chatgptEnabled(settings))
+      const subscription: ModelInfo[] = (yield* chatgptEnabled(settings))
         ? [
             {
               model: chatgptModel,
+              name: "GPT-Live (ChatGPT)",
+              engine: chatgptModel,
               provider: "chatgpt",
               transports: ["webrtc" as const],
               available: yield* hasChatGPTSignIn(settings?.chatgpt?.token ?? "auto"),
@@ -192,10 +218,15 @@ export const layer = Layer.effect(
     })
 
     const session = Effect.fn("Voice.session")(function* (input: SessionInput) {
-      const engine = Realtime.engine(input.model)
-      if (!engine) return yield* new InvalidRequestError({ message: `Unsupported voice model: ${input.model}` })
+      const list = yield* offered()
+      const offer = list.find((item) => item.info.model === input.model)
+      if (!offer)
+        return yield* new InvalidRequestError({
+          message: `Unsupported voice model: ${input.model}. This server lists ${list.map((item) => item.info.model).join(", ") || "none"}.`,
+        })
 
-      const found = yield* source(engine)
+      const engine = offer.engine
+      const found = offer.found
       const credential = found
         ? yield* integrations.connection
             .resolve(found.connection)
@@ -209,6 +240,7 @@ export const layer = Layer.effect(
         })
 
       return yield* Realtime.connect({
+        engine,
         model: input.model,
         session: input.session,
         transport: input.transport,
@@ -435,7 +467,7 @@ interface CallState {
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Integration.node, requestExecutor, Config.node, Flag.node, Session.node, webSocketConstructor],
+  deps: [Integration.node, ModelsDev.node, requestExecutor, Config.node, Flag.node, Session.node, webSocketConstructor],
 })
 
 /** OpenCode hosts GPT-Live on its OpenAI account, billed to the workspace whose credential starts a session. */
