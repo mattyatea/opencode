@@ -42,6 +42,7 @@ export function ProjectSidebar() {
   const platform = usePlatform()
 
   const initial = { sections: [], order: [], projects: [], assignments: {}, collapsed: {}, sessions: {} }
+
   const [state, setState, , ready] = persisted(
     Persist.global("sidebar.project-sections"),
     ProjectSectionsState,
@@ -59,16 +60,23 @@ export function ProjectSidebar() {
 
   const [visible, setVisible] = createStore<Record<string, number>>({})
   const [projectLimits, setProjectLimits] = createStore<Record<string, number>>({})
-  const [drag, setDrag] = createStore({
+
+  const [drag, setDrag] = createStore<{
+    project: string
+    session: string
+    sessionProject: string
+    section?: string
+    target?: string
+  }>({
     project: "",
     session: "",
     sessionProject: "",
-    section: undefined as string | undefined,
-    target: undefined as string | undefined,
   })
+
   const connections = createMemo(() =>
     servers.visible.flatMap((conn) => {
       const ctx = global.serverCtx(ServerConnection.key(conn))
+
       return ctx ? [{ conn, ctx }] : []
     }),
   )
@@ -79,6 +87,7 @@ export function ProjectSidebar() {
       enabled: ctx.sdk.connection.status() === "connected",
     })),
   }))
+
   const taskChanges = createSidebarTaskChanges(() => connections().map(({ ctx }) => ctx.sdk.event))
 
   const projects = createMemo(() =>
@@ -113,28 +122,35 @@ export function ProjectSidebar() {
   createEffect(() => {
     if (!ready()) return
     const saved = new Set(state.projects)
+
     const added = projects()
       .map((project) => project.key)
       .filter((key) => !saved.has(key))
+
     if (added.length) setState("projects", (order) => [...order, ...added])
   })
 
   const projectOrder = createMemo(() => new Map(state.projects.map((key, index) => [key, index])))
   const byKey = createMemo(() => new Map(projects().map((project) => [project.key, project])))
+
   const drafts = createMemo(() =>
     tabs.store
       .filter((tab) => tab.type === "draft")
       .map((tab) => {
         const connection = connections().find((item) => ServerConnection.key(item.conn) === tab.server)
         const directory = connection?.ctx.projects.forDirectory(tab.directory)?.worktree ?? tab.directory
+
         return { tab, key: sidebarProjectKey(tab.server, directory) }
       }),
   )
+
   const sections = createMemo(() => {
     const items = [{ id: "", name: language.t("sidebar.sections.unassigned") }, ...state.sections]
     const order = new Map(state.order.map((id, index) => [id, index]))
+
     return items.toSorted((a, b) => (order.get(a.id) ?? order.size) - (order.get(b.id) ?? order.size))
   })
+
   const toggle = (key: string) => setState("collapsed", key, !state.collapsed[key])
 
   const copySessionID = async (id: string) => {
@@ -144,6 +160,7 @@ export function ProjectSidebar() {
           () => false,
         )
       : writeClipboard(id))
+
     showToast({
       variant: written ? "success" : "error",
       title: language.t(written ? "common.copied" : "toast.session.copyID.failed.title"),
@@ -153,7 +170,9 @@ export function ProjectSidebar() {
 
   function deleteSession(key: string, session: SessionInfo) {
     const item = byKey().get(key)
+
     if (!item) return
+
     const remove = () => {
       dialog.close()
       const ids = sessionTreeIDs(item.ctx.data.session.list(), session.id)
@@ -178,6 +197,7 @@ export function ProjectSidebar() {
         )
         .finally(() => void queryClient.invalidateQueries({ queryKey: ["home-sessions", item.conn], exact: true }))
     }
+
     dialog.show(() => (
       <Dialog fit>
         <DialogHeader hideClose>
@@ -203,6 +223,7 @@ export function ProjectSidebar() {
   function DraftRow(props: { tab: DraftTab; nested?: boolean }) {
     const selected = () => {
       const route = layout.route()
+
       return route.type === "draft" && route.draftID === props.tab.draftID
     }
 
@@ -291,6 +312,7 @@ export function ProjectSidebar() {
         <For each={sections()}>
           {(section) => {
             const id = section.id
+
             const items = createMemo(() =>
               projects()
                 .filter((project) => projectSection(state, project.key) === id)
@@ -300,6 +322,7 @@ export function ProjectSidebar() {
                     (projectOrder().get(b.key) ?? projectOrder().size),
                 ),
             )
+
             const projectLimit = () => projectLimits[id] ?? 5
             const collapsed = () => !!state.collapsed[`section:${id}`]
 
@@ -313,6 +336,7 @@ export function ProjectSidebar() {
                 onDragOver={(event) => {
                   if (!drag.project && !(drag.section !== undefined && drag.section !== id)) return
                   event.preventDefault()
+
                   if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
                   setDrag("target", id)
                 }}
@@ -328,8 +352,10 @@ export function ProjectSidebar() {
                     const target = order.indexOf(id)
                     setState("order", order.toSpliced(source, 1).toSpliced(target, 0, drag.section))
                     setDrag({ section: undefined, target: undefined })
+
                     return
                   }
+
                   if (!drag.project) return
                   event.preventDefault()
                   setState("assignments", drag.project, id)
@@ -397,6 +423,7 @@ export function ProjectSidebar() {
                       const item = () => byKey().get(key)!
                       const expanded = () => !state.collapsed[`project:${key}`]
                       const limit = () => visible[key] ?? 5
+
                       const newDraft = () => {
                         setState("collapsed", `project:${key}`, false)
                         void tabs.newDraft({
@@ -409,28 +436,37 @@ export function ProjectSidebar() {
                         const saved = new Map(
                           (state.sessions[key] ?? []).map((entry, index) => [entry.id, { ...entry, index }]),
                         )
+
                         return item().sessions.toSorted((a, b) => {
                           const left = saved.get(a.id)
                           const right = saved.get(b.id)
                           const freshA = !left || a.time.updated > left.updated
                           const freshB = !right || b.time.updated > right.updated
+
                           if (freshA && freshB) return b.time.updated - a.time.updated
+
                           if (freshA !== freshB) return freshA ? -1 : 1
+
                           return left!.index - right!.index
                         })
                       })
+
                       const sessions = () => {
                         const list = ordered()
                         const route = layout.route()
 
                         const current =
                           route.type === "session" && route.server === item().server ? route.sessionId : undefined
+
                         let root = current
+
                         while (root) {
                           const parent = item().ctx.data.session.get(root)?.experimental?.taskParentID
+
                           if (!parent) break
                           root = parent
                         }
+
                         const selected = list.find((session) => session.id === root)
 
                         return selected && !list.slice(0, limit()).includes(selected)
@@ -446,6 +482,7 @@ export function ProjectSidebar() {
                               if (!drag.project || projectSection(state, drag.project) !== id) return
                               event.preventDefault()
                               event.stopPropagation()
+
                               if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
                             }}
                             onDrop={(event) => {
@@ -454,6 +491,7 @@ export function ProjectSidebar() {
                               event.stopPropagation()
                               const source = state.projects.indexOf(drag.project)
                               const target = state.projects.indexOf(key)
+
                               if (source < 0 || target < 0) return
                               setState("projects", (order) =>
                                 order.toSpliced(source, 1).toSpliced(target, 0, drag.project),
@@ -534,19 +572,26 @@ export function ProjectSidebar() {
                             <For each={sessions().map((session) => session.id)}>
                               {(sessionID) => {
                                 const session = () => item().sessions.find((session) => session.id === sessionID)
+
                                 const family = createSidebarTaskTree(
                                   () => item().ctx.sdk.event,
                                   taskChanges,
                                   () => item().ctx.sdk.api.experimental.session.tasks.tree({ sessionID }),
                                 )
+
                                 const tasks = () => {
                                   const { tree } = family()
+
                                   if (tree.state !== "ready" && tree.state !== "refreshing") return []
+
                                   return tree.latest.tasks.filter((task) => !task.time.archived)
                                 }
+
                                 const children = (id: string) =>
                                   tasks().filter((task) => task.experimental?.taskParentID === id)
+
                                 const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
+
                                 const rows = createMemo(() => {
                                   const walk = (
                                     id: string,
@@ -555,6 +600,7 @@ export function ProjectSidebar() {
                                     collapsed[id]
                                       ? []
                                       : children(id).flatMap((task) => [{ task, depth }, ...walk(task.id, depth + 1)])
+
                                   return walk(sessionID, 1)
                                 })
 
@@ -614,18 +660,22 @@ export function ProjectSidebar() {
                                             if (drag.sessionProject !== key || drag.session === sessionID) return
                                             event.preventDefault()
                                             event.stopPropagation()
+
                                             if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
                                           }}
                                           onDrop={(event) => {
                                             if (drag.sessionProject !== key || drag.session === sessionID) return
                                             event.preventDefault()
                                             event.stopPropagation()
+
                                             const list = ordered().map((value) => ({
                                               id: value.id,
                                               updated: value.time.updated,
                                             }))
+
                                             const source = list.findIndex((value) => value.id === drag.session)
                                             const target = list.findIndex((value) => value.id === sessionID)
+
                                             if (source < 0 || target < 0) return
                                             setState(
                                               "sessions",
@@ -678,6 +728,7 @@ export function ProjectSidebar() {
                                             <Menu.Item
                                               onSelect={() => {
                                                 const value = session()
+
                                                 if (value) deleteSession(key, value)
                                               }}
                                             >
@@ -704,14 +755,17 @@ export function ProjectSidebar() {
                                           () => row.task.id,
                                           () => true,
                                         )
+
                                         const active = () => {
                                           const route = layout.route()
+
                                           return (
                                             route.type === "session" &&
                                             route.server === item().server &&
                                             route.sessionId === row.task.id
                                           )
                                         }
+
                                         return (
                                           <div
                                             class="relative"
