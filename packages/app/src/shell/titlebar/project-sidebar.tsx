@@ -1,6 +1,6 @@
-import { createEffect, createMemo, For, Show, startTransition } from "solid-js"
-import { createStore } from "solid-js/store"
-import { useQueries, useQueryClient } from "@tanstack/solid-query"
+import { batch, createEffect, createMemo, For, on, onCleanup, Show, startTransition } from "solid-js"
+import { createStore, reconcile } from "solid-js/store"
+import { useQueries, useQuery, useQueryClient } from "@tanstack/solid-query"
 import type { SessionInfo } from "@opencode/client/promise"
 import { writeClipboard } from "@opencode/ui/clipboard"
 import { Button } from "@opencode/ui/button"
@@ -12,13 +12,15 @@ import { Loader } from "@opencode/ui/loader"
 import { Menu } from "@opencode/ui/menu"
 import { displayName } from "@opencode/ui/project-avatar"
 import { TextInput } from "@opencode/ui/text-input"
+import { Tooltip } from "@opencode/ui/tooltip"
 import { uuid } from "@opencode/util/uuid"
-import { homeSessionsQuery } from "@/home/sessions/queries"
+import { comparablePath, containsDirectory, getFilename } from "@opencode/util/path"
+import { homeSessionsQuery, projectSessionDirectories } from "@/home/sessions/queries"
 import { mergeHomeSessionIndex } from "@/home/sessions/index"
 import { useLanguage } from "@/runtime/i18n/language"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import { ServerConnection, useServers } from "@/runtime/server/registry"
-import { useGlobal } from "@/runtime/server/runtime"
+import { type ServerCtx, useGlobal } from "@/runtime/server/runtime"
 import { useLayout } from "@/shell/state/layout"
 import { type DraftTab, tabKey, useTabs } from "@/shell/tabs/tabs"
 import { useSessionTabAvatarState } from "@/shell/layout/project-avatar-state"
@@ -28,10 +30,17 @@ import { sessionTreeIDs } from "@/session/requests/session-request-tree"
 import { showToast } from "@/shell/notifications/toast"
 import { usePlatform } from "@/runtime/platform/platform"
 import { notifySessionTabsRemoved } from "./session-events"
-import { ProjectSectionsState, projectSection, sidebarProjectKey } from "./project-sections"
+import {
+  ProjectSectionsState,
+  projectSection,
+  projectSorts,
+  sidebarProjectKey,
+  translateProjectSections,
+} from "./project-sections"
 import { createSidebarTaskChanges, createSidebarTaskTree } from "./sidebar-task-trees"
+import { isSidebarSessionActivity } from "./sidebar-sessions"
 
-export function ProjectSidebar() {
+export function ProjectSidebar(props: { onNavigate?: () => void }) {
   const language = useLanguage()
   const dialog = useDialog()
   const global = useGlobal()
@@ -41,7 +50,7 @@ export function ProjectSidebar() {
   const queryClient = useQueryClient()
   const platform = usePlatform()
 
-  const initial = { sections: [], order: [], projects: [], assignments: {}, collapsed: {}, sessions: {} }
+  const initial = { sections: [], order: [], projects: [], sorting: {}, assignments: {}, collapsed: {}, sessions: {} }
 
   const [state, setState, , ready] = persisted(
     Persist.global("sidebar.project-sections"),
@@ -49,12 +58,16 @@ export function ProjectSidebar() {
     initial,
   )
 
+  const ownKey = () => {
+    const current = servers.list.find(servers.current)
+    return current ? ServerConnection.key(current) : "sidecar"
+  }
   global.share({
     key: "sidebar.project-sections",
     schema: ProjectSectionsState,
     initial,
-    store: state,
-    setStore: setState,
+    read: () => translateProjectSections(state, ownKey(), "sidecar"),
+    apply: (value) => setState(reconcile(translateProjectSections(value, "sidecar", ownKey()))),
     ready,
   })
 
@@ -64,13 +77,13 @@ export function ProjectSidebar() {
   const [drag, setDrag] = createStore<{
     project: string
     session: string
-    sessionProject: string
+    sessionFolder: string
     section?: string
     target?: string
   }>({
     project: "",
     session: "",
-    sessionProject: "",
+    sessionFolder: "",
   })
 
   const connections = createMemo(() =>
@@ -89,6 +102,24 @@ export function ProjectSidebar() {
   }))
 
   const taskChanges = createSidebarTaskChanges(() => connections().map(({ ctx }) => ctx.sdk.event))
+  const [activity, setActivity] = createStore<Record<string, number>>({})
+  createEffect(() => {
+    for (const { conn, ctx } of connections()) {
+      onCleanup(
+        ctx.data.listen(({ details }) => {
+          if (!isSidebarSessionActivity(details)) return
+          const session = ctx.data.session.get(details.data.sessionID)
+          const directory =
+            (session && ctx.projects.forSession(session)?.worktree) ??
+            (details.location && ctx.projects.forDirectory(details.location.directory)?.worktree)
+          if (!directory) return
+          setActivity(sidebarProjectKey(ServerConnection.key(conn), directory), (at) =>
+            Math.max(at ?? 0, details.created),
+          )
+        }),
+      )
+    }
+  })
 
   const projects = createMemo(() =>
     connections()
@@ -118,17 +149,6 @@ export function ProjectSidebar() {
       })
       .toSorted((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)),
   )
-
-  createEffect(() => {
-    if (!ready()) return
-    const saved = new Set(state.projects)
-
-    const added = projects()
-      .map((project) => project.key)
-      .filter((key) => !saved.has(key))
-
-    if (added.length) setState("projects", (order) => [...order, ...added])
-  })
 
   const projectOrder = createMemo(() => new Map(state.projects.map((key, index) => [key, index])))
   const byKey = createMemo(() => new Map(projects().map((project) => [project.key, project])))
@@ -234,7 +254,10 @@ export function ProjectSidebar() {
           aria-current={selected() ? "page" : undefined}
           class="h-7 min-w-0 flex-1 truncate rounded-[6px] px-2 text-start text-[13px] hover:bg-v2-overlay-simple-overlay-hover"
           classList={{ "bg-v2-overlay-simple-overlay-hover": selected() }}
-          onClick={() => tabs.select(props.tab)}
+          onClick={() => {
+            tabs.select(props.tab)
+            navigated()
+          }}
         >
           {language.t("session.tab.session")}
         </button>
@@ -248,6 +271,10 @@ export function ProjectSidebar() {
         />
       </div>
     )
+  }
+
+  function navigated() {
+    props.onNavigate?.()
   }
 
   function editSection(section?: { id: string; name: string }) {
@@ -313,17 +340,57 @@ export function ProjectSidebar() {
           {(section) => {
             const id = section.id
 
+            const sort = createMemo(
+              () =>
+                state.sorting[id] ??
+                (state.projects.some((key) => projectSection(state, key) === id) ? "manual" : "updated"),
+            )
+            const collator = createMemo(() => new Intl.Collator(language.intl(), { numeric: true }))
             const items = createMemo(() =>
               projects()
                 .filter((project) => projectSection(state, project.key) === id)
-                .toSorted(
-                  (a, b) =>
-                    (projectOrder().get(a.key) ?? projectOrder().size) -
-                    (projectOrder().get(b.key) ?? projectOrder().size),
-                ),
+                .toSorted((a, b) => {
+                  const delta =
+                    sort() === "manual"
+                      ? (projectOrder().get(a.key) ?? projectOrder().size) -
+                        (projectOrder().get(b.key) ?? projectOrder().size)
+                      : sort() === "updated"
+                        ? Math.max(activity[b.key] ?? 0, b.sessions[0]?.time.updated ?? b.project.time.created) -
+                          Math.max(activity[a.key] ?? 0, a.sessions[0]?.time.updated ?? a.project.time.created)
+                        : 0
+                  return delta || collator().compare(displayName(a.project), displayName(b.project))
+                }),
             )
 
+            const move = (key: string, target: number) => {
+              const keys = items().map((item) => item.key)
+              const source = keys.indexOf(key)
+              if (source < 0 || target < 0 || target >= keys.length || source === target) return
+              const sectionKeys = new Set(keys)
+              batch(() => {
+                setState("projects", (order) => [
+                  ...order.filter((other) => !sectionKeys.has(other)),
+                  ...keys.toSpliced(source, 1).toSpliced(target, 0, key),
+                ])
+                setState("sorting", id, "manual")
+                if (target >= projectLimit()) setProjectLimits(id, target + 1)
+              })
+            }
             const projectLimit = () => projectLimits[id] ?? 5
+            const shown = createMemo(() => {
+              const list = items()
+              const first = list.slice(0, projectLimit())
+              if (first.length === list.length) return first
+              const route = layout.route()
+              const selected =
+                route.type === "draft" ? drafts().find(({ tab }) => tab.draftID === route.draftID)?.key : undefined
+              const active = list.find((project) => {
+                if (route.type !== "session" || route.server !== project.server) return project.key === selected
+                const session = project.ctx.data.session.get(route.sessionId)
+                return session && project.ctx.projects.forSession(session)?.worktree === project.project.worktree
+              })
+              return active && !first.includes(active) ? [...first, active] : first
+            })
             const collapsed = () => !!state.collapsed[`section:${id}`]
 
             return (
@@ -398,6 +465,33 @@ export function ProjectSidebar() {
                     />
                     <Menu.Portal>
                       <Menu.Content>
+                        <Menu.Sub>
+                          <Menu.SubTrigger>{language.t("sidebar.recent.view.sortBy")}</Menu.SubTrigger>
+                          <Menu.Portal>
+                            <Menu.SubContent>
+                              <Menu.RadioGroup
+                                value={sort()}
+                                onChange={(value) => {
+                                  const next = projectSorts.find((mode) => mode === value)
+                                  if (next) setState("sorting", id, next)
+                                }}
+                              >
+                                <For each={projectSorts}>
+                                  {(mode) => (
+                                    <Menu.RadioItem value={mode} closeOnSelect>
+                                      {language.t(
+                                        mode === "manual"
+                                          ? "sidebar.view.ordering.manual"
+                                          : `sidebar.recent.view.sortBy.${mode}`,
+                                      )}
+                                    </Menu.RadioItem>
+                                  )}
+                                </For>
+                              </Menu.RadioGroup>
+                            </Menu.SubContent>
+                          </Menu.Portal>
+                        </Menu.Sub>
+                        <Menu.Separator />
                         <Menu.Item onSelect={() => editSection()}>{language.t("sidebar.sections.create")}</Menu.Item>
                         <Show when={id}>
                           <Menu.Item onSelect={() => editSection(section)}>
@@ -414,22 +508,32 @@ export function ProjectSidebar() {
                   </Menu>
                 </div>
                 <Show when={!collapsed()}>
-                  <For
-                    each={items()
-                      .slice(0, projectLimit())
-                      .map((project) => project.key)}
-                  >
+                  <For each={shown().map((project) => project.key)}>
                     {(key) => {
                       const item = () => byKey().get(key)!
                       const expanded = () => !state.collapsed[`project:${key}`]
-                      const limit = () => visible[key] ?? 5
+                      createEffect(
+                        on(
+                          () =>
+                            expanded() &&
+                            item().ctx.sdk.connection.status() === "connected" &&
+                            item().project.vcs === "git" &&
+                            item().project.id,
+                          (id) => {
+                            if (id && !item().ctx.sync.worktrees.cached(id)) void item().ctx.sync.worktrees.list(id)
+                          },
+                        ),
+                      )
 
-                      const newDraft = () => {
+                      const newDraft = (worktree?: string) => {
                         setState("collapsed", `project:${key}`, false)
-                        void tabs.newDraft({
-                          server: item().server,
-                          directory: item().project.worktree,
-                        })
+                        void tabs
+                          .newDraft({
+                            server: item().server,
+                            directory: item().project.worktree,
+                            worktree,
+                          })
+                          .then(navigated)
                       }
 
                       const ordered = createMemo(() => {
@@ -451,8 +555,32 @@ export function ProjectSidebar() {
                         })
                       })
 
-                      const sessions = () => {
-                        const list = ordered()
+                      const directories = createMemo(() => projectSessionDirectories(item().project))
+                      const deepestFirst = createMemo(() => directories().toSorted((a, b) => b.length - a.length))
+                      const folderFor = (directory: string) =>
+                        deepestFirst().find((root) => containsDirectory(root, directory)) ?? item().project.worktree
+                      const folderSessions = createMemo(() =>
+                        Map.groupBy(ordered(), (session) => folderFor(session.location.directory)),
+                      )
+                      const folderDrafts = createMemo(() =>
+                        Map.groupBy(
+                          drafts().filter((draft) => draft.key === key),
+                          ({ tab }) =>
+                            folderFor(
+                              tab.worktree && tab.worktree !== "main" && tab.worktree !== "create"
+                                ? tab.worktree
+                                : tab.directory,
+                            ),
+                        ),
+                      )
+                      const folders = createMemo(() => [
+                        ...directories()
+                          .slice(1)
+                          .filter((directory) => folderSessions().has(directory) || folderDrafts().has(directory))
+                          .toSorted((a, b) => getFilename(a).localeCompare(getFilename(b)) || a.localeCompare(b)),
+                        item().project.worktree,
+                      ])
+                      const currentRoot = createMemo(() => {
                         const route = layout.route()
 
                         const current =
@@ -467,15 +595,11 @@ export function ProjectSidebar() {
                           root = parent
                         }
 
-                        const selected = list.find((session) => session.id === root)
-
-                        return selected && !list.slice(0, limit()).includes(selected)
-                          ? [...list.slice(0, limit()), selected]
-                          : list.slice(0, limit())
-                      }
+                        return root
+                      })
 
                       return (
-                        <div role="group" aria-label={displayName(item().project)}>
+                        <div role="group" aria-label={displayName(item().project)} data-focus-scope>
                           <div
                             class="group/project flex h-7 items-center"
                             onDragOver={(event) => {
@@ -489,12 +613,9 @@ export function ProjectSidebar() {
                               if (!drag.project || projectSection(state, drag.project) !== id) return
                               event.preventDefault()
                               event.stopPropagation()
-                              const source = state.projects.indexOf(drag.project)
-                              const target = state.projects.indexOf(key)
-
-                              if (source < 0 || target < 0) return
-                              setState("projects", (order) =>
-                                order.toSpliced(source, 1).toSpliced(target, 0, drag.project),
+                              move(
+                                drag.project,
+                                items().findIndex((project) => project.key === key),
                               )
                               setDrag({ project: "", target: undefined })
                             }}
@@ -528,6 +649,13 @@ export function ProjectSidebar() {
                                 classList={{ "rtl:rotate-180": !expanded() }}
                               />
                             </button>
+                            <Show when={item().project.vcs === "git"}>
+                              <PullRequestLink
+                                ctx={item().ctx}
+                                projectID={item().project.id}
+                                directory={item().project.worktree}
+                              />
+                            </Show>
                             <Menu placement="bottom-end">
                               <Menu.Trigger
                                 as={IconButton}
@@ -539,7 +667,20 @@ export function ProjectSidebar() {
                               />
                               <Menu.Portal>
                                 <Menu.Content>
-                                  <Menu.Item onSelect={newDraft}>{language.t("command.session.new")}</Menu.Item>
+                                  <Menu.Item onSelect={() => newDraft()}>{language.t("command.session.new")}</Menu.Item>
+                                  <Menu.Separator />
+                                  <Menu.Item
+                                    disabled={items()[0]?.key === key}
+                                    onSelect={() => move(key, items().findIndex((item) => item.key === key) - 1)}
+                                  >
+                                    {language.t("sidebar.recent.moveUp")}
+                                  </Menu.Item>
+                                  <Menu.Item
+                                    disabled={items().at(-1)?.key === key}
+                                    onSelect={() => move(key, items().findIndex((item) => item.key === key) + 1)}
+                                  >
+                                    {language.t("sidebar.recent.moveDown")}
+                                  </Menu.Item>
                                   <Menu.Separator />
                                   <For each={sections()}>
                                     {(target) => (
@@ -562,300 +703,399 @@ export function ProjectSidebar() {
                               class="shrink-0 hover-reveal group-hover/project:opacity-100 group-focus-within/project:opacity-100"
                               icon={<Icon name="edit" />}
                               aria-label={language.t("command.session.new")}
-                              onClick={newDraft}
+                              onClick={() => newDraft()}
                             />
                           </div>
                           <Show when={expanded()}>
-                            <For each={drafts().filter((draft) => draft.key === key)}>
-                              {(draft) => <DraftRow tab={draft.tab} nested />}
-                            </For>
-                            <For each={sessions().map((session) => session.id)}>
-                              {(sessionID) => {
-                                const session = () => item().sessions.find((session) => session.id === sessionID)
-
-                                const family = createSidebarTaskTree(
-                                  () => item().ctx.sdk.event,
-                                  taskChanges,
-                                  () => item().ctx.sdk.api.experimental.session.tasks.tree({ sessionID }),
-                                )
-
-                                const tasks = () => {
-                                  const { tree } = family()
-
-                                  if (tree.state !== "ready" && tree.state !== "refreshing") return []
-
-                                  return tree.latest.tasks.filter((task) => !task.time.archived)
-                                }
-
-                                const children = (id: string) =>
-                                  tasks().filter((task) => task.experimental?.taskParentID === id)
-
-                                const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
-
-                                const rows = createMemo(() => {
-                                  const walk = (
-                                    id: string,
-                                    depth: number,
-                                  ): Array<{ task: SessionInfo; depth: number }> =>
-                                    collapsed[id]
-                                      ? []
-                                      : children(id).flatMap((task) => [{ task, depth }, ...walk(task.id, depth + 1)])
-
-                                  return walk(sessionID, 1)
-                                })
-
-                                const status = useSessionTabAvatarState(
-                                  () => item().server,
-                                  () => sessionID,
-                                  () => true,
-                                )
-
-                                const selected = () => {
+                            <For each={folders()}>
+                              {(directory) => {
+                                const nested = directory !== item().project.worktree
+                                const folderKey = nested
+                                  ? `worktree:${sidebarProjectKey(item().server, directory)}`
+                                  : key
+                                const list = () => folderSessions().get(directory) ?? []
+                                const localDrafts = () => folderDrafts().get(directory) ?? []
+                                const limit = () => visible[folderKey] ?? 5
+                                const active = createMemo(() => list().find((session) => session.id === currentRoot()))
+                                const currentDraft = () => {
                                   const route = layout.route()
-
                                   return (
-                                    route.type === "session" &&
-                                    route.server === item().server &&
-                                    route.sessionId === sessionID
+                                    route.type === "draft" &&
+                                    localDrafts().some(({ tab }) => tab.draftID === route.draftID)
                                   )
                                 }
-
+                                const current = () => !!active() || currentDraft()
+                                const open = () => {
+                                  if (!nested) return true
+                                  const collapsed = state.collapsed[folderKey]
+                                  return collapsed === undefined ? current() : !collapsed
+                                }
+                                const count = () => list().length + localDrafts().length
+                                const sessions = createMemo(() => {
+                                  const first = list().slice(0, limit())
+                                  const selected = active()
+                                  return selected && !first.includes(selected) ? [...first, selected] : first
+                                })
+                                const name = createMemo(() => worktreeLabel(directory, folders()))
                                 return (
-                                  <>
-                                    <div class="relative">
-                                      <Show when={children(sessionID).length > 0}>
+                                  <div
+                                    classList={{ "ms-4": nested }}
+                                    role={nested ? "group" : undefined}
+                                    aria-label={nested ? name() : undefined}
+                                  >
+                                    <Show when={nested}>
+                                      <div class="group/worktree flex h-7 items-center">
                                         <button
                                           type="button"
-                                          class="absolute start-3 top-0 z-10 flex h-7 w-5 items-center justify-center"
-                                          aria-expanded={!collapsed[sessionID]}
-                                          aria-label={language.t(
-                                            collapsed[sessionID] ? "tasks.expand" : "tasks.collapse",
-                                            {
-                                              title: session()?.title ?? language.t("tasks.untitled"),
-                                            },
+                                          aria-expanded={open()}
+                                          aria-current={!open() && current() ? "location" : undefined}
+                                          aria-description={language.plural(
+                                            "settings.workspaces.sessions.filtered",
+                                            count(),
+                                            { count: count() },
                                           )}
-                                          onClick={() => setCollapsed(sessionID, !collapsed[sessionID])}
+                                          title={directory}
+                                          class="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-[6px] px-2 text-start text-[13px] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover focus-visible:-outline-offset-2"
+                                          classList={{ "bg-v2-overlay-simple-overlay-hover": !open() && current() }}
+                                          onClick={() => setState("collapsed", folderKey, open())}
                                         >
+                                          <Icon name="folder" size="small" class="shrink-0" />
+                                          <bdi class="truncate">{name()}</bdi>
                                           <Icon
-                                            name={collapsed[sessionID] ? "chevron-right" : "chevron-down"}
+                                            name={open() ? "chevron-down" : "chevron-right"}
                                             size="small"
-                                            classList={{ "rtl:rotate-180": collapsed[sessionID] }}
+                                            class="shrink-0"
                                           />
-                                        </button>
-                                      </Show>
-                                      <Menu.Context>
-                                        <Menu.Context.Trigger
-                                          as="button"
-                                          type="button"
-                                          draggable="true"
-                                          onDragStart={(event) => {
-                                            if (!event.dataTransfer) return
-                                            event.stopPropagation()
-                                            event.dataTransfer.effectAllowed = "move"
-                                            event.dataTransfer.setData("text/plain", sessionID)
-                                            setDrag({ session: sessionID, sessionProject: key })
-                                          }}
-                                          onDragEnd={() => setDrag({ session: "", sessionProject: "" })}
-                                          onDragOver={(event) => {
-                                            if (drag.sessionProject !== key || drag.session === sessionID) return
-                                            event.preventDefault()
-                                            event.stopPropagation()
-
-                                            if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
-                                          }}
-                                          onDrop={(event) => {
-                                            if (drag.sessionProject !== key || drag.session === sessionID) return
-                                            event.preventDefault()
-                                            event.stopPropagation()
-
-                                            const list = ordered().map((value) => ({
-                                              id: value.id,
-                                              updated: value.time.updated,
-                                            }))
-
-                                            const source = list.findIndex((value) => value.id === drag.session)
-                                            const target = list.findIndex((value) => value.id === sessionID)
-
-                                            if (source < 0 || target < 0) return
-                                            setState(
-                                              "sessions",
-                                              key,
-                                              list.toSpliced(source, 1).toSpliced(target, 0, list[source]!),
-                                            )
-                                            setDrag({ session: "", sessionProject: "" })
-                                          }}
-                                          aria-current={selected() ? "page" : undefined}
-                                          title={session()?.title}
-                                          class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
-                                          classList={{
-                                            "bg-v2-overlay-simple-overlay-hover": selected(),
-                                          }}
-                                          onClick={() => {
-                                            const value = session()
-
-                                            if (!value) return
-                                            item().ctx.data.session.remember(value)
-                                            void startTransition(() =>
-                                              tabs.select(
-                                                tabs.addSessionTab({
-                                                  server: item().server,
-                                                  sessionId: sessionID,
-                                                }),
-                                              ),
-                                            )
-                                          }}
-                                        >
-                                          <bdi class="min-w-0 flex-1 truncate">
-                                            {sessionTitle(session()?.title) ?? language.t("command.session.new")}
-                                          </bdi>
-                                          <Show
-                                            when={status.loading()}
-                                            fallback={
-                                              <Show when={status.unread()}>
-                                                <span class="size-1.5 shrink-0 rounded-full bg-current" />
-                                              </Show>
-                                            }
-                                          >
-                                            <ActivityRing class="size-3.5 shrink-0" />
+                                          <Show when={!open()}>
+                                            <span aria-hidden="true" class="ms-auto text-12 tabular-nums">
+                                              {count()}
+                                            </span>
                                           </Show>
-                                        </Menu.Context.Trigger>
-                                        <Menu.Context.Portal>
-                                          <Menu.Context.Content>
-                                            <Menu.Item onSelect={() => void copySessionID(sessionID)}>
-                                              {language.t("command.session.copyID")}
-                                            </Menu.Item>
-                                            <Menu.Separator />
-                                            <Menu.Item
-                                              onSelect={() => {
-                                                const value = session()
-
-                                                if (value) deleteSession(key, value)
-                                              }}
-                                            >
-                                              {language.t("common.delete")}
-                                            </Menu.Item>
-                                          </Menu.Context.Content>
-                                        </Menu.Context.Portal>
-                                      </Menu.Context>
-                                    </div>
-                                    <Show when={family().tree.error}>
-                                      <p class="ps-8 pe-2 text-12 text-text-weak">{language.t("tasks.error")}</p>
-                                      <button
-                                        type="button"
-                                        class="w-full ps-8 pe-2 text-start text-12 text-text-weak"
-                                        onClick={() => void family().refresh()}
-                                      >
-                                        {language.t("tasks.refresh")}
-                                      </button>
+                                        </button>
+                                        <Show when={item().project.vcs === "git"}>
+                                          <PullRequestLink
+                                            ctx={item().ctx}
+                                            projectID={item().project.id}
+                                            directory={directory}
+                                          />
+                                        </Show>
+                                        <IconButton
+                                          variant="ghost-muted"
+                                          size="small"
+                                          class="shrink-0 hover-reveal group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100"
+                                          icon={<Icon name="edit" />}
+                                          aria-label={language.t("command.session.new")}
+                                          onClick={() => {
+                                            setState("collapsed", folderKey, false)
+                                            newDraft(directory)
+                                          }}
+                                        />
+                                      </div>
                                     </Show>
-                                    <For each={rows()}>
-                                      {(row) => {
-                                        const childStatus = useSessionTabAvatarState(
-                                          () => item().server,
-                                          () => row.task.id,
-                                          () => true,
-                                        )
-
-                                        const active = () => {
-                                          const route = layout.route()
-
-                                          return (
-                                            route.type === "session" &&
-                                            route.server === item().server &&
-                                            route.sessionId === row.task.id
-                                          )
-                                        }
-
-                                        return (
-                                          <div
-                                            class="relative"
-                                            style={{ "padding-inline-start": `${row.depth * 16}px` }}
+                                    <Show when={open()}>
+                                      <div classList={{ "ps-2": nested }}>
+                                        <For each={localDrafts()}>{(draft) => <DraftRow tab={draft.tab} nested />}</For>
+                                        <SessionRows
+                                          ids={sessions().map((session) => session.id)}
+                                          folderKey={folderKey}
+                                        />
+                                        <Show when={list().length > limit()}>
+                                          <button
+                                            type="button"
+                                            class="h-7 w-full ps-8 text-start text-[13px] text-v2-text-text-muted hover:text-v2-text-text-base"
+                                            onClick={() => setVisible(folderKey, limit() + 10)}
                                           >
-                                            <Show when={children(row.task.id).length > 0}>
-                                              <button
-                                                type="button"
-                                                class="absolute top-0 z-10 flex h-7 w-5 items-center justify-center"
-                                                style={{ "inset-inline-start": `${12 + row.depth * 16}px` }}
-                                                aria-expanded={!collapsed[row.task.id]}
-                                                aria-label={language.t(
-                                                  collapsed[row.task.id] ? "tasks.expand" : "tasks.collapse",
-                                                  {
-                                                    title: row.task.title ?? language.t("tasks.untitled"),
-                                                  },
-                                                )}
-                                                onClick={() => setCollapsed(row.task.id, !collapsed[row.task.id])}
-                                              >
-                                                <Icon
-                                                  name={collapsed[row.task.id] ? "chevron-right" : "chevron-down"}
-                                                  size="small"
-                                                  classList={{ "rtl:rotate-180": collapsed[row.task.id] }}
-                                                />
-                                              </button>
-                                            </Show>
-                                            <Menu.Context>
-                                              <Menu.Context.Trigger
-                                                as="button"
-                                                type="button"
-                                                aria-current={active() ? "page" : undefined}
-                                                class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
-                                                classList={{ "bg-v2-overlay-simple-overlay-hover": active() }}
-                                                onClick={() => {
-                                                  item().ctx.data.session.remember(row.task)
-                                                  void startTransition(() =>
-                                                    tabs.select(
-                                                      tabs.addSessionTab({
-                                                        server: item().server,
-                                                        sessionId: row.task.id,
-                                                      }),
-                                                    ),
-                                                  )
-                                                }}
-                                              >
-                                                <bdi class="min-w-0 flex-1 truncate">
-                                                  {sessionTitle(row.task.title) ?? language.t("command.session.new")}
-                                                </bdi>
-                                                <Show
-                                                  when={childStatus.loading()}
-                                                  fallback={
-                                                    <Show when={childStatus.unread()}>
-                                                      <span class="size-1.5 shrink-0 rounded-full bg-current" />
-                                                    </Show>
-                                                  }
-                                                >
-                                                  <ActivityRing class="size-3.5 shrink-0" />
-                                                </Show>
-                                              </Menu.Context.Trigger>
-                                              <Menu.Context.Portal>
-                                                <Menu.Context.Content>
-                                                  <Menu.Item onSelect={() => void copySessionID(row.task.id)}>
-                                                    {language.t("command.session.copyID")}
-                                                  </Menu.Item>
-                                                </Menu.Context.Content>
-                                              </Menu.Context.Portal>
-                                            </Menu.Context>
-                                          </div>
-                                        )
-                                      }}
-                                    </For>
-                                  </>
+                                            {language.t("sidebar.sections.more")}
+                                          </button>
+                                        </Show>
+                                      </div>
+                                    </Show>
+                                  </div>
                                 )
                               }}
                             </For>
-                            <Show when={item().sessions.length > limit()}>
-                              <button
-                                type="button"
-                                class="h-7 w-full ps-8 text-start text-[13px] text-v2-text-text-muted hover:text-v2-text-text-base"
-                                onClick={() => setVisible(key, limit() + 10)}
-                              >
-                                {language.t("sidebar.sections.more")}
-                              </button>
-                            </Show>
                           </Show>
                         </div>
                       )
+
+                      function SessionRows(props: { ids: string[]; folderKey: string }) {
+                        return (
+                          <For each={props.ids}>
+                            {(sessionID) => {
+                              const session = () => item().sessions.find((session) => session.id === sessionID)
+
+                              const family = createSidebarTaskTree(
+                                () => item().ctx.sdk.event,
+                                taskChanges,
+                                () => item().ctx.sdk.api.experimental.session.tasks.tree({ sessionID }),
+                              )
+
+                              const tasks = () => {
+                                const { tree } = family()
+
+                                if (tree.state !== "ready" && tree.state !== "refreshing") return []
+
+                                return tree.latest.tasks.filter((task) => !task.time.archived)
+                              }
+
+                              const children = (id: string) =>
+                                tasks().filter((task) => task.experimental?.taskParentID === id)
+
+                              const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
+
+                              const rows = createMemo(() => {
+                                const walk = (
+                                  id: string,
+                                  depth: number,
+                                ): Array<{ task: SessionInfo; depth: number }> =>
+                                  collapsed[id]
+                                    ? []
+                                    : children(id).flatMap((task) => [{ task, depth }, ...walk(task.id, depth + 1)])
+
+                                return walk(sessionID, 1)
+                              })
+
+                              const status = useSessionTabAvatarState(
+                                () => item().server,
+                                () => sessionID,
+                                () => true,
+                              )
+
+                              const selected = () => {
+                                const route = layout.route()
+
+                                return (
+                                  route.type === "session" &&
+                                  route.server === item().server &&
+                                  route.sessionId === sessionID
+                                )
+                              }
+
+                              return (
+                                <>
+                                  <div class="relative">
+                                    <Show when={children(sessionID).length > 0}>
+                                      <button
+                                        type="button"
+                                        class="absolute start-3 top-0 z-10 flex h-7 w-5 items-center justify-center"
+                                        aria-expanded={!collapsed[sessionID]}
+                                        aria-label={language.t(
+                                          collapsed[sessionID] ? "tasks.expand" : "tasks.collapse",
+                                          {
+                                            title: session()?.title ?? language.t("tasks.untitled"),
+                                          },
+                                        )}
+                                        onClick={() => setCollapsed(sessionID, !collapsed[sessionID])}
+                                      >
+                                        <Icon
+                                          name={collapsed[sessionID] ? "chevron-right" : "chevron-down"}
+                                          size="small"
+                                          classList={{ "rtl:rotate-180": collapsed[sessionID] }}
+                                        />
+                                      </button>
+                                    </Show>
+                                    <Menu.Context>
+                                      <Menu.Context.Trigger
+                                        as="button"
+                                        type="button"
+                                        draggable="true"
+                                        onDragStart={(event) => {
+                                          if (!event.dataTransfer) return
+                                          event.stopPropagation()
+                                          event.dataTransfer.effectAllowed = "move"
+                                          event.dataTransfer.setData("text/plain", sessionID)
+                                          setDrag({ session: sessionID, sessionFolder: props.folderKey })
+                                        }}
+                                        onDragEnd={() => setDrag({ session: "", sessionFolder: "" })}
+                                        onDragOver={(event) => {
+                                          if (drag.sessionFolder !== props.folderKey || drag.session === sessionID)
+                                            return
+                                          event.preventDefault()
+                                          event.stopPropagation()
+
+                                          if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
+                                        }}
+                                        onDrop={(event) => {
+                                          if (drag.sessionFolder !== props.folderKey || drag.session === sessionID)
+                                            return
+                                          event.preventDefault()
+                                          event.stopPropagation()
+
+                                          const list = ordered().map((value) => ({
+                                            id: value.id,
+                                            updated: value.time.updated,
+                                          }))
+
+                                          const source = list.findIndex((value) => value.id === drag.session)
+                                          const target = list.findIndex((value) => value.id === sessionID)
+
+                                          if (source < 0 || target < 0) return
+                                          setState(
+                                            "sessions",
+                                            key,
+                                            list.toSpliced(source, 1).toSpliced(target, 0, list[source]!),
+                                          )
+                                          setDrag({ session: "", sessionFolder: "" })
+                                        }}
+                                        aria-current={selected() ? "page" : undefined}
+                                        title={session()?.title}
+                                        class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
+                                        classList={{
+                                          "bg-v2-overlay-simple-overlay-hover": selected(),
+                                        }}
+                                        onClick={() => {
+                                          const value = session()
+
+                                          if (!value) return
+                                          item().ctx.data.session.remember(value)
+                                          void startTransition(() =>
+                                            tabs.select(
+                                              tabs.addSessionTab({
+                                                server: item().server,
+                                                sessionId: sessionID,
+                                              }),
+                                            ),
+                                          ).then(navigated)
+                                        }}
+                                      >
+                                        <bdi class="min-w-0 flex-1 truncate">
+                                          {sessionTitle(session()?.title) ?? language.t("command.session.new")}
+                                        </bdi>
+                                        <Show
+                                          when={status.loading()}
+                                          fallback={
+                                            <Show when={status.unread()}>
+                                              <span class="size-1.5 shrink-0 rounded-full bg-current" />
+                                            </Show>
+                                          }
+                                        >
+                                          <ActivityRing class="size-3.5 shrink-0" />
+                                        </Show>
+                                      </Menu.Context.Trigger>
+                                      <Menu.Context.Portal>
+                                        <Menu.Context.Content>
+                                          <Menu.Item onSelect={() => void copySessionID(sessionID)}>
+                                            {language.t("command.session.copyID")}
+                                          </Menu.Item>
+                                          <Menu.Separator />
+                                          <Menu.Item
+                                            onSelect={() => {
+                                              const value = session()
+
+                                              if (value) deleteSession(key, value)
+                                            }}
+                                          >
+                                            {language.t("common.delete")}
+                                          </Menu.Item>
+                                        </Menu.Context.Content>
+                                      </Menu.Context.Portal>
+                                    </Menu.Context>
+                                  </div>
+                                  <Show when={family().tree.error}>
+                                    <p class="ps-8 pe-2 text-12 text-text-weak">{language.t("tasks.error")}</p>
+                                    <button
+                                      type="button"
+                                      class="w-full ps-8 pe-2 text-start text-12 text-text-weak"
+                                      onClick={() => void family().refresh()}
+                                    >
+                                      {language.t("tasks.refresh")}
+                                    </button>
+                                  </Show>
+                                  <For each={rows()}>
+                                    {(row) => {
+                                      const childStatus = useSessionTabAvatarState(
+                                        () => item().server,
+                                        () => row.task.id,
+                                        () => true,
+                                      )
+
+                                      const active = () => {
+                                        const route = layout.route()
+
+                                        return (
+                                          route.type === "session" &&
+                                          route.server === item().server &&
+                                          route.sessionId === row.task.id
+                                        )
+                                      }
+
+                                      return (
+                                        <div class="relative" style={{ "padding-inline-start": `${row.depth * 16}px` }}>
+                                          <Show when={children(row.task.id).length > 0}>
+                                            <button
+                                              type="button"
+                                              class="absolute top-0 z-10 flex h-7 w-5 items-center justify-center"
+                                              style={{ "inset-inline-start": `${12 + row.depth * 16}px` }}
+                                              aria-expanded={!collapsed[row.task.id]}
+                                              aria-label={language.t(
+                                                collapsed[row.task.id] ? "tasks.expand" : "tasks.collapse",
+                                                {
+                                                  title: row.task.title ?? language.t("tasks.untitled"),
+                                                },
+                                              )}
+                                              onClick={() => setCollapsed(row.task.id, !collapsed[row.task.id])}
+                                            >
+                                              <Icon
+                                                name={collapsed[row.task.id] ? "chevron-right" : "chevron-down"}
+                                                size="small"
+                                                classList={{ "rtl:rotate-180": collapsed[row.task.id] }}
+                                              />
+                                            </button>
+                                          </Show>
+                                          <Menu.Context>
+                                            <Menu.Context.Trigger
+                                              as="button"
+                                              type="button"
+                                              aria-current={active() ? "page" : undefined}
+                                              class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
+                                              classList={{ "bg-v2-overlay-simple-overlay-hover": active() }}
+                                              onClick={() => {
+                                                item().ctx.data.session.remember(row.task)
+                                                void startTransition(() =>
+                                                  tabs.select(
+                                                    tabs.addSessionTab({
+                                                      server: item().server,
+                                                      sessionId: row.task.id,
+                                                    }),
+                                                  ),
+                                                ).then(navigated)
+                                              }}
+                                            >
+                                              <bdi class="min-w-0 flex-1 truncate">
+                                                {sessionTitle(row.task.title) ?? language.t("command.session.new")}
+                                              </bdi>
+                                              <Show
+                                                when={childStatus.loading()}
+                                                fallback={
+                                                  <Show when={childStatus.unread()}>
+                                                    <span class="size-1.5 shrink-0 rounded-full bg-current" />
+                                                  </Show>
+                                                }
+                                              >
+                                                <ActivityRing class="size-3.5 shrink-0" />
+                                              </Show>
+                                            </Menu.Context.Trigger>
+                                            <Menu.Context.Portal>
+                                              <Menu.Context.Content>
+                                                <Menu.Item onSelect={() => void copySessionID(row.task.id)}>
+                                                  {language.t("command.session.copyID")}
+                                                </Menu.Item>
+                                              </Menu.Context.Content>
+                                            </Menu.Context.Portal>
+                                          </Menu.Context>
+                                        </div>
+                                      )
+                                    }}
+                                  </For>
+                                </>
+                              )
+                            }}
+                          </For>
+                        )
+                      }
                     }}
                   </For>
-                  <Show when={items().length > projectLimit()}>
+                  <Show when={items().length > shown().length}>
                     <button
                       type="button"
                       class="h-7 w-full px-2 text-start text-[13px] text-v2-text-text-muted hover:text-v2-text-text-base"
@@ -890,5 +1130,70 @@ export function ProjectSidebar() {
         </Show>
       </Show>
     </nav>
+  )
+}
+
+function worktreeLabel(directory: string, folders: string[]) {
+  const parts = comparablePath(directory).split("/")
+  const siblings = folders.filter((other) => other !== directory).map((path) => `/${comparablePath(path)}`)
+  for (let depth = 1; depth < parts.length; depth++) {
+    const suffix = parts.slice(-depth).join("/")
+    if (!siblings.some((path) => path.endsWith(`/${suffix}`))) return suffix
+  }
+  return directory
+}
+
+function PullRequestLink(props: { ctx: ServerCtx; projectID: string; directory: string }) {
+  const platform = usePlatform()
+  const language = useLanguage()
+  const key = () => [props.ctx.sdk.scope, "worktree-pr", props.projectID, props.directory]
+  const query = useQuery(() => ({
+    queryKey: key(),
+    queryFn: ({ signal }) =>
+      props.ctx.sdk.api.experimental.worktree.pullRequest(
+        { projectID: props.projectID, directory: props.directory },
+        { signal },
+      ),
+    enabled: props.ctx.sdk.connection.status() === "connected",
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+    retry: false,
+  }))
+  const client = useQueryClient()
+  createEffect(() => {
+    props.ctx.sdk.event.on("vcs.branch.updated", (event) => {
+      if (event.location?.directory === props.directory) void client.invalidateQueries({ queryKey: key(), exact: true })
+    })
+  })
+  const url = () => {
+    const href = query.isSuccess && query.data.url
+    return href && href.startsWith("https://") ? href : undefined
+  }
+
+  return (
+    <Show when={url()}>
+      {(href) => (
+        <Tooltip
+          placement={language.direction() === "rtl" ? "left" : "right"}
+          value={<bdi dir="ltr">{href()}</bdi>}
+          class="flex shrink-0"
+        >
+          <a
+            href={href()}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`PR #${href().split("/").at(-1)}`}
+            class="flex size-6 items-center justify-center rounded-[6px] text-v2-icon-icon-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base"
+            onClick={(event) => {
+              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+              event.preventDefault()
+              platform.openExternal(href())
+            }}
+          >
+            <Icon name="pull-request" />
+          </a>
+        </Tooltip>
+      )}
+    </Show>
   )
 }

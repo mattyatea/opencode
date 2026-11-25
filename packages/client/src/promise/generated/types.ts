@@ -332,6 +332,17 @@ export type RpcOutput = { output?: any }
 
 export type PermissionReply = "once" | "always" | "reject"
 
+export type PreferenceKey =
+  | "model"
+  | "language"
+  | "projects"
+  | "settings"
+  | "sidebar.organize"
+  | "sidebar.project-sections"
+  | "sidebar.recent"
+  | "sidebar.view"
+  | "sidebar.inbox"
+
 export type PtyID = string
 
 export type JobStatus = "running" | "completed" | "error" | "cancelled"
@@ -1986,6 +1997,15 @@ export type PluginUpdated = {
   data: {}
 }
 
+export type PreferenceUpdated = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "preference.updated"
+  location?: LocationRef
+  data: { key: PreferenceKey }
+}
+
 export type ProjectUpdated = {
   id: EventID
   created: number
@@ -3153,6 +3173,7 @@ export type V2Event =
   | PermissionAsked
   | PermissionReplied
   | PluginUpdated
+  | PreferenceUpdated
   | ProjectUpdated
   | WorktreeUpdated
   | WorktreeResolved
@@ -4788,6 +4809,7 @@ export type EventSubscribeInput = {
         | "permission.asked"
         | "permission.replied"
         | "plugin.updated"
+        | "preference.updated"
         | "project.updated"
         | "worktree.updated"
         | "worktree.resolved"
@@ -5075,6 +5097,9 @@ export type ExperimentalMachineRemoveOutput = void
 export type ExperimentalPreferenceGetInput = {
   readonly key:
     | "model"
+    | "language"
+    | "projects"
+    | "settings"
     | "sidebar.organize"
     | "sidebar.project-sections"
     | "sidebar.recent"
@@ -5087,6 +5112,9 @@ export type ExperimentalPreferenceGetOutput = { data: JsonValue | null }["data"]
 export type ExperimentalPreferenceSetInput = {
   readonly key:
     | "model"
+    | "language"
+    | "projects"
+    | "settings"
     | "sidebar.organize"
     | "sidebar.project-sections"
     | "sidebar.recent"
@@ -5140,6 +5168,10 @@ export type ShellRemoveOutput = void
 export type ReferenceListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 
 export type ReferenceListOutput = { location: LocationPublicRef; data: Array<ReferenceInfo> }
+
+export type ExperimentalWorktreePullRequestInput = { readonly projectID: string; readonly directory: string }
+
+export type ExperimentalWorktreePullRequestOutput = { url: string | null }
 
 export type WorktreeListInput = { readonly projectID: string }
 

@@ -1,4 +1,6 @@
 import { KV } from "@opencode/core/kv"
+import { Bus } from "@opencode/core/bus"
+import { Preference } from "@opencode/schema/preference"
 import type { PreferenceKey } from "@opencode/protocol/groups/preference"
 import { Effect } from "effect"
 import type { Schema } from "effect"
@@ -7,11 +9,17 @@ import { HttpApiSchema } from "effect/http-api"
 /** `preference.*` in the `server.experimental` group; client settings stored in the server's KV. */
 export const makePreference = Effect.gen(function* () {
   const kv = yield* KV.Service
+  const bus = yield* Bus.Service
 
   return {
     get: (key: PreferenceKey) => kv.get(storageKey(key)).pipe(Effect.map((value) => ({ data: value ?? null }))),
     set: (key: PreferenceKey, value: Schema.Json) =>
-      kv.set(storageKey(key), value).pipe(Effect.as(HttpApiSchema.NoContent.make())),
+      kv
+        .set(storageKey(key), value)
+        .pipe(
+          Effect.andThen(bus.publish(Preference.Event.Updated, { key })),
+          Effect.as(HttpApiSchema.NoContent.make()),
+        ),
   }
 })
 

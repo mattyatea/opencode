@@ -91,6 +91,7 @@ type DatabaseClient = EffectDrizzleSqlite.EffectSQLiteDatabase
 type Transaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0]
 
 export interface Interface {
+  readonly pullRequest: (input: { projectID: Project.ID; directory: AbsolutePath }) => Effect.Effect<string | null>
   readonly list: (input: { projectID: Project.ID }) => Effect.Effect<List, Project.NotFoundError>
   // The plugin bridge supplies its registry so canonical-project setup can use registrations made so far.
   readonly create: (input: CreateInput, current?: WorktreeStrategies.Interface) => Effect.Effect<Info, Error>
@@ -327,6 +328,25 @@ const layer = Layer.effect(
     }, Effect.scoped)
 
     return Service.of({
+      pullRequest: Effect.fn("Worktree.pullRequest")(function* (input) {
+        const checkout = yield* ops.find(input.projectID, input.directory)
+        if (!checkout || (checkout.strategy && checkout.strategy !== "git")) return null
+
+        const result = yield* processService
+          .run(
+            ChildProcess.make("gh", ["pr", "view", "--json", "state,url", "--jq", `select(.state == "OPEN") | .url`], {
+              cwd: checkout.directory,
+              env: { GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1", GIT_TERMINAL_PROMPT: "0" },
+              extendEnv: true,
+              stdin: "ignore",
+            }),
+            { timeout: "5 seconds", maxOutputBytes: 4096, maxErrorBytes: 4096 },
+          )
+          .pipe(Effect.orElseSucceed(() => null))
+        if (!result || result.exitCode !== 0 || result.stdoutTruncated) return null
+        const url = result.stdout.toString("utf8").trim()
+        return /^https:\/\/[\w.:-]+\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url) ? url : null
+      }),
       list: Effect.fn("Worktree.list")(function* (input) {
         yield* project(input.projectID)
         return yield* ops.list(input.projectID)

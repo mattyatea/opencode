@@ -315,6 +315,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     const name = (id: string) => state().themes[id]?.name ?? names.get(id) ?? id
 
     return {
+      committed: createMemo(() => state().committed),
       /** The theme the window shows: a previewed one, the selected one, or the default while that one is not coming. */
       themeId: createMemo(() => selectThemeId(state(), knownThemes())),
       colorScheme: createMemo(() => selectColorScheme(state())),

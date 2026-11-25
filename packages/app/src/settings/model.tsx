@@ -1,7 +1,8 @@
 import { produce, reconcile, unwrap } from "solid-js/store"
-import { createEffect, createMemo } from "solid-js"
+import { batch, createEffect, createMemo } from "solid-js"
 import { createMediaQuery } from "@solid-primitives/media"
-import { Effect, Option, Predicate, Schema, SchemaGetter } from "effect"
+import { Effect, Option, Predicate, Schema, SchemaGetter, Struct } from "effect"
+import { useTheme } from "@opencode/ui/theme/context"
 import { createSimpleContext } from "@opencode/ui/context"
 import { timelinePresets, type TimelineCategory, type TimelineDetail } from "@opencode/session-ui/timeline/detail"
 import { persisted } from "@/runtime/persistence/storage"
@@ -226,6 +227,31 @@ export const settingsSchema = Persistence.struct({
   dictation: Persistence.optional(dictationSchema),
 })
 
+// Share user choices, not a device's sidebar visibility, permission grants or other servers' workspace history.
+const sharedSettings = Persistence.struct({
+  general: generalSchema,
+  appearance: Persistence.struct(Struct.omit(appearanceSchema.fields, ["sidebarOpen"])),
+  keybinds: settingsSchema.fields.keybinds,
+  notifications: notificationsSchema,
+  sounds: soundsSchema,
+  destination: workspacesSchema.fields.defaultDestination,
+  dictation: settingsSchema.fields.dictation,
+  theme: Persistence.struct({ themeId: Schema.String, scheme: Schema.Literals(["system", "light", "dark"]) }),
+})
+
+function portableSettings(store: Settings, theme: (typeof sharedSettings.Type)["theme"]) {
+  return {
+    general: store.general,
+    appearance: Struct.omit(store.appearance, ["sidebarOpen"]),
+    keybinds: store.keybinds,
+    notifications: store.notifications,
+    sounds: store.sounds,
+    destination: store.workspaces.defaultDestination,
+    dictation: store.dictation,
+    theme,
+  }
+}
+
 function storedTimelineCategory(category: TimelineCategory) {
   return Persistence.optional(
     Schema.Union([
@@ -435,6 +461,28 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
 
     return {
       ready,
+      get shared() {
+        const theme = useTheme()
+        return {
+          key: "settings" as const,
+          schema: sharedSettings,
+          initial: portableSettings(defaultSettings, { themeId: "oc-2", scheme: "system" }),
+          ready,
+          read: () => portableSettings(store, theme.committed()),
+          apply: (value: typeof sharedSettings.Type) =>
+            batch(() => {
+              setStore("general", reconcile(value.general))
+              setStore("appearance", reconcile({ ...value.appearance, sidebarOpen: store.appearance.sidebarOpen }))
+              setStore("notifications", reconcile(value.notifications))
+              setStore("sounds", reconcile(value.sounds))
+              setStore("keybinds", reconcile(value.keybinds))
+              setStore("workspaces", "defaultDestination", value.destination)
+              setStore("dictation", reconcile(value.dictation))
+              if (theme.committed().themeId !== value.theme.themeId) theme.setTheme(value.theme.themeId)
+              if (theme.committed().scheme !== value.theme.scheme) theme.setColorScheme(value.theme.scheme)
+            }),
+        }
+      },
       get current() {
         return store
       },

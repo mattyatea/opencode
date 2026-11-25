@@ -1,15 +1,9 @@
 import { Schema } from "effect"
+import { Preference } from "@opencode/schema/preference"
 import { HttpApiEndpoint, HttpApiSchema, OpenApi } from "effect/http-api"
 
 /** The client settings the server keeps, so every client of the server shares them. */
-export const PreferenceKey = Schema.Literals([
-  "model",
-  "sidebar.organize",
-  "sidebar.project-sections",
-  "sidebar.recent",
-  "sidebar.view",
-  "sidebar.inbox",
-]).annotate({ identifier: "PreferenceKey" })
+export const PreferenceKey = Preference.Key
 export type PreferenceKey = typeof PreferenceKey.Type
 
 const params = { key: PreferenceKey }

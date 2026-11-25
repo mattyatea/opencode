@@ -12,7 +12,7 @@ import {
   sessionHref,
   T0,
 } from "../utils/app"
-import { mockOpenCodeServer, mockServers } from "../utils/mock-server"
+import { mockOpenCodeServer, mockServers, mockSharedPreferences } from "../utils/mock-server"
 import { fixture, mockStressTimeline } from "../utils/session-fixture"
 import { mockRemoteServer, mockWorkspace, newSessionLocation } from "../utils/workspace"
 import { APP_READY_TIMEOUT, expectAppVisible } from "../utils/waits"
@@ -416,13 +416,14 @@ const entry = (name: string, active: number, id = `proj_${name}`) =>
     time: { created: T0, updated: T0, active: T0 + active },
   })
 
-async function homeProjects(page: Page, projects: unknown[]) {
+async function homeProjects(page: Page, projects: unknown[], preferences?: ReturnType<typeof mockSharedPreferences>) {
   const directory = "C:/OpenCode/home"
 
   const server = await mockOpenCodeServer(page, {
     directory,
     project: project({ id: "proj_home", directory }),
     projects: () => projects,
+    preferences,
     provider: NO_PROVIDER,
     sessions: [],
     pageMessages: () => ({ items: [] }),
@@ -480,6 +481,44 @@ test("Home lists the used server projects by recent activity, hides them, and li
   await expect(newSessionLocation(page)).toContainText("recent")
   await page.getByRole("button", { name: "Home", exact: true }).click()
   await expect(view.rows).toHaveText(["oldest", "recent"])
+})
+
+test("a fresh phone gets the PC's used projects and closing one updates Home on both devices", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  const preferences = mockSharedPreferences()
+  const list = [entry("alpha", 2), entry("beta", 1)]
+  const desktop = await homeProjects(page, list, preferences)
+  await seed(page, { usedProjects: { local: ["proj_alpha", "proj_beta"] } })
+  await page.goto("/")
+  await expect(desktop.rows).toHaveText(["alpha", "beta"])
+  const phone = await browser.newPage({
+    baseURL,
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    serviceWorkers: "block",
+  })
+  try {
+    const mobile = await homeProjects(phone, list, preferences)
+    await phone.goto("/")
+    await phone.getByRole("button", { name: "Projects", exact: true }).tap()
+    await expect(mobile.rows).toHaveText(["alpha", "beta"])
+    await page
+      .locator('[data-component="home-project-row"]')
+      .filter({ hasText: "beta" })
+      .locator("..")
+      .getByRole("button", { name: "More options" })
+      .click()
+    await page.getByRole("menuitem", { name: "Close", exact: true }).click()
+    await expect(mobile.rows).toHaveText(["alpha"])
+    await phone.reload()
+    await phone.getByRole("button", { name: "Projects", exact: true }).tap()
+    await expect(mobile.rows).toHaveText(["alpha"])
+  } finally {
+    await phone.close()
+  }
 })
 
 test("Home migrates the directories an older build listed to the server's current projects", async ({ page }) => {

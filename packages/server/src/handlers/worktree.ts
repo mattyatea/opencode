@@ -11,6 +11,7 @@ export const WorktreeHandler = HttpApiBuilder.group(Api, "server.worktree", (han
   Effect.gen(function* () {
     const worktrees = yield* Worktree.Service
     return handlers
+      .handle("worktree.pullRequest", (ctx) => worktrees.pullRequest(ctx.query).pipe(Effect.map((url) => ({ url }))))
       .handle("worktree.list", (ctx) =>
         worktrees.list(ctx.query).pipe(Effect.catchTag("Project.NotFoundError", missingProject)),
       )

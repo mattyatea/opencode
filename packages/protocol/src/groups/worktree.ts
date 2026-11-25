@@ -2,6 +2,7 @@ import { Worktree } from "@opencode/schema/worktree"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api"
 import { Project } from "@opencode/schema/project"
+import { AbsolutePath } from "@opencode/schema/schema"
 import { ProjectNotFoundError } from "../errors.js"
 
 const root = "/api/worktree"
@@ -19,6 +20,19 @@ export class WorktreeError extends Schema.TaggedError<WorktreeError>()(
 ) {}
 
 export const WorktreeGroup = HttpApiGroup.make("server.worktree")
+  .add(
+    HttpApiEndpoint.get("worktree.pullRequest", "/api/experimental/worktree/pull-request", {
+      query: Schema.Struct({ projectID: Project.ID, directory: AbsolutePath }),
+      success: Schema.Struct({ url: Schema.NullOr(Schema.String) }),
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.worktree.pullRequest",
+        summary: "Find the checkout's open GitHub pull request",
+        description:
+          "Experimental: may change without compatibility guarantees. Uses the server's GitHub CLI for this saved checkout; returns a null URL when no open pull request can be resolved.",
+      }),
+    ),
+  )
   .add(
     HttpApiEndpoint.get("worktree.list", root, {
       query: Schema.Struct({ projectID: Project.ID }),

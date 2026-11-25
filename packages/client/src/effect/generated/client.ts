@@ -325,6 +325,8 @@ import type {
   ShellRemoveOutput,
   ReferenceListInput,
   ReferenceListOutput,
+  ExperimentalWorktreePullRequestInput,
+  ExperimentalWorktreePullRequestOutput,
   WorktreeListInput,
   WorktreeListOutput,
   WorktreeCreateInput,
@@ -2101,6 +2103,18 @@ const EndpointReferenceList = (raw: RawClient["server.reference"]) => (input?: R
 
 const adaptGroupReference = (raw: RawClient["server.reference"]) => ({ list: EndpointReferenceList(raw) })
 
+const EndpointExperimentalWorktreePullRequest =
+  (raw: RawClient["server.worktree"]) => (input: ExperimentalWorktreePullRequestInput) =>
+    preserveEffect<ExperimentalWorktreePullRequestOutput>()(
+      raw["worktree.pullRequest"]({ query: { projectID: input["projectID"], directory: input["directory"] } }).pipe(
+        Effect.mapError(mapClientError),
+      ),
+    )
+
+const adaptGroupExperimentalWorktree = (raw: RawClient["server.worktree"]) => ({
+  pullRequest: EndpointExperimentalWorktreePullRequest(raw),
+})
+
 const EndpointWorktreeList = (raw: RawClient["server.worktree"]) => (input: WorktreeListInput) =>
   preserveEffect<WorktreeListOutput>()(
     raw["worktree.list"]({ query: { projectID: input["projectID"] } }).pipe(Effect.mapError(mapClientError)),
@@ -2283,6 +2297,7 @@ const adaptClient = (raw: RawClient) => {
       integration: adaptGroupExperimentalIntegration(raw["server.integration"]),
       mcp: adaptGroupExperimentalMcp(raw["server.mcp"]),
       file: adaptGroupExperimentalFile(raw["server.fs"]),
+      worktree: adaptGroupExperimentalWorktree(raw["server.worktree"]),
       migration: adaptGroupExperimentalMigration(raw["server.migration"]),
       usage: adaptGroupExperimentalUsage(raw["server.usage"]),
       config: adaptGroupExperimentalConfig(raw["server.config"]),

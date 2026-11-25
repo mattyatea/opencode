@@ -2390,6 +2390,7 @@ export type EventSubscribeInput = {
         | "permission.asked"
         | "permission.replied"
         | "plugin.updated"
+        | "preference.updated"
         | "project.updated"
         | "worktree.updated"
         | "worktree.resolved"
@@ -2830,6 +2831,9 @@ export type ExperimentalMachineRemoveOperation<E = never> = (
 export type ExperimentalPreferenceGetInput = {
   readonly key:
     | "model"
+    | "language"
+    | "projects"
+    | "settings"
     | "sidebar.organize"
     | "sidebar.project-sections"
     | "sidebar.recent"
@@ -2844,6 +2848,9 @@ export type ExperimentalPreferenceGetOperation<E = never> = (
 export type ExperimentalPreferenceSetInput = {
   readonly key:
     | "model"
+    | "language"
+    | "projects"
+    | "settings"
     | "sidebar.organize"
     | "sidebar.project-sections"
     | "sidebar.recent"
@@ -2959,6 +2966,16 @@ export type ReferenceListOperation<E = never> = (input?: ReferenceListInput) => 
 
 export interface ReferenceApi<E = never> {
   readonly list: ReferenceListOperation<E>
+}
+
+export type ExperimentalWorktreePullRequestInput = { readonly projectID: Project.ID; readonly directory: AbsolutePath }
+export type ExperimentalWorktreePullRequestOutput = { readonly url: string | null }
+export type ExperimentalWorktreePullRequestOperation<E = never> = (
+  input: ExperimentalWorktreePullRequestInput,
+) => Effect.Effect<ExperimentalWorktreePullRequestOutput, E>
+
+export interface ExperimentalWorktreeApi<E = never> {
+  readonly pullRequest: ExperimentalWorktreePullRequestOperation<E>
 }
 
 export type WorktreeListInput = { readonly projectID: Project.ID }
@@ -3409,6 +3426,7 @@ export interface AppApi<E = never> {
     readonly integration: ExperimentalIntegrationApi<E>
     readonly mcp: ExperimentalMcpApi<E>
     readonly file: ExperimentalFileApi<E>
+    readonly worktree: ExperimentalWorktreeApi<E>
     readonly migration: ExperimentalMigrationApi<E>
     readonly usage: ExperimentalUsageApi<E>
     readonly config: ExperimentalConfigApi<E>

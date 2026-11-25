@@ -39,7 +39,7 @@ import { useTabs } from "@/shell/tabs/tabs"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import { createDesktopData } from "./data"
 import { ModelState } from "./persistence"
-import { createSharedPreference } from "./shared-preference"
+import { createSharedPreference, type SharedInput } from "./shared-preference"
 import { useLanguage } from "@/runtime/i18n/language"
 import { showToast } from "@/shell/notifications/toast"
 import { formatServerError } from "./errors"
@@ -65,16 +65,18 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
 
     // The server this client belongs to (the sidecar, or the one that served the web app) keeps the settings every
     // client of it shares.
-    const sharedApi = () => {
+    const sharedServer = () => {
       const conn = server.list.find(server.current)
 
       if (!conn) return
       const ctx = selectServerCtx(controllers(), ServerConnection.key(conn))
 
-      return ctx?.sdk.connection.status() === "connected" ? ctx.sdk.api : undefined
+      return ctx?.sdk.connection.status() === "connected" ? ctx.sdk : undefined
     }
 
-    const share: SharePreference = (input) => createSharedPreference({ ...input, api: sharedApi })
+    const share: SharePreference = (input) => createSharedPreference(input, sharedServer)
+    share(useSettings().shared)
+    share(useLanguage().shared)
     const models = createGlobalModels(share)
     const sessionPreferences = createSessionPreferences()
 
@@ -95,6 +97,7 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
                 server.scope(effect.key),
                 () => server.local(effect.conn),
                 server.projects.forServer(effect.key),
+                server.hydrated,
                 notificationCoordinator,
                 sessionPreferences,
               ),
@@ -159,9 +162,7 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
   },
 })
 
-type SharePreference = <S extends Schema.ConstraintCodec<object, unknown>>(
-  input: Omit<Parameters<typeof createSharedPreference<S>>[0], "api">,
-) => void
+type SharePreference = <S extends Schema.ConstraintCodec<object, unknown>>(input: SharedInput<S>) => void
 
 function createGlobalModels(share: SharePreference) {
   const initial = { user: [], recent: [], favorite: [], variant: {} }
@@ -220,6 +221,7 @@ function createServerController(
   scope: ServerScope,
   isLocal: Accessor<boolean>,
   projects: ReturnType<typeof createServerProjects>,
+  projectsReady: Accessor<boolean>,
   notificationCoordinator: ReturnType<typeof createNotificationCoordinator>,
   sessionPreferences: ReturnType<typeof createSessionPreferences>,
 ) {
@@ -229,6 +231,9 @@ function createServerController(
   const currentRoute = useCurrentRoute()
   const connKey = ServerConnection.key(conn)
   const sdk = createServerSdkContext(conn, scope)
+  createSharedPreference({ ...projects.shared, ready: projectsReady }, () =>
+    sdk.connection.status() === "connected" ? sdk : undefined,
+  )
 
   const source = createData({
     api: () => sdk.api,

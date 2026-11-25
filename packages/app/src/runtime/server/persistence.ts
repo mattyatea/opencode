@@ -52,6 +52,10 @@ export const ServerState = Persistence.struct({
   projects: Persistence.record(Persistence.array(Persistence.struct({ worktree: Schema.String }))),
 })
 
+export const ProjectListPreference = Persistence.struct({
+  used: Persistence.array(Schema.String),
+})
+
 export const ModelState = Persistence.struct({
   user: Persistence.array(
     Persistence.struct({

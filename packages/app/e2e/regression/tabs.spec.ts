@@ -15,7 +15,7 @@ import {
   sessionHref,
 } from "../utils/app"
 import { openFileLauncher, reviewTabs } from "../utils/side-panel"
-import { mockServers } from "../utils/mock-server"
+import { mockServers, mockSharedPreferences } from "../utils/mock-server"
 import { fixture, mockStressTimeline } from "../utils/session-fixture"
 import { fileNode, mockWorkspace, openSession } from "../utils/workspace"
 import { expectSessionTitle } from "../utils/waits"
@@ -69,6 +69,47 @@ for (const layout of ["horizontal", "vertical", "projects", "inbox"] as const) {
   })
 }
 
+test("worktree folders group checkout sessions and drafts under their project", async ({ page }, testInfo) => {
+  const worktree = "C:/Worktrees/sidebar-polish"
+  const pr = "https://github.com/example/opencode/pull/42"
+  await openSession(page, {
+    name: "OpenCode",
+    sessions: [
+      { id: "ses_root", title: "Project planning" },
+      { id: "ses_feature", title: "Review the sidebar", directory: `${worktree}/packages/app` },
+    ],
+    worktrees: [{ directory: "C:/OpenCode/OpenCode" }, { directory: worktree, strategy: "git" }],
+    worktreePullRequest: (directory) => (directory === worktree ? pr : null),
+    seed: { settings: { appearance: { tabLayout: "projects" } } },
+  })
+  const project = page
+    .getByRole("navigation", { name: "Projects and sessions" })
+    .getByRole("group", { name: "OpenCode", exact: true })
+  const folder = project.getByRole("group", { name: "sidebar-polish" })
+  const toggle = folder.getByRole("button", { name: /sidebar-polish/ })
+  await expect(toggle).toHaveAttribute("aria-expanded", "false")
+  const link = folder.getByRole("link", { name: "PR #42" })
+  await expect(project.getByRole("link")).toHaveCount(1)
+  await expect(link).toHaveAttribute("href", pr)
+  await link.hover()
+  await expect(page.getByRole("tooltip")).toHaveText(pr)
+  await page.screenshot({ path: testInfo.outputPath("worktree-pr.png") })
+  await expect(project.getByRole("button", { name: "Review the sidebar" })).toHaveCount(0)
+  await toggle.focus()
+  await page.keyboard.press("Enter")
+  await expect(folder.getByRole("button", { name: "Project planning" })).toHaveCount(0)
+  await folder.getByRole("button", { name: "Review the sidebar" }).click()
+  await expect(folder.getByRole("button", { name: "Review the sidebar" })).toHaveAttribute("aria-current", "page")
+  await expect(project.getByRole("button", { name: "Review the sidebar" })).toHaveCount(1)
+  await expect(project.getByRole("button", { name: "Project planning" })).toBeVisible()
+  await project.screenshot({ path: testInfo.outputPath("worktree-folders.png") })
+  await folder.getByRole("button", { name: "New session", exact: true }).click()
+  await expect(folder.getByRole("button", { name: "Session", exact: true })).toHaveAttribute("aria-current", "page")
+  await toggle.click()
+  await expect(folder.getByRole("button", { name: "Session", exact: true })).toHaveCount(0)
+  await expect(project.getByRole("button", { name: "Project planning" })).toBeVisible()
+})
+
 test("persistent tasks appear under their parent in the project sidebar", async ({ page }) => {
   await openSession(page, {
     name: "Persistent tasks",
@@ -107,7 +148,11 @@ test("detached tasks remain in the project sidebar when their parent is deleted"
       { id: "ses_detach_other", title: "Other session" },
       { id: "ses_detach_parent", title: "Deleted parent" },
       { id: "ses_detach_child", title: "Surviving child", experimental: { taskParentID: "ses_detach_parent" } },
-      { id: "ses_detach_grandchild", title: "Surviving grandchild", experimental: { taskParentID: "ses_detach_child" } },
+      {
+        id: "ses_detach_grandchild",
+        title: "Surviving grandchild",
+        experimental: { taskParentID: "ses_detach_child" },
+      },
     ],
     seed: { tabs: ["ses_detach_other"], settings: { appearance: { tabLayout: "projects" } } },
   })
@@ -140,6 +185,58 @@ test("detached tasks remain in the project sidebar when their parent is deleted"
   await expect(project.getByRole("button", { name: "Surviving grandchild", exact: true })).toBeVisible()
   await project.getByRole("button", { name: "Surviving child", exact: true }).click()
   await expect(page).toHaveURL(sessionHref("ses_detach_child"))
+})
+
+test("phone and desktop share the projects layout and can reorder each other's list", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  const preferences = mockSharedPreferences()
+  const input = {
+    name: "Amber",
+    projects: [
+      project({ id: "proj_amber", directory: "C:/OpenCode/Amber", name: "Amber" }),
+      project({ id: "proj_blue", directory: "C:/OpenCode/Blue", name: "Blue" }),
+    ],
+    preferences,
+  }
+  await mockWorkspace(page, { ...input, seed: { settings: { appearance: { tabLayout: "projects" } } } })
+  await page.goto(sessionHref("ses_amber"))
+  const sidebar = (client: Page) => client.getByRole("navigation", { name: "Projects and sessions" })
+  const rows = (client: Page) =>
+    sidebar(client)
+      .getByRole("group")
+      .evaluateAll((items) => items.map((item) => item.getAttribute("aria-label")))
+  await expect.poll(() => rows(page)).toEqual(["Amber", "Blue"])
+
+  const phone = await browser.newPage({
+    baseURL,
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+    serviceWorkers: "block",
+  })
+  try {
+    await mockWorkspace(phone, input)
+    await phone.goto(sessionHref("ses_amber"))
+    await phone.locator('[data-slot="mobile-tabs-trigger"]').tap()
+    await expect.poll(() => rows(phone)).toEqual(["Amber", "Blue"])
+    await sidebar(phone).getByRole("group", { name: "Blue" }).getByRole("button", { name: "More options" }).tap()
+    await phone.getByRole("menuitem", { name: "Move up", exact: true }).tap()
+    await expect.poll(() => rows(page)).toEqual(["Blue", "Amber"])
+    const sortBy = async (name: string) => {
+      await sidebar(page).getByRole("button", { name: "Options for section Projects" }).click()
+      await page.getByRole("menuitem", { name: "Sort by", exact: true }).hover()
+      await page.getByRole("menuitemradio", { name, exact: true }).click()
+    }
+    await sortBy("Name")
+    await expect.poll(() => rows(phone)).toEqual(["Amber", "Blue"])
+    await sortBy("Manual")
+    await expect.poll(() => rows(phone)).toEqual(["Blue", "Amber"])
+  } finally {
+    await phone.close()
+  }
 })
 
 test("project sections retain grouping and both collapse states after reload", async ({ page }, testInfo) => {

@@ -4,21 +4,22 @@ import { Option, Schema } from "effect"
 import type { ExperimentalPreferenceGetInput } from "@opencode/client/promise"
 import { Persistence } from "@/runtime/persistence/schema"
 import type { ServerApi } from "./api"
-
-const PUSH_DELAY = 500
+import type { ServerSDK } from "./client"
 
 // What this page knows about each key outlives the component that shares it: a remount must neither forget an edit
 // not yet sent nor mistake the server's older copy for a first contact. `active` serializes the requests of one key.
 type Target = { api: ServerApi; synced: string | undefined; active: Promise<void> }
 
-const targets = new Map<PreferenceKey, Target>()
+const targets = new WeakMap<ServerApi, Map<PreferenceKey, Target>>()
 
 function targetFor(key: PreferenceKey, api: ServerApi) {
-  const current = targets.get(key)
+  const keys = targets.get(api) ?? new Map<PreferenceKey, Target>()
+  const current = keys.get(key)
 
-  if (current?.api === api) return current
+  if (current) return current
   const next: Target = { api, synced: undefined, active: Promise.resolve() }
-  targets.set(key, next)
+  keys.set(key, next)
+  targets.set(api, keys)
 
   return next
 }
@@ -46,33 +47,36 @@ export function decideSharedPreference(input: {
   return input.remote === input.synced ? "none" : "adopt"
 }
 
-/**
- * Keeps a persisted store in step with the server's copy, so every client of that server shares it. The server's copy
- * wins on first contact; after that the latest edit wins. Failures keep the local copy and retry on the next focus or
- * reconnect.
- */
-export function createSharedPreference<S extends Schema.ConstraintCodec<object, unknown>>(input: {
-  api: Accessor<ServerApi | undefined>
+export type SharedInput<S extends Schema.ConstraintCodec<object, unknown>> = {
   key: PreferenceKey
   schema: S | Persistence.Migrated<S>
   initial: NoInfer<S["Type"]>
-  store: Store<S["Type"]>
-  setStore: SetStoreFunction<S["Type"]>
   ready: Accessor<boolean>
-}) {
+} & (
+  | { store: Store<S["Type"]>; setStore: SetStoreFunction<S["Type"]> }
+  | { read: Accessor<S["Type"]>; apply: (value: S["Type"]) => void }
+)
+
+/** First contact adopts the server copy. Missed events and failed writes reconcile on focus or reconnect. */
+export function createSharedPreference<S extends Schema.ConstraintCodec<object, unknown>>(
+  input: SharedInput<S>,
+  connection: Accessor<Pick<ServerSDK, "api" | "event"> | undefined>,
+) {
   const json = Schema.fromJsonString(Persistence.withInitial(input.schema, input.initial))
   const decode = Schema.decodeUnknownOption(json)
   const serialize = Schema.encodeSync(json)
   const initial = serialize(input.initial)
 
-  // SAFETY: Solid's setter overloads are too deep to name; reconcile only replaces the whole store value.
-  // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- see SAFETY above
-  const replace = input.setStore as unknown as (value: ReturnType<typeof reconcile>) => void
+  const apply =
+    "apply" in input
+      ? input.apply
+      : (value: S["Type"]) =>
+          // SAFETY: Solid's setter overloads are too deep to name; reconcile only replaces the whole store value.
+          // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- see SAFETY above
+          (input.setStore as unknown as (value: ReturnType<typeof reconcile>) => void)(reconcile(value))
 
   let attempt = 0
-  let timer: ReturnType<typeof setTimeout> | undefined
-
-  const local = createMemo(() => (input.ready() ? serialize(input.store) : undefined))
+  const local = createMemo(() => (input.ready() ? serialize("read" in input ? input.read() : input.store) : undefined))
 
   // Runs after the key's earlier requests, so a slow request can never land after a newer one.
   const enqueue = (target: Target, run: () => Promise<void>) => {
@@ -84,20 +88,12 @@ export function createSharedPreference<S extends Schema.ConstraintCodec<object, 
   // Sends the latest local value, read when its turn comes, so edits made while a request ran go out as one.
   const send = (target: Target) =>
     enqueue(target, async () => {
-      const value = input.ready() ? serialize(input.store) : undefined
+      const value = local()
 
       if (value === undefined || target.synced === undefined || value === target.synced) return
       await target.api.experimental.preference.set({ key: input.key, value: JSON.parse(value) })
       target.synced = value
-    }).then(() => schedule(target))
-
-  const schedule = (target: Target) => {
-    clearTimeout(timer)
-    const value = untrack(local)
-
-    if (value === undefined || target.synced === undefined || value === target.synced) return
-    timer = setTimeout(() => void send(target), PUSH_DELAY)
-  }
+    })
 
   const pull = (target: Target, current: number) =>
     enqueue(target, async () => {
@@ -112,8 +108,8 @@ export function createSharedPreference<S extends Schema.ConstraintCodec<object, 
       const decision = decideSharedPreference({ local: value, remote: normalized, synced: target.synced, initial })
 
       if (decision === "adopt" && remote !== undefined) {
-        replace(reconcile(remote))
         target.synced = normalized
+        apply(remote)
 
         return
       }
@@ -126,15 +122,18 @@ export function createSharedPreference<S extends Schema.ConstraintCodec<object, 
       }
 
       target.synced = value
-    }).then(() => schedule(target))
+    })
 
   createEffect(() => {
-    const api = input.api()
+    const sdk = connection()
 
-    if (!api || !input.ready()) return
-    const target = targetFor(input.key, api)
+    if (!sdk || !input.ready()) return
+    const target = targetFor(input.key, sdk.api)
     const current = ++attempt
     void pull(target, current)
+    const unsubscribe = sdk.event.on("preference.updated", (event) => {
+      if (event.data.key === input.key) void pull(target, current)
+    })
 
     const refresh = () => {
       if (document.visibilityState === "visible") void pull(target, current)
@@ -144,23 +143,17 @@ export function createSharedPreference<S extends Schema.ConstraintCodec<object, 
     document.addEventListener("visibilitychange", refresh)
     onCleanup(() => {
       attempt++
+      unsubscribe()
       window.removeEventListener("focus", refresh)
       document.removeEventListener("visibilitychange", refresh)
     })
   })
 
   createEffect(() => {
-    local()
-    const api = input.api()
-
-    if (api) schedule(targetFor(input.key, api))
-  })
-
-  // An edit still waiting for its timer goes out now: this owner may be the last to see it.
-  onCleanup(() => {
-    clearTimeout(timer)
-    const api = untrack(input.api)
-
-    if (api) void send(targetFor(input.key, api))
+    const value = local()
+    const sdk = connection()
+    if (!sdk || value === undefined) return
+    const target = targetFor(input.key, sdk.api)
+    void send(target)
   })
 }

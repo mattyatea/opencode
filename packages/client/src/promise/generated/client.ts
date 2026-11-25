@@ -329,6 +329,8 @@ import type {
   ShellRemoveOutput,
   ReferenceListInput,
   ReferenceListOutput,
+  ExperimentalWorktreePullRequestInput,
+  ExperimentalWorktreePullRequestOutput,
   WorktreeListInput,
   WorktreeListOutput,
   WorktreeCreateInput,
@@ -2062,6 +2064,20 @@ export function make(options: ClientOptions) {
               successStatus: 204,
               declaredStatuses: [400, 401],
               empty: true,
+            },
+            requestOptions,
+          ),
+      },
+      worktree: {
+        pullRequest: (input: ExperimentalWorktreePullRequestInput, requestOptions?: RequestOptions) =>
+          request<ExperimentalWorktreePullRequestOutput>(
+            {
+              method: "GET",
+              path: `/api/experimental/worktree/pull-request`,
+              query: { projectID: input["projectID"], directory: input["directory"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401],
+              empty: false,
             },
             requestOptions,
           ),

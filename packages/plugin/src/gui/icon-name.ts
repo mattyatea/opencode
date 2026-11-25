@@ -134,6 +134,7 @@ export type AppIconName =
   | "post-skill"
   | "prompt"
   | "providers"
+  | "pull-request"
   | "puzzle"
   | "refresh"
   | "reset"

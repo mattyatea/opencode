@@ -56,6 +56,20 @@
   flex-direction: column;
 }
 
+[data-slot="mobile-tabs-drawer-list"] > nav {
+  flex: 0 1 auto;
+  max-block-size: 56dvh;
+  overscroll-behavior: contain;
+}
+
+[data-slot="mobile-tabs-drawer-list"] nav :is(.h-7, button, a) {
+  min-block-size: 44px;
+}
+
+[data-slot="mobile-tabs-drawer-list"] nav :is([data-component="icon-button"], a) {
+  min-inline-size: 44px;
+}
+
 [data-slot="mobile-tabs-drawer"] [data-slot="vertical-tabs"] {
   display: flex;
   flex-direction: column;

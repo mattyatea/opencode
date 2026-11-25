@@ -6,7 +6,7 @@ import { Persist, persisted } from "@/runtime/persistence/storage"
 import { ServerScope } from "@/runtime/server/scope"
 import { sameLoopbackServer } from "./loopback"
 import type { PluginServerStatus } from "./plugin-machine"
-import { ServerHttp, ServerHttpBase, ServerKey, ServerState } from "./persistence"
+import { ProjectListPreference, ServerHttp, ServerHttpBase, ServerKey, ServerState } from "./persistence"
 
 type StoredState = typeof ServerState.Type
 
@@ -55,6 +55,13 @@ export function createServerProjects(input: {
   }
 
   return {
+    shared: {
+      key: "projects" as const,
+      schema: ProjectListPreference,
+      initial: { used: [] },
+      read: () => ({ used: used() }),
+      apply: (value: typeof ProjectListPreference.Type) => input.setStore("usedProjectIDs", input.scope(), value.used),
+    },
     last() {
       return input.store.lastProjectID[input.scope()]
     },

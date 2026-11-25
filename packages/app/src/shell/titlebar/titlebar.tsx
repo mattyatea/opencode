@@ -4,6 +4,7 @@ import { useLocation } from "@solidjs/router"
 import { uuid } from "@opencode/util/uuid"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { IconButton } from "@opencode/ui/icon-button"
+import { SegmentedControl, SegmentedControlItem } from "@opencode/ui/segmented-control"
 import { Icon } from "@opencode/ui/icon"
 import { Keybind } from "@opencode/ui/keybind"
 import { Tooltip } from "@opencode/ui/tooltip"
@@ -602,6 +603,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
             ])
 
             const [mobileTabsState, setMobileTabsState] = createSignal(INITIAL_MOBILE_TABS_STATE)
+            const [mobileProjectList, setMobileProjectList] = createSignal(true)
             let closeTimer: ReturnType<typeof setTimeout> | undefined
 
             const dispatchMobileTabs = (event: MobileTabsEvent) => {
@@ -834,23 +836,44 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                             <MobileDrawerContent>
                               <MobileDrawerLabel class="sr-only">{language.t("titlebar.tabs")}</MobileDrawerLabel>
                               <div data-slot="mobile-tabs-drawer" data-corvu-no-drag>
+                                <Show when={settings.appearance.tabLayout() === "projects"}>
+                                  <SegmentedControl
+                                    aria-label={language.t("sidebar.sections.navigation")}
+                                    value={mobileProjectList() ? "projects" : "tabs"}
+                                    onChange={(value) => setMobileProjectList(value === "projects")}
+                                  >
+                                    <SegmentedControlItem value="projects">
+                                      {language.t("home.projects")}
+                                    </SegmentedControlItem>
+                                    <SegmentedControlItem value="tabs">
+                                      {language.t("titlebar.tabs")}
+                                    </SegmentedControlItem>
+                                  </SegmentedControl>
+                                </Show>
                                 <div data-slot="mobile-tabs-drawer-list">
-                                  <TitlebarTabStrip
-                                    orientation="vertical"
-                                    tabs={tabsStore}
-                                    currentTab={currentTab()}
-                                    onNavigate={(tab) => {
-                                      tabs.select(tab)
-                                      closeMobileTabs()
-                                    }}
-                                    onClose={(tab) => {
-                                      const index = tabsStore.findIndex((item) => tabKey(item) === tabKey(tab))
+                                  <Show
+                                    when={settings.appearance.tabLayout() !== "projects" || !mobileProjectList()}
+                                    fallback={<ProjectSidebar onNavigate={closeMobileTabs} />}
+                                  >
+                                    <TitlebarTabStrip
+                                      orientation="vertical"
+                                      tabs={tabsStore}
+                                      currentTab={currentTab()}
+                                      onNavigate={(tab) => {
+                                        tabs.select(tab)
+                                        closeMobileTabs()
+                                      }}
+                                      onClose={(tab) => {
+                                        const index = tabsStore.findIndex((item) => tabKey(item) === tabKey(tab))
 
-                                      if (index !== -1) tabsStoreActions.closeTab(index)
-                                    }}
-                                    onCloseTabs={(items, keep) => tabsStoreActions.closeTabs(items.map(tabKey), keep)}
-                                    onReorder={(keys) => tabsStoreActions.reorder(keys)}
-                                  />
+                                        if (index !== -1) tabsStoreActions.closeTab(index)
+                                      }}
+                                      onCloseTabs={(items, keep) =>
+                                        tabsStoreActions.closeTabs(items.map(tabKey), keep)
+                                      }
+                                      onReorder={(keys) => tabsStoreActions.reorder(keys)}
+                                    />
+                                  </Show>
                                 </div>
                                 <button
                                   type="button"

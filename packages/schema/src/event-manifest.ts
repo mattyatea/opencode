@@ -23,6 +23,7 @@ import { ModelsDev } from "./models-dev.js"
 import { Permission } from "./permission.js"
 import { PersistentPty } from "./persistent-pty.js"
 import { Plugin } from "./plugin.js"
+import { Preference } from "./preference.js"
 import { Project } from "./project.js"
 import { Provider } from "./provider.js"
 import { Worktree } from "./worktree.js"
@@ -57,6 +58,7 @@ const featureDefinitions = Event.inventory(
   ...Reference.Event.Definitions,
   ...Permission.Event.Definitions,
   ...Plugin.Event.Definitions,
+  ...Preference.Event.Definitions,
   ...Project.Event.Definitions,
   ...Worktree.Event.Definitions,
   ...Command.Event.Definitions,

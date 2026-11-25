@@ -130,7 +130,16 @@ const ModelList: Component<{
   })
 
   const models = createMemo(() => controller.models(store.search))
-  const modelGroups = createMemo(() => controller.groups(models()))
+  const modelGroups = createMemo((): ModelGroup[] => {
+    const groups = controller.groups(models())
+    if (store.search.trim()) return groups
+    return withSections({
+      groups,
+      favorites: controller.favorites(),
+      recent: controller.recent(),
+      titles: { favorite: language.t("dialog.model.favorites"), recent: language.t("dialog.model.recent") },
+    })
+  })
   const managed = createMemo(() => consoleModelGroup(controller.all()))
   const expanded = (provider: string) => store.search.length > 0 || !store.collapsed[provider]
   const managedIDs = createMemo(() => new Set(managed()?.providers.map((provider) => provider.id) ?? []))
@@ -289,11 +298,19 @@ const ModelList: Component<{
           classList={{ "h-full px-4": !props.mobile, "max-h-[min(360px,40dvh)]": props.mobile }}
         >
           <Show
-            when={models().length > 0}
+            when={modelGroups().length > 0}
             fallback={<div class="settings-models-status">{language.t("dialog.model.empty")}</div>}
           >
+            <For each={modelGroups().filter((group) => group.title)}>
+              {(group) => (
+                <section class="settings-section" aria-label={group.title}>
+                  <h3 class="settings-models-group-header">{group.title}</h3>
+                  <ModelRows items={group.items} mobile={props.mobile} />
+                </section>
+              )}
+            </For>
             <ProviderModelSections
-              groups={modelGroups()}
+              groups={modelGroups().filter((group) => !group.title)}
               managed={managed()}
               expanded={expanded}
               disabled={store.search.length > 0}

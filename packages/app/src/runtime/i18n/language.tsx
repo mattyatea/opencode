@@ -423,6 +423,14 @@ export const { use: useLanguage, provider: LanguageProvider } = createSimpleCont
 
     return {
       ready,
+      shared: {
+        key: "language" as const,
+        schema: languageSchema,
+        initial: { locale: detectLocale() },
+        store,
+        setStore,
+        ready,
+      },
       locale,
       intl,
       direction,

@@ -47,7 +47,12 @@ export type MockFileContent =
   | { type?: string; content: string; encoding?: string; mimeType?: string }
   | undefined
 
+export function mockSharedPreferences() {
+  return { values: new Map<string, unknown>(), listeners: new Set<(events: MockServerEvent[]) => void>() }
+}
+
 export interface MockServerConfig {
+  preferences?: ReturnType<typeof mockSharedPreferences>
   server?: string
   // The machine name `/api/info` reports; omitted like a server that predates it.
   hostname?: string
@@ -151,6 +156,7 @@ export interface MockServerConfig {
   skills?: Resolvable<unknown[]>
   // Replaces the `/api/worktree` inventory, which defaults to the directory plus project sandboxes.
   worktrees?: Resolvable<unknown[]>
+  worktreePullRequest?: (directory: string) => string | null
   // Without them, creating or removing a worktree answers 501 MockUnsupported. `onWorktreeCreate` may hold the request
   // and return the answer; by default it creates `<directory>/<name>`. A created directory joins the project's sandboxes.
   onWorktreeCreate?: (input: Schema.Json) => void | MockAnswer | Promise<void | MockAnswer>
@@ -364,6 +370,8 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
   }
 
   const transport = createMockServerHandler(config, emit)
+  config.preferences?.listeners.add(emit)
+  page.on("close", () => config.preferences?.listeners.delete(emit))
   page.on("close", () => void transport.dispose())
 
   await page.route("**/api/**", async (route) => {
@@ -633,7 +641,7 @@ function mockHandlers(
   },
 ) {
   const taskMessages = config.taskMessages ?? []
-  const preferences = new Map<string, unknown>()
+  const preferences = config.preferences?.values ?? new Map<string, unknown>()
   const noContent = Effect.succeed(HttpApiSchema.NoContent.make())
   const configEntries = config.configEntries ?? []
 
@@ -1027,6 +1035,8 @@ function mockHandlers(
         },
         // No scenario runs background jobs (Code Mode scripts or subagent work), so none is running.
         jobList: () => Effect.succeed({ data: [] }),
+        worktreePullRequest: (ctx) =>
+          Effect.succeed({ url: config.worktreePullRequest?.(ctx.query.directory) ?? null }),
         worktreeList: () =>
           Effect.sync(() => {
             if (config.worktrees) return resolve(config.worktrees)
@@ -1211,6 +1221,14 @@ function mockHandlers(
         preferenceSet: (ctx) =>
           Effect.sync(() => {
             preferences.set(ctx.params.key, ctx.payload.value)
+            const event: OpenCodeEvent = {
+              type: "preference.updated",
+              id: `evt_${crypto.randomUUID()}`,
+              created: Date.now(),
+              data: { key: ctx.params.key },
+            }
+            if (config.preferences) config.preferences.listeners.forEach((listener) => listener([event]))
+            else state.emit([event])
             return HttpApiSchema.NoContent.make()
           }),
         persistentPtyList: (ctx) =>

@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test"
 import { fixture, installStressSessionTabs } from "../utils/session-fixture"
 import { sessionHref } from "../utils/app"
 import { openWithDirection } from "../utils/direction"
-import { mockOpenCodeServer } from "../utils/mock-server"
+import { mockOpenCodeServer, mockSharedPreferences } from "../utils/mock-server"
 import { expectAppVisible } from "../utils/waits"
 
 for (const direction of ["ltr", "rtl"] as const) {
@@ -317,6 +317,49 @@ test("model dialog toggles a favorite from the keyboard and leads with favorite 
   await expect(dialog.locator('[data-option-key="opencode:mobile-c"]')).toHaveAttribute("data-active", "")
 })
 
+test("a desktop favorite appears in the open phone model list and a phone selection appears in desktop recents", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  const preferences = mockSharedPreferences()
+  await openPickerSession(page, "ltr", true, preferences)
+  const openModels = (client: Page) =>
+    client.locator('[data-component="composer"] [data-action="composer-model"]').click()
+  const picker = (client: Page) => client.getByRole("dialog", { name: "Select model", exact: true })
+  const phone = await browser.newPage({
+    baseURL,
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    serviceWorkers: "block",
+  })
+  try {
+    await openPickerSession(phone, "ltr", true, preferences)
+    await openModels(phone)
+    await expect(picker(phone).getByRole("region", { name: "Favorites" })).toHaveCount(0)
+    await openModels(page)
+    const search = picker(page).getByRole("combobox", { name: "Search models" })
+    await search.press("ArrowDown")
+    await search.press("ArrowDown")
+    await search.press("ControlOrMeta+f")
+    await expect(
+      picker(phone)
+        .getByRole("region", { name: "Favorites" })
+        .getByRole("button", { name: /Mobile Model C/ }),
+    ).toBeVisible()
+    await picker(phone)
+      .getByRole("button", { name: /Mobile Model B/ })
+      .tap()
+    await expect(picker(page).locator('[data-slot="search-list-header"]')).toHaveText([
+      "Favorites",
+      "Recent",
+      "OpenCode",
+    ])
+  } finally {
+    await phone.close()
+  }
+})
+
 test("model dialog opens Manage models from its search row with Enter", async ({ page }) => {
   const { model, dialog } = await openDesktopPicker(page, "ltr")
   await model.click()
@@ -379,9 +422,15 @@ async function openDesktopPicker(page: Page, direction: "ltr" | "rtl") {
   }
 }
 
-async function openPickerSession(page: Page, direction: "ltr" | "rtl", paid: boolean) {
+async function openPickerSession(
+  page: Page,
+  direction: "ltr" | "rtl",
+  paid: boolean,
+  preferences?: ReturnType<typeof mockSharedPreferences>,
+) {
   await mockOpenCodeServer(page, {
     ...fixture,
+    preferences,
     sessions: fixture.sessions.map((session) => ({
       ...session,
       model: { id: "mobile-a", providerID: "opencode", variant: "balanced" },

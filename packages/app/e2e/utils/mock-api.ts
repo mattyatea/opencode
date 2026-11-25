@@ -1,6 +1,7 @@
 import { Predicate, Schema, SchemaGetter } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 import { PersistentPty } from "@opencode/schema/persistent-pty"
+import { Preference } from "@opencode/schema/preference"
 import { Pty } from "@opencode/schema/pty"
 import { Worktree } from "@opencode/schema/worktree"
 
@@ -238,6 +239,12 @@ const Group = HttpApiGroup.make("mock")
   .add(HttpApiEndpoint.get("sessionStats", "/api/experimental/session/stats", { success: Json, error: Unsupported }))
   .add(HttpApiEndpoint.get("jobList", "/api/experimental/job", { success: Json }))
   .add(
+    HttpApiEndpoint.get("worktreePullRequest", "/api/experimental/worktree/pull-request", {
+      query: Schema.Struct({ projectID: Schema.String, directory: Schema.String }),
+      success: Json,
+    }),
+  )
+  .add(
     HttpApiEndpoint.get("worktreeList", "/api/worktree", {
       query: Schema.Struct({ projectID: Schema.String }),
       success: Json,
@@ -309,11 +316,11 @@ const Group = HttpApiGroup.make("mock")
   .add(
     HttpApiEndpoint.get("dictationStatus", "/api/experimental/dictation/status", { success: Json }),
     HttpApiEndpoint.get("preferenceGet", "/api/experimental/preference/:key", {
-      params: { key: Schema.String },
+      params: { key: Preference.Key },
       success: Json,
     }),
     HttpApiEndpoint.put("preferenceSet", "/api/experimental/preference/:key", {
-      params: { key: Schema.String },
+      params: { key: Preference.Key },
       payload: Schema.Struct({ value: Schema.Json }),
       success: NoContent,
     }),
