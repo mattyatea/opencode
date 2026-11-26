@@ -34,11 +34,15 @@ export function createSidebarTaskTree<T extends { id: string }>(
 
   return createMemo(
     on(stream, (current) => {
-      const [tree, controls] = createResource(async () => {
-        const tasks = await load()
+      const [tree, controls] = createResource(
+        async () => {
+          const tasks = await load()
 
-        return { tasks, ids: new Set(tasks.map((task) => task.id)) }
-      })
+          return { tasks, ids: new Set(tasks.map((task) => task.id)) }
+        },
+        // A retry after the first load fails is "refreshing" even without a successful snapshot.
+        { initialValue: { tasks: [], ids: new Set<string>() } },
+      )
 
       // A change can arrive before the first snapshot tells us which family it affects.
       const pending = new Set<string | undefined>()

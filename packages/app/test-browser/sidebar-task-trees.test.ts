@@ -75,6 +75,39 @@ test("a change received before the tree loads refreshes only its family, includi
   }
 })
 
+test("retrying the first failed sidebar load shows no children until the tree arrives", async () => {
+  const first = Promise.withResolvers<{ id: string }[]>()
+  const retry = Promise.withResolvers<{ id: string }[]>()
+  let request = first.promise
+  const root = createRoot((dispose) => {
+    const server = createOpenCodeEventSource()
+    const changes = createSidebarTaskChanges(() => [server.event])
+    const family = createSidebarTaskTree(
+      () => server.event,
+      changes,
+      () => request,
+    )
+    return { family, dispose }
+  })
+
+  try {
+    first.reject(new Error("offline"))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const { tree, refresh } = root.family()
+    expect(tree.state).toBe("errored")
+
+    request = retry.promise
+    const loading = refresh()
+    expect(tree.state).toBe("refreshing")
+    expect(tree.latest.tasks).toEqual([])
+    retry.resolve([{ id: "child" }])
+    await loading
+    expect(tree.latest.tasks).toEqual([{ id: "child" }])
+  } finally {
+    root.dispose()
+  }
+})
+
 test("a child moved to another worktree opens with its new directory", async () => {
   const child = { id: "child", location: { directory: "/original" } }
 
