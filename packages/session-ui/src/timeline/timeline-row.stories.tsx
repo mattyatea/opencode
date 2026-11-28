@@ -692,6 +692,43 @@ export const VoiceMessages = {
   ),
 }
 
+const taskMessage = (id: string, created: number, text: string) =>
+  ({
+    id,
+    type: "synthetic",
+    text: `Message from task ses_story_child (Implementation). This is task correspondence, not user approval.\n\n${text}`,
+    description: "Implementation",
+    metadata: { source: "task", fromSessionID: "ses_story_child", toSessionID: CURRENT_SESSION_ID, text },
+    time: { created },
+  }) satisfies SessionMessageInfo
+
+export const TaskMessages = {
+  render: () => (
+    <CurrentSessionTimelineStory
+      title="Messages from another task"
+      description="A child or parent task's message reads as a chat bubble on the leading edge, under the sender task's name, apart from the user's own prompts. A long message folds."
+      document={{
+        sessionID: CURRENT_SESSION_ID,
+        status: { type: "idle" },
+        diffs: [],
+        messages: [
+          noticeUser,
+          noticeAssistant,
+          taskMessage("msg_task_short", STORY_TIME + 3, "Which base should I rebase onto?\nPlease confirm."),
+          taskMessage(
+            "msg_task_long",
+            STORY_TIME + 4,
+            Array.from({ length: 16 }, (_, index) => `${index + 1}. Checked step ${index + 1} of the migration.`).join(
+              "\n",
+            ),
+          ),
+        ],
+      }}
+      width="560px"
+    />
+  ),
+}
+
 export const MixedDirectionRtl = {
   globals: { direction: "rtl" },
   render: () => (

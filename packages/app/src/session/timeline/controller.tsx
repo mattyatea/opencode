@@ -2,7 +2,7 @@ import type { SessionMessageInfo } from "@opencode/client/promise"
 import { DialogFooter, DialogHeader, DialogTitleGroup, Dialog } from "@opencode/ui/dialog"
 import { Button } from "@opencode/ui/button"
 import { useNavigate } from "@solidjs/router"
-import { createEffect, createMemo, createResource, createSignal, on, onCleanup, untrack, type Accessor } from "solid-js"
+import { createEffect, createMemo, createSignal, on, onCleanup, untrack, type Accessor } from "solid-js"
 import { Option, Predicate, Schema } from "effect"
 import { notifySessionTabsRemoved } from "@/shell/titlebar/session-events"
 import { useDialog } from "@opencode/ui/context/dialog"
@@ -16,12 +16,7 @@ import { useServerSDK } from "@/runtime/server/client"
 import { sessionHref } from "@/shell/routes/session"
 import { sessionTitle } from "@/session/title"
 import { showToast } from "@/shell/notifications/toast"
-import {
-  applyTimelineMessageHandoff,
-  includeOutgoingTaskMessages,
-  timelineChildTitle,
-  visibleTimelineMessages,
-} from "./controller-projection"
+import { applyTimelineMessageHandoff, timelineChildTitle, visibleTimelineMessages } from "./controller-projection"
 import {
   createSessionDeleteState,
   selectSessionDeleteView,
@@ -92,30 +87,6 @@ export function createTimelineController(input: {
   const language = useLanguage()
   const exporter = useSessionExporter()
 
-  const [correspondence, correspondenceControls] = createResource(
-    () => {
-      const info = input.session.data.info()
-      return input.active() && info && !info.parentID ? info.id : undefined
-    },
-    async (sessionID) => {
-      const messages = await serverSDK.api.experimental.session.tasks.messages({ sessionID })
-      const tasks = messages.some((message) => message.from === sessionID)
-        ? await serverSDK.api.experimental.session.tasks.tree({ sessionID })
-        : []
-      return { sessionID, messages, tasks }
-    },
-  )
-  onCleanup(
-    server.ctx.sdk.event.listen((event) => {
-      if (!input.active()) return
-      if (event.type !== "session.inbox.enqueued" || event.data.item.type !== "synthetic") return
-      const metadata = event.data.item.payload.metadata
-      const id = input.session.identity.sessionID()
-      if (metadata?.source === "task" && (metadata.fromSessionID === id || metadata.toSessionID === id))
-        void correspondenceControls.refetch()
-    }),
-  )
-
   // Pending inputs and the handoff hold with the history while the view is detached, so a hidden view never shows
   // one against history it has not caught up with.
   const pendingItems = createMemo<{ value: ReturnType<typeof data.session.pending.list> } | undefined>(
@@ -150,18 +121,9 @@ export function createTimelineController(input: {
   )
 
   // A handoff projects after visibility: its prompt commits any staged revert, so the boundary does not hide it.
-  const projectedMessages = createMemo(() => {
-    const messages = applyTimelineMessageHandoff(
-      visibleMessages(),
-      handoffItem()!.value,
-      input.session.data.info(),
-    )
-    if (correspondence.state !== "ready" && correspondence.state !== "refreshing") return messages
-    const loaded = correspondence.latest
-    const id = input.session.identity.sessionID()
-    if (!loaded || !id || loaded.sessionID !== id) return messages
-    return includeOutgoingTaskMessages(messages, loaded.messages, loaded.tasks, id)
-  })
+  const projectedMessages = createMemo(() =>
+    applyTimelineMessageHandoff(visibleMessages(), handoffItem()!.value, input.session.data.info()),
+  )
 
   // Inputs that wait behind the active turn. A starting steer opens the next turn instead, so the turn before it
   // stays finished, as it will once the steer is delivered.

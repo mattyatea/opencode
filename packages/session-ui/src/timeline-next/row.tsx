@@ -47,6 +47,8 @@ import {
 } from "../timeline/steer-arrival-machine"
 import { Badge } from "@opencode/ui/badge"
 import { attached } from "../components/message-file"
+import { TaskMessageBubble } from "../message/message-content"
+import { taskCorrespondence } from "../timeline/task-correspondence"
 import { CompactionMessage, CompactionQueued } from "./compaction"
 import { unwrapErrorMessage } from "./errors"
 import { TimelineEventItem, TimelineEventRow } from "./event-row"
@@ -863,10 +865,12 @@ export function createNextTimelineRowRenderer(input: {
       return value.description?.replace(/^Goal: /, "") || undefined
     })
 
+    const task = createMemo(() => taskCorrespondence(message()))
+
     const content = createMemo(() => {
       const value = message()
 
-      return value && !goal() ? notice(value) : undefined
+      return value && !goal() && !task() ? notice(value) : undefined
     })
 
     const childID = createMemo(() => {
@@ -936,6 +940,20 @@ export function createNextTimelineRowRenderer(input: {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+        </Show>
+        <Show when={task()}>
+          {(task) => (
+            <div data-slot="session-turn-message-container" class={`w-full ${inset()}`}>
+              <TaskMessageBubble
+                id={task().id}
+                text={task().text}
+                sender={task().sender}
+                senderID={task().senderID}
+                expanded={input.disclosure.value(`task-expanded:${task().id}`)}
+                onExpandedChange={(open) => input.disclosure.set(`task-expanded:${task().id}`, open)}
+              />
             </div>
           )}
         </Show>

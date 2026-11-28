@@ -24,86 +24,55 @@ import { openSession } from "../utils/workspace"
 test.use({ serviceWorkers: "block" })
 
 test.describe("timeline history", () => {
-  test("shows task correspondence in both directions in the conversation", async ({ page }) => {
-    const taskMessages = [
-      {
-        id: "msg_mail_out",
-        from: "ses_mail_parent",
-        to: "ses_mail_child",
-        text: "Use the new base",
-        time: 2,
-        state: "delivered",
-      },
-    ]
-    const workspace = await openSession(page, {
-      name: "Task correspondence",
-      sessions: [
-        { id: "ses_mail_parent", title: "Main task" },
-        { id: "ses_mail_child", title: "Implementation", experimental: { taskParentID: "ses_mail_parent" } },
-      ],
-      seed: { tabs: ["ses_mail_parent"] },
-      taskMessages,
-      pageMessages: () => ({
-        items: [
+  for (const newTimeline of [false, true])
+    test(`shows a message from another task as a chat bubble under its name, and none for messages sent${newTimeline ? " in the New timeline" : ""}`, async ({
+      page,
+    }) => {
+      await openSession(page, {
+        name: "Task correspondence",
+        seed: { tabs: ["ses_mail_parent"], settings: { general: { newTimeline } } },
+        sessions: [
+          { id: "ses_mail_parent", title: "Main task" },
+          { id: "ses_mail_child", title: "Implementation", experimental: { taskParentID: "ses_mail_parent" } },
+        ],
+        // Sent correspondence stays the sender's tool call; the timeline does not draw it again.
+        taskMessages: [
           {
-            id: "msg_mail_in",
-            type: "synthetic",
-            description: "Implementation",
-            text: "Message from task with internal instructions",
-            metadata: {
-              source: "task",
-              fromSessionID: "ses_mail_child",
-              toSessionID: "ses_mail_parent",
-              text: "Which base?\nPlease confirm.",
-            },
-            time: { created: 1 },
+            id: "msg_mail_out",
+            from: "ses_mail_parent",
+            to: "ses_mail_child",
+            text: "Use the new base",
+            time: 2,
+            state: "delivered",
           },
         ],
-      }),
-    })
-    const incoming = page
-      .locator('[data-slot="session-timeline-notice"]')
-      .filter({ hasText: "Message from task Implementation" })
-    const outgoing = page
-      .locator('[data-slot="session-timeline-notice"]')
-      .filter({ hasText: "Message to task Implementation" })
-    await expect(incoming).toContainText("Which base?")
-    await expect(incoming).toContainText("Please confirm.")
-    await expect(outgoing).toContainText("Use the new base")
-    await expect(incoming).not.toContainText("internal instructions")
-    await expect(incoming).toHaveCount(1)
-    await expect(outgoing).toHaveCount(1)
-    taskMessages.push({
-      id: "msg_mail_live",
-      from: "ses_mail_parent",
-      to: "ses_mail_child",
-      text: "Please proceed",
-      time: 3,
-      state: "pending",
-    })
-    await workspace.push([
-      {
-        id: "evt_mail_live",
-        created: 3,
-        type: "session.inbox.enqueued",
-        durable: { aggregateID: "ses_mail_child", seq: 1, version: 1 },
-        location: { directory: workspace.directory },
-        data: {
-          sessionID: "ses_mail_child",
-          inboxID: "msg_mail_live",
-          item: {
-            type: "synthetic",
-            delivery: "steer",
-            payload: {
-              text: "Please proceed",
-              metadata: { source: "task", fromSessionID: "ses_mail_parent", toSessionID: "ses_mail_child" },
+        pageMessages: () => ({
+          items: [
+            {
+              id: "msg_mail_in",
+              type: "synthetic",
+              description: "Implementation",
+              text: "Message from task with internal instructions",
+              metadata: {
+                source: "task",
+                fromSessionID: "ses_mail_child",
+                toSessionID: "ses_mail_parent",
+                text: "Which base?\nPlease confirm.",
+              },
+              time: { created: 1 },
             },
-          },
-        },
-      },
-    ])
-    await expect(page.getByText("Please proceed", { exact: true })).toBeVisible()
-  })
+          ],
+        }),
+      })
+      const incoming = page.locator('[data-component="user-message"][data-task-message]')
+      await expect(incoming).toHaveCount(1)
+      await expect(page.locator('[data-timeline="next"]', { has: incoming })).toHaveCount(newTimeline ? 1 : 0)
+      await expect(incoming.locator('[data-slot="task-message-sender"]')).toHaveText("From task Implementation")
+      await expect(incoming.locator('[data-slot="user-message-text"]')).toHaveText("Which base?\nPlease confirm.")
+      await expect(incoming).not.toContainText("internal instructions")
+      await expect(page.getByText("Use the new base")).toHaveCount(0)
+      await expect(page.locator('[data-slot="session-timeline-notice"]')).toHaveCount(0)
+    })
 
   test("jump to message searches offscreen history without moving the reader until selection", async ({ page }) => {
     const target = userMessage([textPart("prt_dispatch_note", "Use the loading dock for delivery")], {

@@ -2140,3 +2140,46 @@
   border-color: var(--v2-border-border-base);
   color: var(--v2-text-text-faint);
 }
+
+/* Another task's message reads as the other side of a chat: on the leading edge, under its sender's name. */
+[data-component="user-message"][data-task-message] {
+  align-items: flex-start;
+
+  [data-slot="task-message-sender"] {
+    max-width: min(82%, 64ch);
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 530;
+    line-height: var(--line-height-compact);
+    color: var(--v2-text-text-muted);
+  }
+
+  [data-slot="task-message-sender-link"] {
+    color: inherit;
+    text-decoration: none;
+
+    &:hover {
+      color: var(--v2-text-text-base);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--v2-border-border-focus);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+  }
+
+  [data-slot="user-message-body"] {
+    margin-inline-start: 0;
+    margin-inline-end: auto;
+    align-items: flex-start;
+  }
+
+  [data-slot="user-message-text"] {
+    border-radius: 10px;
+    border-start-start-radius: 4px;
+  }
+}
