@@ -228,6 +228,7 @@ export const dict = {
   "ui.sessionTimeline.notice.finished": "{{actor}} が完了しました",
   "ui.sessionTimeline.notice.instructionsUpdated": "指示が更新されました",
   "ui.sessionTimeline.notice.restart": "再起動後に続行",
+  "ui.sessionTimeline.taskMessage.sender": "タスク「{{title}}」から",
   "ui.promptInput.placeholder.followUp": "フォローアップを追加。{{slash}}でコマンド、{{at}}でコンテキストを追加...",
   "ui.promptInput.steer": "方向を指示",
   "ui.promptInput.queue": "キューに追加",

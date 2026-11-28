@@ -44,7 +44,9 @@ import {
   AssistantReasoningContent,
   SessionCompactionMessage,
   SessionCompactionQueued,
+  TaskMessageBubble,
 } from "../message/message-content"
+import { taskCorrespondence } from "./task-correspondence"
 import {
   FileChangeRuns,
   fileRuns,
@@ -758,17 +760,6 @@ export function createSessionTimelineRowRenderer(input: {
       return { label: i18n.t("ui.sessionTimeline.notice.restart") }
     const source = message.metadata?.source
 
-    if (source === "task") {
-      const outgoing = message.metadata?.direction === "outgoing"
-      const title = message.description ?? (outgoing ? message.metadata?.toSessionID : message.metadata?.fromSessionID)
-      return {
-        label: i18n.t(outgoing ? "ui.sessionTimeline.taskMessage.to" : "ui.sessionTimeline.taskMessage.from", {
-          title: Predicate.isString(title) ? title : "",
-        }),
-        data: Predicate.isString(message.metadata?.text) ? message.metadata.text : message.text,
-      }
-    }
-
     if (source === "subagent" || source === "shell") {
       const agent = message.metadata?.agent
 
@@ -892,10 +883,12 @@ export function createSessionTimelineRowRenderer(input: {
       }
     })
 
+    const task = createMemo(() => taskCorrespondence(message()))
+
     const content = createMemo(() => {
       const value = message()
 
-      return value ? notice(value) : undefined
+      return value && !task() ? notice(value) : undefined
     })
 
     const childID = createMemo(() => {
@@ -952,6 +945,20 @@ export function createSessionTimelineRowRenderer(input: {
 
     return (
       <>
+        <Show when={task()}>
+          {(task) => (
+            <div data-slot="session-turn-message-container" class={`w-full pt-3 ${inset()}`}>
+              <TaskMessageBubble
+                id={task().id}
+                text={task().text}
+                sender={task().sender}
+                senderID={task().senderID}
+                expanded={input.disclosure.value(`task-expanded:${task().id}`)}
+                onExpandedChange={(open) => input.disclosure.set(`task-expanded:${task().id}`, open)}
+              />
+            </div>
+          )}
+        </Show>
         <Show when={compaction()}>
           {(message) => (
             <div data-slot="session-turn-message-container" class={`w-full ${inset()}`}>
@@ -976,11 +983,8 @@ export function createSessionTimelineRowRenderer(input: {
                           component={href() ? "a" : "div"}
                           data-slot="session-timeline-notice"
                           data-outcome={content().outcome}
-                          class={`block w-full ${props.grouped ? "py-1" : "pt-3 pb-1"} text-13-regular leading-text-compact text-v2-text-text-faint ${inset()}`}
-                          classList={{
-                            truncate: message()?.type !== "synthetic" || message()?.metadata?.source !== "task",
-                            "cursor-pointer hover:text-v2-text-text-base": clickable(),
-                          }}
+                          class={`block w-full truncate ${props.grouped ? "py-1" : "pt-3 pb-1"} text-13-regular leading-text-compact text-v2-text-text-faint ${inset()}`}
+                          classList={{ "cursor-pointer hover:text-v2-text-text-base": clickable() }}
                           href={href()}
                           role={clickable() && !href() ? (shellID() ? "button" : "link") : undefined}
                           tabIndex={clickable() && !href() ? 0 : undefined}
@@ -1005,21 +1009,8 @@ export function createSessionTimelineRowRenderer(input: {
                           </bdi>
                           <Show when={content().data}>
                             {(data) => (
-                              <span
-                                classList={{
-                                  "ms-2": message()?.type === "agent-switched",
-                                  "block whitespace-pre-wrap break-words text-v2-text-text-base":
-                                    message()?.type === "synthetic" && message()?.metadata?.source === "task",
-                                }}
-                              >
-                                <Show
-                                  when={
-                                    message()?.type !== "agent-switched" &&
-                                    (message()?.type !== "synthetic" || message()?.metadata?.source !== "task")
-                                  }
-                                >
-                                  {" · "}
-                                </Show>
+                              <span classList={{ "ms-2": message()?.type === "agent-switched" }}>
+                                <Show when={message()?.type !== "agent-switched"}>{" · "}</Show>
                                 <bdi dir="auto">{data()}</bdi>
                               </span>
                             )}

@@ -247,6 +247,9 @@ export function placeNotice(
   if (timeline === "next" && sessionEvent(message)) return "separate"
   const source = message.type === "synthetic" ? message.metadata?.source : undefined
 
+  // Another task's message is conversation, not activity, so no setting folds or hides it.
+  if (source === "task") return "separate"
+
   const placement =
     source === "subagent"
       ? detail.subagents.placement

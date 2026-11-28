@@ -102,4 +102,19 @@ describe("placeNotice", () => {
     expect(placeNotice(switched, detail, "next")).toBe("separate")
     expect(placeNotice(switched, detail, "current")).toBe("hidden")
   })
+
+  test("another task's message stands alone in both timelines whatever the notice setting", () => {
+    const message: SessionMessageInfo = {
+      id: "m",
+      type: "synthetic",
+      text: "Which base?",
+      description: "Implementation",
+      metadata: { source: "task", fromSessionID: "ses_child", text: "Which base?" },
+      time: { created: 0 },
+    }
+
+    for (const placement of ["grouped", "hidden"] as const)
+      for (const timeline of ["current", "next"] as const)
+        expect(placeNotice(message, custom({ notices: { placement } }), timeline)).toBe("separate")
+  })
 })

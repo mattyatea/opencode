@@ -746,6 +746,54 @@ export function CurrentUserMessageDisplay(props: {
   )
 }
 
+/** A message another task sent this one, drawn as a chat bubble under its sender's name rather than the user's. */
+export function TaskMessageBubble(props: {
+  id: string
+  text: string
+  sender: string
+  senderID?: string
+  expanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
+}) {
+  const i18n = useI18n()
+  const data = useData()
+  const [expanded, setExpanded] = createSignal(false)
+  const label = () => i18n.t("ui.sessionTimeline.taskMessage.sender", { title: props.sender })
+  const href = () => (props.senderID ? data.sessionHref?.(props.senderID) : undefined)
+
+  const open = (event: MouseEvent) => {
+    if (!props.senderID || !data.navigateToSession) return
+
+    if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+    event.preventDefault()
+    data.navigateToSession(props.senderID)
+  }
+
+  return (
+    <div data-component="user-message" data-task-message="">
+      <div data-slot="task-message-sender">
+        <Show when={props.senderID && (href() || data.navigateToSession)} fallback={<bdi dir="auto">{label()}</bdi>}>
+          <a data-slot="task-message-sender-link" href={href() ?? "#"} onClick={open}>
+            <bdi dir="auto">{label()}</bdi>
+          </a>
+        </Show>
+      </div>
+      <div data-slot="user-message-body">
+        <div data-slot="user-message-text" dir="auto">
+          <UserMessageFold
+            id={`${props.id}-text`}
+            text={props.text}
+            expanded={props.expanded ?? expanded()}
+            onExpandedChange={props.onExpandedChange ?? setExpanded}
+          >
+            <CurrentHighlightedText text={props.text} files={[]} agents={[]} />
+          </UserMessageFold>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // The OpenCode iOS app's fold (UserBubbleFold): a message past 12 lines shows its first 8, so a fold always hides at
 // least 5 lines and a message just past the limit never folds away a line or two.
 const USER_MESSAGE_FOLD = { over: 12, show: 8 }
