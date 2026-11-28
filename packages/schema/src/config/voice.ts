@@ -44,6 +44,10 @@ export class Agent extends Schema.Class<Agent>("ConfigVoice.Agent")({
 
 export class Info extends Schema.Class<Info>("ConfigVoice.Info")({
   provider: Provider.pipe(optional),
+  work_model: Schema.String.pipe(optional).annotate({
+    description:
+      "Model of the sessions and tasks the voice creates, as provider/model or provider/model#variant (default: the main session's model)",
+  }),
   chatgpt: ChatGPT.pipe(optional).annotate({
     description: "GPT-Live on your ChatGPT plan",
   }),

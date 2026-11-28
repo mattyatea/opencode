@@ -1230,6 +1230,14 @@ export const dict = {
   "settings.voice.voice.title": "Voice",
   "settings.voice.voice.description": "The voice GPT-Live speaks with on the ChatGPT plan.",
   "settings.voice.voice.default": "Default",
+  "settings.voice.section.work": "Work",
+  "settings.voice.workModel.title": "Model for new sessions",
+  "settings.voice.workModel.description":
+    "The model of sessions and tasks the voice creates. By default they use the main session's model.",
+  "settings.voice.workModel.default": "Main session's model",
+  "settings.voice.workVariant.title": "Reasoning",
+  "settings.voice.workVariant.description": "The chosen model's variant for sessions and tasks the voice creates.",
+  "settings.voice.workVariant.default": "Default",
   "settings.voice.signin.missing":
     "No Codex sign-in found on this server. Connect OpenAI with Codex browser (legacy), or sign in to the Codex CLI.",
   "settings.dictation.description":

@@ -135,6 +135,8 @@ export const Patch = Schema.Struct({
     provider: Schema.NullOr(ConfigVoice.Provider).pipe(Schema.optional),
     /** `voice.chatgpt.voice` */
     chatgpt_voice: Schema.NullOr(Schema.String).pipe(Schema.optional),
+    /** `voice.work_model` */
+    work_model: Schema.NullOr(Schema.String).pipe(Schema.optional),
   }).pipe(Schema.optional),
 }).annotate({ identifier: "Config.Patch" })
 export interface Patch extends Schema.Schema.Type<typeof Patch> {}

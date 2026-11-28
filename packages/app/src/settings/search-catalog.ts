@@ -282,7 +282,7 @@ export const serverSettings: Entry<SettingsServerTab | "servers">[] = [
     tab: "voice",
     label: "settings.tab.voice",
     description: "settings.voice.description",
-    keywords: "voice call chatgpt plan codex gpt-live realtime speech 音声 通話",
+    keywords: "voice call chatgpt plan codex gpt-live realtime speech model 音声 通話 モデル",
   },
   { tab: "models", label: "settings.models.title", keywords: "model picker visibility" },
   { tab: "extensions", label: "settings.tab.extensions" },

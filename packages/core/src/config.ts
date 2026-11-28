@@ -519,6 +519,7 @@ export const layer = (options?: Options) =>
             [["shell"], patch.shell],
             [["voice", "provider"], patch.voice?.provider],
             [["voice", "chatgpt", "voice"], patch.voice?.chatgpt_voice],
+            [["voice", "work_model"], patch.voice?.work_model],
           ]
           const updated = yield* Effect.try({
             try: () =>

@@ -1,6 +1,7 @@
-import { type Component, createResource, Show } from "solid-js"
+import { type Component, createMemo, createResource, Show } from "solid-js"
 import type { ConfigEntry } from "@opencode/client/promise"
 import { Select } from "@opencode/ui/select"
+import { useModels } from "@/providers/models/models"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useServer } from "@/runtime/server/current"
 import type { ServerCtx } from "@/runtime/server/runtime"
@@ -95,6 +96,42 @@ export const SettingsVoice: Component = () => {
     onError: failed,
   })
 
+  // `voice.work_model`, as provider/model or provider/model#variant; empty keeps the main session's model.
+  const workModel = createOptimisticSetting<string, undefined, ServerCtx>({
+    source: () => server.ctx,
+    initial: "",
+    initialMeta: undefined,
+    load: async (ctx) => ({
+      meta: undefined,
+      value:
+        globalVoice(await ctx.sdk.api.config.get())
+          .flatMap((item) => (item.work_model ? [item.work_model] : []))
+          .at(-1) ?? "",
+    }),
+    write: async (value, ctx) => {
+      await ctx.sdk.api.experimental.config.update({ voice: { work_model: value || null } })
+    },
+    onError: failed,
+  })
+
+  const catalog = useModels()
+
+  const workOptions = createMemo(() => [
+    undefined,
+    ...catalog
+      .list()
+      .filter((item) => catalog.visible({ providerID: item.provider.id, modelID: item.id }))
+      .map((item) => ({ key: `${item.provider.id}/${item.id}`, item })),
+  ])
+
+  const workSelected = createMemo(() => {
+    const key = workModel.value().split("#")[0]
+
+    return workOptions().find((option) => option?.key === key)
+  })
+
+  const workVariants = createMemo(() => [undefined, ...Object.keys(workSelected()?.item.variants ?? {})])
+
   const [models, { refetch }] = createResource(() =>
     server.ctx.sdk.api.experimental.voice.models().catch(() => undefined),
   )
@@ -154,6 +191,49 @@ export const SettingsVoice: Component = () => {
                   <span class="text-12-regular text-v2-text-text-muted">{text()}</span>
                 </SettingsRow>
               )}
+            </Show>
+          </SettingsList>
+        </div>
+
+        <div class="settings-section">
+          <h3 class="settings-section-title">{language.t("settings.voice.section.work")}</h3>
+          <SettingsList>
+            <SettingsRow
+              title={language.t("settings.voice.workModel.title")}
+              description={language.t("settings.voice.workModel.description")}
+            >
+              <Select
+                data-action="settings-voice-work-model"
+                options={workOptions()}
+                current={workSelected()}
+                value={(option) => option?.key ?? ""}
+                label={(option) => option?.item.name ?? language.t("settings.voice.workModel.default")}
+                groupBy={(option) => option?.item.provider.name ?? ""}
+                onSelect={(option) => workModel.select(option?.key ?? "")}
+                placement="bottom-end"
+                gutter={6}
+              />
+            </SettingsRow>
+            <Show when={workVariants().length > 1}>
+              <SettingsRow
+                title={language.t("settings.voice.workVariant.title")}
+                description={language.t("settings.voice.workVariant.description")}
+              >
+                <Select
+                  data-action="settings-voice-work-variant"
+                  options={workVariants()}
+                  current={workModel.value().split("#")[1]}
+                  value={(variant) => variant ?? ""}
+                  label={(variant) => variant ?? language.t("settings.voice.workVariant.default")}
+                  onSelect={(variant) => {
+                    const key = workSelected()?.key
+
+                    if (key) workModel.select(variant ? `${key}#${variant}` : key)
+                  }}
+                  placement="bottom-end"
+                  gutter={6}
+                />
+              </SettingsRow>
             </Show>
           </SettingsList>
         </div>

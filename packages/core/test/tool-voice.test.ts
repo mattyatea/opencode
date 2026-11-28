@@ -1,4 +1,5 @@
 import { expect } from "bun:test"
+import { Config } from "@opencode/core/config"
 import { Location } from "@opencode/core/location"
 import { Model } from "@opencode/core/model"
 import { Plugin } from "@opencode/core/plugin"
@@ -10,6 +11,8 @@ import { SessionExecution } from "@opencode/core/session/execution"
 import { Tool } from "@opencode/core/tool"
 import { VoiceTools } from "@opencode/core/tool/plugin/voice"
 import { VoiceRegistry } from "@opencode/core/voice/registry"
+import { Document, Info } from "@opencode/schema/config"
+import { ConfigVoice } from "@opencode/schema/config/voice"
 import { Effect, Layer } from "effect"
 import { testEffect } from "./lib/effect"
 import { executeTool, toolIdentity } from "./lib/tool"
@@ -30,6 +33,56 @@ const execution = Layer.succeed(
 )
 
 const it = testEffect(makePluginTestLayer(undefined, undefined, [SessionExecution.node.replace(execution)]))
+
+const withWorkModel = testEffect(
+  makePluginTestLayer(undefined, undefined, [
+    SessionExecution.node.replace(execution),
+    Config.node.replace(
+      Config.testLayer([
+        new Document({
+          type: "document",
+          info: new Info({ voice: new ConfigVoice.Info({ work_model: "test/override#fast" }) }),
+        }),
+      ]),
+    ),
+  ]),
+)
+
+/** Starts the voice tools in a call that began on a fresh main session. */
+const call = Effect.fnUntraced(function* () {
+  const plugins = yield* Plugin.Service
+  const sessions = yield* Session.Service
+  const location = yield* Location.Service
+  yield* VoiceTools.Plugin.effect(yield* PluginHost.make(plugins, "test"))
+  const registry = yield* Tool.Service
+  const main = yield* sessions.create({ title: "Main", location: Location.Ref.make({ directory: location.directory }) })
+  const voice = yield* sessions.create({ title: "Voice call", agent: voiceAgentID, parentID: main.id })
+  const unlink = VoiceRegistry.link(voice.id, {
+    main: main.id,
+    viewing: () => ({ id: main.id, title: main.title }),
+    open: () => undefined,
+    watch: () => undefined,
+  })
+  yield* Effect.addFinalizer(() => Effect.sync(unlink))
+  const providers = yield* Provider.Service
+  yield* providers.transform((editor) => {
+    editor.models.update(Provider.ID.make("test"), Model.ID.make("override"), (model) => {
+      model.variants = [{ id: Model.VariantID.make("fast") }]
+    })
+  })
+
+  const run = (name: string, input: Record<string, unknown>) =>
+    executeTool(registry, {
+      sessionID: voice.id,
+      ...toolIdentity,
+      call: { type: "tool-call", id: `call-${name}`, name, input },
+    })
+
+  return { sessions, main, run }
+})
+
+const output = (result: { status: string; content?: readonly { type: string; text?: string }[] }) =>
+  JSON.parse(result.content?.[0]?.type === "text" ? (result.content[0].text ?? "") : "")
 
 it.effect("voice tools send to the main session and run independent child tasks without switching the screen", () =>
   Effect.gen(function* () {
@@ -132,5 +185,55 @@ it.effect("voice tools send to the main session and run independent child tasks 
       status: "error",
       error: { type: "tool.execution", message: "Voice tools work only in a live voice call's session." },
     })
+  }),
+)
+
+it.effect("voice model tools rank spoken queries and accept any casing of an offered model and variant", () =>
+  Effect.gen(function* () {
+    const voice = yield* call()
+
+    // Extra spoken words ("model", the variant) no longer drop every match.
+    const listed = output(yield* voice.run("voice_list_models", { query: "the override model on fast" }))
+    expect(listed.models[0]).toEqual(expect.objectContaining({ id: "test/override", variants: ["fast"] }))
+    expect(listed.models[0].current).toBe(false)
+
+    expect(output(yield* voice.run("voice_switch_model", { model: "TEST/Override", variant: "FAST" }))).toMatchObject({
+      session_id: voice.main.id,
+      variant: "fast",
+    })
+    expect((yield* voice.sessions.get(voice.main.id)).model).toEqual(Model.Ref.parse("test/override#fast"))
+
+    expect(yield* voice.run("voice_switch_model", { model: "test/override", variant: "slow" })).toMatchObject({
+      status: "error",
+      error: { message: "override has no slow variant; it offers fast. The model did not change." },
+    })
+    expect(yield* voice.run("voice_switch_model", { model: "test/missing" })).toMatchObject({
+      status: "error",
+      error: { message: expect.stringContaining("the model did not change.") },
+    })
+  }),
+)
+
+it.effect("sessions and tasks the voice creates inherit the main session's model without voice.work_model", () =>
+  Effect.gen(function* () {
+    const voice = yield* call()
+    const created = output(yield* voice.run("voice_create_session", { title: "Other" }))
+    const task = output(yield* voice.run("voice_create_task", { title: "Check", text: "Check it" }))
+
+    expect((yield* voice.sessions.get(created.session_id)).model).toEqual(voice.main.model)
+    expect((yield* voice.sessions.get(task.task_id)).model).toEqual(voice.main.model)
+  }),
+)
+
+withWorkModel.effect("sessions and tasks the voice creates use voice.work_model", () =>
+  Effect.gen(function* () {
+    const voice = yield* call()
+    const created = output(yield* voice.run("voice_create_session", { title: "Other" }))
+    const task = output(yield* voice.run("voice_create_task", { title: "Check", text: "Check it" }))
+    const expected = Model.Ref.parse("test/override#fast")
+
+    expect((yield* voice.sessions.get(created.session_id)).model).toEqual(expected)
+    expect((yield* voice.sessions.get(task.task_id)).model).toEqual(expected)
+    expect((yield* voice.sessions.get(voice.main.id)).model).toEqual(voice.main.model)
   }),
 )

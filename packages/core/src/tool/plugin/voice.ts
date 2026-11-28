@@ -4,7 +4,8 @@ import { ToolFailure } from "@opencode/ai/effect"
 import type { Context } from "@opencode/plugin/effect/plugin"
 import { AbsolutePath } from "@opencode/schema/schema"
 import type { SessionMessage } from "@opencode/schema/session-message"
-import { Duration, Effect, Schema } from "effect"
+import { Duration, Effect, Option, Schema } from "effect"
+import { Config } from "../../config.js"
 import { Location } from "../../location.js"
 import { Model } from "../../model.js"
 import { voiceAgentID } from "../../plugin/agent.js"
@@ -31,6 +32,16 @@ export const Plugin = {
     const sessions = yield* Session.Service
     const location = yield* Location.Service
     const models = yield* Model.Service
+    const config = yield* Config.Service
+
+    // `voice.work_model`: the model of sessions and tasks the voice creates; unset or invalid keeps the inherited one.
+    const workModel = config.entries().pipe(
+      Effect.map((entries) => Config.latest(entries, "voice")?.work_model),
+      Effect.flatMap((value) =>
+        value ? Effect.try(() => Model.Ref.parse(value)).pipe(Effect.option) : Effect.succeed(Option.none()),
+      ),
+      Effect.map(Option.getOrUndefined),
+    )
 
     const availableModels = (session: Session.Info) =>
       session.location.directory === location.directory && session.location.workspaceID === location.workspaceID
@@ -193,7 +204,7 @@ export const Plugin = {
                 ? Location.Ref.make({ directory: AbsolutePath.make(input.directory) })
                 : current.location,
               agent: current.agent,
-              model: current.model,
+              model: (yield* workModel) ?? current.model,
             })
             return { output: { session_id: session.id, title: session.title ?? "Untitled" } }
           }).pipe(Effect.mapError(failure("Unable to create the session"))),
@@ -214,6 +225,8 @@ export const Plugin = {
             const value = yield* link(context)
             const main = yield* target({}, context)
             const task = yield* sessions.taskCreate({ sessionID: main.id, title: input.title })
+            const model = yield* workModel
+            if (model) yield* sessions.switchModel({ sessionID: task.id, model })
             const admitted = yield* sessions.prompt({ sessionID: task.id, text: input.text }).pipe(Effect.option)
             if (admitted._tag === "None")
               return {
@@ -267,11 +280,23 @@ export const Plugin = {
           Effect.gen(function* () {
             const session = yield* target(input, context)
             const catalog = yield* availableModels(session)
-            const words = input.query?.trim().toLowerCase().split(/\s+/) ?? []
-            const models = catalog.filter((model) => {
-              const label = `${model.name} ${model.providerID}/${model.id}`.toLowerCase()
-              return words.every((word) => label.includes(word))
-            })
+            // Spoken queries carry extra words ("use opus on high"), so rank by how many words start a word of the
+            // name or ID instead of requiring every word to match.
+            const terms = modelWords(input.query ?? "")
+            const models = terms.length
+              ? catalog
+                  .map((model, index) => {
+                    const words = modelWords(`${model.name} ${model.providerID}/${model.id}`)
+                    return {
+                      model,
+                      index,
+                      hits: terms.filter((term) => words.some((word) => word.startsWith(term))).length,
+                    }
+                  })
+                  .filter((item) => item.hits > 0)
+                  .toSorted((a, b) => b.hits - a.hits || a.index - b.index)
+                  .map((item) => item.model)
+              : catalog
             return {
               output: {
                 current: session.model,
@@ -280,6 +305,7 @@ export const Plugin = {
                   id: `${model.providerID}/${model.id}`,
                   name: model.name,
                   variants: model.variants.map((variant) => variant.id),
+                  current: session.model?.providerID === model.providerID && session.model.id === model.id,
                 })),
               },
             }
@@ -297,14 +323,22 @@ export const Plugin = {
           Effect.gen(function* () {
             const session = yield* target(input, context)
             const catalog = yield* availableModels(session)
-            const model = catalog.find((model) => `${model.providerID}/${model.id}` === input.model)
+            const wanted = input.model.trim().toLowerCase()
+            const model =
+              catalog.find((model) => `${model.providerID}/${model.id}` === input.model.trim()) ??
+              catalog.find((model) => `${model.providerID}/${model.id}`.toLowerCase() === wanted)
             if (!model)
-              return yield* new ToolFailure({ message: "Model not available in this session. Use voice_list_models." })
+              return yield* new ToolFailure({
+                message: `No model ${input.model} in this session. Pass an id from voice_list_models; the model did not change.`,
+              })
             const variants = model.variants.map((variant) => variant.id)
-            const variant = variants.find((variant) => variant === (input.variant ?? session.model?.variant))
+            const requested = (input.variant ?? session.model?.variant)?.toLowerCase()
+            const variant = variants.find((variant) => variant.toLowerCase() === requested)
             if (input.variant && !variant)
               return yield* new ToolFailure({
-                message: `The model does not offer that variant: ${variants.join(", ") || "none"}.`,
+                message: variants.length
+                  ? `${model.name} has no ${input.variant} variant; it offers ${variants.join(", ")}. The model did not change.`
+                  : `${model.name} has no variants; omit variant. The model did not change.`,
               })
             yield* sessions.switchModel({
               sessionID: session.id,
@@ -345,6 +379,14 @@ export const Plugin = {
     })
   }),
 }
+
+// Keeps a version's dots ("5.5"), so "gpt 5.5" doesn't also match GPT-5.4 through a lone "5".
+const modelWords = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}.]+/u)
+    .map((word) => word.replace(/^\.+|\.+$/g, ""))
+    .filter(Boolean)
 
 /** The text a person would read in a message; tool calls and reasoning are left out. */
 export function messageText(message: SessionMessage.Info) {

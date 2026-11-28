@@ -42,6 +42,7 @@ function setup(
     open?: (session: SessionInfo, signal: AbortSignal) => Promise<void>
     tabs?: string[]
     sessions?: SessionInfo[]
+    workModel?: string
   } = {},
 ) {
   const sessions = [
@@ -59,6 +60,7 @@ function setup(
     prompts: [] as { sessionID: string; text: string }[],
     createdTasks: [] as { sessionID: string; title: string }[],
     switched: [] as unknown[],
+    created: [] as unknown[],
   }
 
   const empty = { data: [], cursor: {} }
@@ -92,6 +94,13 @@ function setup(
           inbox: { list: async () => [] },
         },
         message: { list: async () => empty },
+        // A global document, then a project's without voice settings, as the server lists them.
+        config: {
+          get: async () => [
+            { type: "document", info: { voice: { provider: "chatgpt", work_model: input.workModel } } },
+            { type: "document", info: { shell: "zsh" } },
+          ],
+        },
         model: { list: async () => ({ data: models }) },
         experimental: {
           session: {
@@ -114,6 +123,10 @@ function setup(
     data: {
       session: {
         prompt: async (request: { sessionID: string; text: string }) => calls.prompts.push(request),
+        create: (request: unknown) => {
+          calls.created.push(request)
+          return { id: "ses_created", request: Promise.resolve() }
+        },
         status: (id: string) => (calls.prompts.some((prompt) => prompt.sessionID === id) ? "running" : "idle"),
       },
     },
@@ -396,5 +409,39 @@ describe("send_message", () => {
     await voice.run("send_message", { text: "Afterwards, lint.", delivery: "queue" })
 
     expect(voice.calls.background).toEqual(["ses_here"])
+  })
+})
+
+describe("voice.work_model", () => {
+  test("sessions and tasks the voice creates keep the main session's model when it is unset", async () => {
+    const voice = setup()
+
+    await voice.run("create_session", { title: "Other" })
+    await voice.run("create_task", { title: "Build", text: "Check the build" })
+
+    expect(voice.calls.created).toEqual([
+      expect.objectContaining({ model: { id: "claude-opus-4", providerID: "anthropic", variant: "high" } }),
+    ])
+    expect(voice.calls.switched).toEqual([])
+  })
+
+  test("sessions and tasks the voice creates use it, with its variant", async () => {
+    const voice = setup({ workModel: "openai/gpt-5#xhigh" })
+
+    await voice.run("create_session", { title: "Other" })
+    expect((await voice.run("create_task", { title: "Build", text: "Check the build" })).started).toBe(true)
+
+    const model = { providerID: "openai", id: "gpt-5", variant: "xhigh" }
+
+    expect(voice.calls.created).toEqual([expect.objectContaining({ model })])
+    expect(voice.calls.switched).toEqual([{ sessionID: "ses_task_1", model }])
+  })
+
+  test("a malformed value keeps the inherited model", async () => {
+    const voice = setup({ workModel: "gpt-5" })
+
+    await voice.run("create_task", { title: "Build", text: "Check the build" })
+
+    expect(voice.calls.switched).toEqual([])
   })
 })

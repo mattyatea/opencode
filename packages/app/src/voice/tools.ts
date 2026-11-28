@@ -80,6 +80,18 @@ export class VoiceTools {
 
     const mainSession = () => api.session.get({ sessionID: this.origin?.id ?? request.sessionID }, options)
 
+    // `voice.work_model` from the latest config document with voice settings, as the server reads it. Sessions and
+    // tasks the voice creates use it; unset or malformed keeps the inherited model.
+    const workModel = async (directory: string) => {
+      const value = (await api.config.get({ location: { directory } }, options))
+        .flatMap((entry) => (entry.type === "document" && entry.info.voice ? [entry.info.voice] : []))
+        .at(-1)?.work_model
+
+      const match = value?.match(/^([^/#]+)\/([^#]+)(?:#([^#]+))?$/)
+
+      return match ? { providerID: match[1], id: match[2], variant: match[3] } : undefined
+    }
+
     const target = async () => {
       const session = await (args.session_id ? api.session.get({ sessionID }, options) : mainSession())
       if (session.agent === "voice") throw new Error("The hidden voice helper is not a work session")
@@ -165,7 +177,7 @@ export class VoiceTools {
       const created = this.ctx.data.session.create({
         location: { directory },
         title: args.title,
-        model: source.model,
+        model: (await workModel(directory)) ?? source.model,
         agent: source.agent,
       })
 
@@ -178,6 +190,9 @@ export class VoiceTools {
       if (!args.title?.trim() || !args.text?.trim()) throw new Error("title and text required")
       const main = await mainSession()
       const task = await api.experimental.session.tasks.create({ sessionID: main.id, title: args.title }, options)
+      const model = await workModel(task.location.directory)
+
+      if (model) await api.session.switchModel({ sessionID: task.id, model }, options)
       const result = await this.sendMessage(task, args.text, "steer", request, signal).catch(() => undefined)
       return {
         task_id: task.id,
