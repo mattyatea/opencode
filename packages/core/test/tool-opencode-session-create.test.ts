@@ -119,7 +119,7 @@ const setup = () =>
     return { alpha, beta, alphaID, betaID, caller, registry, sessions, location, database, call, run, sessionCount }
   })
 
-it.live("child task instructions require contacting the parent before waiting", () =>
+it.live("child task instructions explain automatic reporting to the parent", () =>
   Effect.gen(function* () {
     const fixture = yield* setup()
     const child = yield* fixture.sessions.taskCreate({ sessionID: fixture.caller.id, title: "Child" })
@@ -138,8 +138,8 @@ it.live("child task instructions require contacting the parent before waiting", 
       const childContext = yield* hooks.trigger("session", name, request(child.id))
       const text = childContext.system.map((part) => part.text).join("\n")
       expect(text).toContain(`persistent child task of ${fixture.caller.id}`)
-      expect(text).toContain("use opencode.task_send to send the parent the question")
-      expect(text).toContain("before ending or waiting")
+      expect(text).toContain("automatically delivers your final response to the parent")
+      expect(text).toContain("Do not call opencode.task_send to repeat your final result")
       expect(text).toContain("If sending fails, report that the parent was not notified")
       expect(text).toContain("Before modifying a Git repository, assess whether isolation is needed")
       expect(text).toContain("use a dedicated worktree based on the required branch or commit")
@@ -468,5 +468,64 @@ it.live("a failed child task notifies its parent once and does not wake itself",
     expect(wakes).toContain(fixture.caller.id)
     // The report goes to the parent only: the failed child is not woken again, so there is no retry loop.
     expect(wakes).not.toContain(task.id)
+  }),
+)
+
+it.live("task_create starts the child on a validated model and task_send lets the parent switch it", () =>
+  Effect.gen(function* () {
+    reject = false
+    wakes.length = 0
+    active.clear()
+    const fixture = yield* setup()
+    const providers = yield* Provider.Service
+    yield* providers.transform((editor) => {
+      editor.models.update(Provider.ID.make("test"), Model.ID.make("override"), (model) => {
+        model.variants = [{ id: Model.VariantID.make("fast") }]
+      })
+    })
+    const before = yield* fixture.sessionCount()
+    for (const model of ["invalid", "test/missing", "test/override#slow"]) {
+      const result = yield* fixture.call("task_create", { title: "Invalid", prompt: "Nope", model })
+      expect(result).toMatchObject({ metadata: { error: true } })
+    }
+    expect(yield* fixture.sessionCount()).toBe(before)
+
+    const created = yield* fixture.run("task_create", {
+      title: "Override",
+      prompt: "Do the thing",
+      model: "test/override#fast",
+    })
+    expect((yield* fixture.sessions.get(created.sessionID)).model).toEqual(Model.Ref.parse("test/override#fast"))
+
+    yield* fixture.run("task_send", {
+      targetID: created.sessionID,
+      text: "Continue on the base model",
+      model: "test/override",
+    })
+    // Selecting a model without a variant is recorded as its default variant.
+    expect((yield* fixture.sessions.get(created.sessionID)).model).toEqual({
+      ...Model.Ref.parse("test/override"),
+      variant: Model.VariantID.make("default"),
+    })
+    expect(wakes.filter((id) => id === created.sessionID)).toHaveLength(2)
+
+    // Invalid models and a child switching its parent are refused without sending the message.
+    const callerModel = (yield* fixture.sessions.get(fixture.caller.id)).model
+    const invalid = yield* fixture.call("task_send", {
+      targetID: created.sessionID,
+      text: "Nope",
+      model: "test/missing",
+    })
+    expect(invalid).toMatchObject({ metadata: { error: true } })
+    const upward = yield* fixture.call(
+      "task_send",
+      { targetID: fixture.caller.id, text: "Switch yourself", model: "test/override" },
+      created.sessionID,
+    )
+    expect(upward).toMatchObject({ metadata: { error: true } })
+    expect((yield* fixture.sessions.get(fixture.caller.id)).model).toEqual(callerModel)
+    expect((yield* fixture.sessions.taskMessages(fixture.caller.id)).map((message) => message.text)).toEqual([
+      "Continue on the base model",
+    ])
   }),
 )
