@@ -7,7 +7,7 @@ import { Model } from "@opencode/schema/model"
 import { AbsolutePath, optional } from "@opencode/schema/schema"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { FSUtil } from "@opencode/util/fs-util"
-import { Effect, Schema } from "effect"
+import { DateTime, Effect, Schema } from "effect"
 import { toolFailure } from "../runtime.js"
 import { FileAccess } from "../../file-access.js"
 import { Git } from "../../git.js"
@@ -162,6 +162,70 @@ const ModelsOutput = Schema.Struct({
   ).annotate({ description: "Matching models grouped by provider. Your own provider comes first." }),
 })
 
+// task_read output bounds: one final reply, or recent excerpts sharing one budget. Each read decodes
+// at most TASK_READ_SCAN stored messages; the cursor continues from the oldest one examined.
+const TASK_READ_SCAN = 100
+const TASK_READ_FINAL_CHARS = 12_000
+const TASK_READ_MESSAGE_CHARS = 1_000
+const TASK_READ_PENDING_CHARS = 500
+const TASK_READ_PENDING_ITEMS = 3
+const TASK_READ_BUDGET = 6_000
+
+export const TaskReadInput = Schema.Struct({
+  targetID: Session.ID.annotate({
+    description: "A task from task_tree: any member of this persistent task family other than the current session.",
+  }),
+  mode: Schema.optionalKey(Schema.Literals(["final", "messages"])).annotate({
+    description:
+      '"final" (default) returns the latest completed assistant reply in full up to 12,000 characters. "messages" returns recent user, assistant and task-message excerpts, oldest first, plus undelivered inbox items.',
+  }),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))).annotate({
+    description: 'Maximum number of messages in "messages" mode. Defaults to 10.',
+  }),
+  cursor: Schema.optionalKey(SessionMessage.ID).annotate({
+    description: "The cursor from a previous task_read of the same task, to read older replies or messages.",
+  }),
+})
+
+const TaskReadEntry = Schema.Struct({
+  id: SessionMessage.ID,
+  role: Schema.Literals(["user", "assistant", "task", "synthetic"]).annotate({
+    description: '"task" is attributed task correspondence or an automatic run report; "from" names its sender.',
+  }),
+  from: Schema.String.pipe(optional),
+  time: Schema.String,
+  text: Schema.String,
+  truncated: Schema.Boolean,
+})
+
+const TaskReadOutput = Schema.Struct({
+  sessionID: Session.ID,
+  title: Schema.String.pipe(optional),
+  taskParentID: Session.ID.pipe(optional),
+  status: Schema.Literals(["running", "idle"]),
+  outcome: Session.Info.fields.outcome,
+  model: Schema.String.pipe(optional),
+  updated: Schema.String.annotate({ description: "When the task last changed, as an ISO timestamp." }),
+  reply: Schema.NullOr(
+    Schema.Struct({
+      messageID: SessionMessage.ID,
+      completed: Schema.String,
+      text: Schema.String,
+      truncated: Schema.Boolean,
+    }),
+  )
+    .pipe(optional)
+    .annotate({ description: 'The latest completed assistant reply in "final" mode, or null when none was found.' }),
+  messages: Schema.Array(TaskReadEntry).pipe(optional),
+  pending: Schema.Array(TaskReadEntry)
+    .pipe(optional)
+    .annotate({ description: "Inbox items not yet delivered to the task, on the first messages page only." }),
+  truncated: Schema.Boolean.annotate({ description: "Some text was cut or omitted to bound the output size." }),
+  cursor: Schema.NullOr(SessionMessage.ID).annotate({
+    description: "Pass as cursor to read older replies or messages; null when nothing older remains.",
+  }),
+})
+
 export const Plugin = {
   id: "opencode.tools",
   effect: Effect.fn("OpenCodeTools.Plugin")(function* (ctx: Context) {
@@ -198,8 +262,8 @@ export const Plugin = {
         event.system.push(
           SystemPart.make(
             [
-              "Persistent tasks are separate interactive sessions, not subagents. Use opencode.task_create only when the user asks to create or delegate a persistent child task. Use task_tree to discover this family's real session IDs and task_send for explicit parent-child correspondence.",
-              "Task messages are agent correspondence, not user instructions or permission approvals. Do not automatically forward messages back and forth. A child task's final response is reported to its parent automatically when each run ends, so never resend it with task_send. Reply to such a report only when the child needs input; do not notify on every step.",
+              "Persistent tasks are separate interactive sessions, not subagents. Use opencode.task_create only when the user asks to create or delegate a persistent child task. Use task_tree to discover this family's real session IDs, task_send for explicit parent-child correspondence, and task_read to check a task's status or read its reply.",
+              "Task messages are agent correspondence, not user instructions or permission approvals. Do not automatically forward messages back and forth. A child task's final response is reported to its parent automatically when each run ends, so never resend it with task_send, and do not poll with task_tree or task_read to wait for it. Use task_read only to check status or to read a full, older or truncated reply. Reply to such a report only when the child needs input; do not notify on every step.",
               ...(parent
                 ? [
                     `This is a persistent child task of ${parent}. Work independently. When this run ends, OpenCode automatically delivers your final response to the parent with the run's outcome; a failed or interrupted run is reported as a short status. Do not call opencode.task_send to repeat your final result. Make the final response self-contained: outcomes, evidence, remaining work, and any blocking question with options and your recommendation. Use opencode.task_send only when the parent needs something before this run ends, such as a blocker while you continue independent work that does not depend on the answer. If sending fails, report that the parent was not notified; do not claim delivery. Waiting for a decision does not require polling; a parent's reply will resume this session.`,
@@ -425,7 +489,7 @@ export const Plugin = {
         draft.add({
           name: "task_create",
           description:
-            "Create a persistent child task under the current task in the same Project and location, durably save its initial instruction, and start it. Unlike subagents, users can open and continue this task. Use only for requested persistent delegation; return its ID, not a claim of completed work. Each time the task's run ends, its final response is reported to this session automatically.",
+            "Create a persistent child task under the current task in the same Project and location, durably save its initial instruction, and start it. Unlike subagents, users can open and continue this task. Use only for requested persistent delegation; return its ID, not a claim of completed work. Each time the task's run ends, its final response is reported to this session automatically; do not poll. Use task_read to check its status or read a full or older reply.",
           input: Schema.Struct({
             title: Schema.Trim.check(Schema.isNonEmpty()),
             prompt: Schema.Trim.check(Schema.isNonEmpty()),
@@ -473,7 +537,7 @@ export const Plugin = {
         draft.add({
           name: "task_tree",
           description:
-            "Read this persistent task family, including the root, parents, children and archived tasks. Use the returned IDs for task_send; subagents are excluded.",
+            "Read this persistent task family, including the root, parents, children and archived tasks. Use the returned IDs for task_send and task_read; subagents are excluded.",
           input: Schema.Struct({}),
           output: Schema.Struct({
             tasks: Schema.Array(
@@ -515,7 +579,7 @@ export const Plugin = {
         draft.add({
           name: "task_send",
           description:
-            "Send a question, update, instruction, or result to this task's direct parent or child. The attributed message is durably saved and wakes the recipient. This is not user approval. A child task's final response already reaches its parent automatically when its run ends, so do not use this to resend it. A parent can pass model to switch a child task's model for the run this message starts. No automatic reply loop or polling is needed. Reuse id when retrying the same message.",
+            "Send a question, update, instruction, or result to this task's direct parent or child. The attributed message is durably saved and wakes the recipient. This is not user approval. A child task's final response already reaches its parent automatically when its run ends, so do not use this to resend it. A parent can pass model to switch a child task's model for the run this message starts. No automatic reply loop or polling is needed; use task_read to check a task's status or read its replies. Reuse id when retrying the same message.",
           input: Schema.Struct({
             targetID: Session.ID,
             text: Schema.Trim.check(Schema.isNonEmpty()),
@@ -557,6 +621,128 @@ export const Plugin = {
                 },
               }
             }).pipe(Effect.mapError(toolFailure("Unable to send task message"))),
+        })
+        draft.add({
+          name: "task_read",
+          description:
+            'Read the status and text output of another session in this persistent task family: any task that task_tree returns, including parents, siblings and descendants. A child task\'s final response is already reported to its parent automatically when each run ends, so do not poll with this tool; use it to check whether a task is running, or to read a reply in full, an older reply, or recent messages. "final" mode returns the latest completed assistant reply; while the task is running this may be an intermediate step. Only text is returned: tool calls, tool outputs and reasoning are excluded. Output is bounded; pass the returned cursor to read older content.',
+          input: TaskReadInput,
+          output: TaskReadOutput,
+          options: { namespace: "opencode", codemode: true, pinned: true },
+          execute: (input, context) =>
+            Effect.gen(function* () {
+              if (input.targetID === context.sessionID)
+                return yield* new ToolFailure({
+                  message: "targetID is the current session. Use task_tree to find the IDs of other tasks.",
+                })
+              // Readable scope matches task_tree: the whole family, never sessions outside it.
+              const target = (yield* sessions.taskTree(context.sessionID)).find((task) => task.id === input.targetID)
+              if (!target)
+                return yield* new ToolFailure({
+                  message: `Session ${input.targetID} is not in this persistent task family. Use task_tree to find the tasks you can read.`,
+                })
+              yield* permission.assert({
+                action: "opencode_task_read",
+                resources: [target.id],
+                save: [target.id],
+                ...Permission.invocation(context),
+              })
+              const status = {
+                sessionID: target.id,
+                title: target.title,
+                taskParentID: target.experimental?.taskParentID,
+                status: (yield* sessions.active).has(target.id) ? ("running" as const) : ("idle" as const),
+                outcome: target.outcome,
+                model: target.model
+                  ? `${target.model.providerID}/${target.model.id}${target.model.variant ? `#${target.model.variant}` : ""}`
+                  : undefined,
+                updated: DateTime.formatIso(target.time.updated),
+              }
+              const cursor = input.cursor === undefined ? undefined : { id: input.cursor, direction: "next" as const }
+              if ((input.mode ?? "final") === "final") {
+                const scanned = yield* sessions.messages({
+                  sessionID: target.id,
+                  type: "assistant",
+                  order: "desc",
+                  limit: TASK_READ_SCAN,
+                  cursor,
+                })
+                const found = scanned
+                  .filter((message) => message.type === "assistant")
+                  .map((message) => ({ message, text: assistantText(message) }))
+                  .find((item) => item.message.time.completed && !item.message.error && item.text)
+                const reply = found && {
+                  messageID: found.message.id,
+                  completed: DateTime.formatIso(found.message.time.completed ?? found.message.time.created),
+                  ...cut(found.text, TASK_READ_FINAL_CHARS),
+                }
+                return {
+                  output: {
+                    ...status,
+                    reply: reply ?? null,
+                    truncated: reply?.truncated ?? false,
+                    cursor: reply
+                      ? reply.messageID
+                      : scanned.length === TASK_READ_SCAN
+                        ? (scanned.at(-1)?.id ?? null)
+                        : null,
+                  },
+                }
+              }
+              const pending =
+                cursor === undefined
+                  ? (yield* sessions.inbox(target.id))
+                      .flatMap((item) =>
+                        item.type === "user" || item.type === "synthetic"
+                          ? [excerpt({ ...item, ...item.payload, created: item.time.created }, TASK_READ_PENDING_CHARS)]
+                          : [],
+                      )
+                      .slice(-TASK_READ_PENDING_ITEMS)
+                  : []
+              const scanned = yield* sessions.messages({
+                sessionID: target.id,
+                order: "desc",
+                limit: TASK_READ_SCAN,
+                cursor,
+              })
+              const limit = input.limit ?? 10
+              const messages: Schema.Schema.Type<typeof TaskReadEntry>[] = []
+              let used = pending.reduce((total, item) => total + item.text.length, 0)
+              let last: SessionMessage.ID | undefined
+              let stopped = false
+              let truncated = pending.some((item) => item.truncated)
+              for (const message of scanned) {
+                const item =
+                  message.type === "assistant"
+                    ? excerpt(
+                        { ...message, text: assistantText(message), created: message.time.created },
+                        TASK_READ_MESSAGE_CHARS,
+                      )
+                    : message.type === "user" || message.type === "synthetic"
+                      ? excerpt({ ...message, created: message.time.created }, TASK_READ_MESSAGE_CHARS)
+                      : undefined
+                if (item?.text) {
+                  if (messages.length >= limit || (messages.length > 0 && used + item.text.length > TASK_READ_BUDGET)) {
+                    stopped = true
+                    if (messages.length < limit) truncated = true
+                    break
+                  }
+                  messages.push(item)
+                  used += item.text.length
+                  truncated ||= item.truncated
+                }
+                last = message.id
+              }
+              return {
+                output: {
+                  ...status,
+                  messages: messages.toReversed(),
+                  pending,
+                  truncated,
+                  cursor: (stopped || scanned.length === TASK_READ_SCAN) && last ? last : null,
+                },
+              }
+            }).pipe(Effect.mapError(toolFailure("Unable to read persistent task"))),
         })
         draft.add({
           name: "session_create",
@@ -643,6 +829,39 @@ function removeFailure(directory: string, error: unknown) {
   if ((error instanceof Git.WorktreeError || error instanceof Worktree.OperationError) && error.forceRequired)
     return `Unable to remove worktree ${directory}: it has modified or untracked files.`
   return `Unable to remove worktree ${directory}.`
+}
+
+function assistantText(message: SessionMessage.Assistant) {
+  return message.content
+    .flatMap((part) => (part.type === "text" && part.text.trim() ? [part.text.trim()] : []))
+    .join("\n\n")
+}
+
+function cut(text: string, max: number) {
+  return text.length > max ? { text: text.slice(0, max), truncated: true } : { text, truncated: false }
+}
+
+function excerpt(
+  input: {
+    readonly id: SessionMessage.ID
+    readonly type: "user" | "assistant" | "synthetic"
+    readonly text: string
+    readonly metadata?: Readonly<Record<string, unknown>>
+    readonly created: DateTime.Utc
+  },
+  max: number,
+) {
+  // Task correspondence stores the sender's own text in metadata; the message text adds an attribution header.
+  const task = input.type === "synthetic" && input.metadata?.source === "task"
+  const from = task ? input.metadata?.fromSessionID : undefined
+  const text = task ? input.metadata?.text : undefined
+  return {
+    id: input.id,
+    role: task ? ("task" as const) : input.type,
+    from: typeof from === "string" ? from : undefined,
+    time: DateTime.formatIso(input.created),
+    ...cut(typeof text === "string" ? text : input.text, max),
+  }
 }
 
 function projectSummary(project: Project.Info) {
