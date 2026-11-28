@@ -5,15 +5,15 @@ const options = [
   { id: "btw.ask", trigger: "btw", arguments: true, type: "builtin" as const },
   { id: "custom.btw", trigger: "custom", type: "custom" as const },
   { id: "model.choose", trigger: "model", type: "builtin" as const },
-  { id: "session.title", trigger: "title", arguments: true, type: "builtin" as const },
+  { id: "session.title", trigger: "rename", arguments: true, type: "builtin" as const },
 ]
 
 test.each([
   { text: "/btw why this approach?", result: { id: "btw.ask", input: "why this approach?" } },
   { text: "/btw\nwhy this approach?", result: { id: "btw.ask", input: "why this approach?" } },
   { text: "/btw", result: { id: "btw.ask", input: "" } },
-  { text: "/title  Parser rewrite ", result: { id: "session.title", input: "Parser rewrite" } },
-  { text: "/title", result: { id: "session.title", input: "" } },
+  { text: "/rename  Parser rewrite ", result: { id: "session.title", input: "Parser rewrite" } },
+  { text: "/rename", result: { id: "session.title", input: "" } },
   { text: "/btwx nope", result: undefined },
   { text: "/custom nope", result: undefined },
   { text: "/model opus", result: undefined },

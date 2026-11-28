@@ -1037,7 +1037,7 @@ export const dict = {
   "command.permissions.autoaccept.project": "このプロジェクトの権限を自動承認する",
   "command.session.rename": "セッション名を変更",
   "command.session.title": "セッションのタイトルを設定",
-  "command.session.title.description": "セッション名を変更します。/title <名前> で直接設定します",
+  "command.session.title.description": "セッション名を変更します。/rename <名前> で直接設定します",
   "command.session.delete": "セッションを削除",
   "palette.group.recentSessions": "最近のセッション",
   "palette.group.settings": "設定",

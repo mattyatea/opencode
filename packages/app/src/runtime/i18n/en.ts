@@ -262,7 +262,7 @@ export const dict = {
   "command.session.archive": "Archive session",
   "command.session.rename": "Rename session",
   "command.session.title": "Set session title",
-  "command.session.title.description": "Rename the session; /title <name> sets it directly",
+  "command.session.title.description": "Rename the session; /rename <name> sets it directly",
   "command.session.delete": "Delete session",
 
   "palette.search.placeholder": "Search files, commands, and sessions",
