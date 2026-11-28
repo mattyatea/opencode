@@ -39,6 +39,9 @@ import {
 } from "./project-sections"
 import { createSidebarTaskChanges, createSidebarTaskTree } from "./sidebar-task-trees"
 import { isSidebarSessionActivity } from "./sidebar-sessions"
+import { createSessionPins } from "./sidebar-pins"
+import { splitRecentSessionKey } from "./recent-sessions-model"
+import { pinnedFirst, sidebarTaskRows } from "./sidebar-session-tree"
 
 export function ProjectSidebar(props: { onNavigate?: () => void }) {
   const language = useLanguage()
@@ -70,6 +73,22 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
     apply: (value) => setState(reconcile(translateProjectSections(value, "sidecar", ownKey()))),
     ready,
   })
+
+  const pins = createSessionPins()
+
+  // Pinned session IDs per server identity, in pin order.
+  const pinnedIDs = createMemo(() =>
+    Map.groupBy(
+      pins.keys().flatMap((key) => {
+        const pin = splitRecentSessionKey(key)
+
+        return pin ? [pin] : []
+      }),
+      (pin) => pins.identity(pin.server, ""),
+    ),
+  )
+
+  const pinnedFor = (server: string) => (pinnedIDs().get(pins.identity(server, "")) ?? []).map((pin) => pin.sessionID)
 
   const [visible, setVisible] = createStore<Record<string, number>>({})
   const [projectLimits, setProjectLimits] = createStore<Record<string, number>>({})
@@ -541,19 +560,24 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                           (state.sessions[key] ?? []).map((entry, index) => [entry.id, { ...entry, index }]),
                         )
 
-                        return item().sessions.toSorted((a, b) => {
-                          const left = saved.get(a.id)
-                          const right = saved.get(b.id)
-                          const freshA = !left || a.time.updated > left.updated
-                          const freshB = !right || b.time.updated > right.updated
+                        return pinnedFirst(
+                          item().sessions.toSorted((a, b) => {
+                            const left = saved.get(a.id)
+                            const right = saved.get(b.id)
+                            const freshA = !left || a.time.updated > left.updated
+                            const freshB = !right || b.time.updated > right.updated
 
-                          if (freshA && freshB) return b.time.updated - a.time.updated
+                            if (freshA && freshB) return b.time.updated - a.time.updated
 
-                          if (freshA !== freshB) return freshA ? -1 : 1
+                            if (freshA !== freshB) return freshA ? -1 : 1
 
-                          return left!.index - right!.index
-                        })
+                            return left!.index - right!.index
+                          }),
+                          pinnedFor(item().server),
+                        )
                       })
+
+                      const pinned = createMemo(() => new Set(pinnedFor(item().server)))
 
                       const directories = createMemo(() => projectSessionDirectories(item().project))
                       const deepestFirst = createMemo(() => directories().toSorted((a, b) => b.length - a.length))
@@ -732,7 +756,12 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                 }
                                 const count = () => list().length + localDrafts().length
                                 const sessions = createMemo(() => {
-                                  const first = list().slice(0, limit())
+                                  // Pinned sessions lead the list and always stay visible.
+                                  const first = list().slice(
+                                    0,
+                                    Math.max(limit(), list().filter((session) => pinned().has(session.id)).length),
+                                  )
+
                                   const selected = active()
                                   return selected && !first.includes(selected) ? [...first, selected] : first
                                 })
@@ -799,7 +828,7 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                           ids={sessions().map((session) => session.id)}
                                           folderKey={folderKey}
                                         />
-                                        <Show when={list().length > limit()}>
+                                        <Show when={list().length > sessions().length}>
                                           <button
                                             type="button"
                                             class="h-7 w-full ps-8 text-start text-[13px] text-v2-text-text-muted hover:text-v2-text-text-base"
@@ -843,17 +872,21 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
 
                               const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
 
-                              const rows = createMemo(() => {
-                                const walk = (
-                                  id: string,
-                                  depth: number,
-                                ): Array<{ task: SessionInfo; depth: number }> =>
-                                  collapsed[id]
-                                    ? []
-                                    : children(id).flatMap((task) => [{ task, depth }, ...walk(task.id, depth + 1)])
-
-                                return walk(sessionID, 1)
-                              })
+                              const rows = createMemo(() =>
+                                collapsed[sessionID]
+                                  ? []
+                                  : sidebarTaskRows({
+                                      root: {
+                                        id: sessionID,
+                                        location: {
+                                          directory: session()?.location.directory ?? item().project.worktree,
+                                        },
+                                      },
+                                      tasks: tasks(),
+                                      folderFor,
+                                      collapsed: (key) => !!collapsed[key],
+                                    }),
+                              )
 
                               const status = useSessionTabAvatarState(
                                 () => item().server,
@@ -938,6 +971,9 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                           setDrag({ session: "", sessionFolder: "" })
                                         }}
                                         aria-current={selected() ? "page" : undefined}
+                                        aria-description={
+                                          pinned().has(sessionID) ? language.t("sidebar.recent.pinned") : undefined
+                                        }
                                         title={session()?.title}
                                         class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
                                         classList={{
@@ -961,6 +997,9 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                         <bdi class="min-w-0 flex-1 truncate">
                                           {sessionTitle(session()?.title) ?? language.t("command.session.new")}
                                         </bdi>
+                                        <Show when={pinned().has(sessionID)}>
+                                          <Icon name="pin" size="small" class="shrink-0 text-v2-icon-icon-muted" />
+                                        </Show>
                                         <Show
                                           when={status.loading()}
                                           fallback={
@@ -974,6 +1013,11 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                       </Menu.Context.Trigger>
                                       <Menu.Context.Portal>
                                         <Menu.Context.Content>
+                                          <Menu.Item onSelect={() => pins.toggle(item().server, sessionID)}>
+                                            {language.t(
+                                              pinned().has(sessionID) ? "sidebar.recent.unpin" : "sidebar.recent.pin",
+                                            )}
+                                          </Menu.Item>
                                           <Menu.Item onSelect={() => void copySessionID(sessionID)}>
                                             {language.t("command.session.copyID")}
                                           </Menu.Item>
@@ -1003,9 +1047,50 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                   </Show>
                                   <For each={rows()}>
                                     {(row) => {
+                                      if (row.type === "folder") {
+                                        const open = () => !collapsed[row.key]
+
+                                        const label = worktreeLabel(row.directory, directories())
+
+                                        return (
+                                          <div style={{ "padding-inline-start": `${row.depth * 16}px` }}>
+                                            <button
+                                              type="button"
+                                              aria-expanded={open()}
+                                              aria-description={language.plural(
+                                                "settings.workspaces.sessions.filtered",
+                                                row.count,
+                                                {
+                                                  count: row.count,
+                                                },
+                                              )}
+                                              title={row.directory}
+                                              class="flex h-7 w-full min-w-0 items-center gap-2 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover focus-visible:-outline-offset-2"
+                                              onClick={() => setCollapsed(row.key, open())}
+                                            >
+                                              <Icon name="folder" size="small" class="shrink-0" />
+                                              <bdi class="truncate">{label}</bdi>
+                                              <Icon
+                                                name={open() ? "chevron-down" : "chevron-right"}
+                                                size="small"
+                                                class="shrink-0"
+                                                classList={{ "rtl:rotate-180": !open() }}
+                                              />
+                                              <Show when={!open()}>
+                                                <span aria-hidden="true" class="ms-auto text-12 tabular-nums">
+                                                  {row.count}
+                                                </span>
+                                              </Show>
+                                            </button>
+                                          </div>
+                                        )
+                                      }
+
+                                      const task = row.session
+
                                       const childStatus = useSessionTabAvatarState(
                                         () => item().server,
-                                        () => row.task.id,
+                                        () => task.id,
                                         () => true,
                                       )
 
@@ -1015,30 +1100,30 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                         return (
                                           route.type === "session" &&
                                           route.server === item().server &&
-                                          route.sessionId === row.task.id
+                                          route.sessionId === task.id
                                         )
                                       }
 
                                       return (
                                         <div class="relative" style={{ "padding-inline-start": `${row.depth * 16}px` }}>
-                                          <Show when={children(row.task.id).length > 0}>
+                                          <Show when={children(task.id).length > 0}>
                                             <button
                                               type="button"
                                               class="absolute top-0 z-10 flex h-7 w-5 items-center justify-center"
                                               style={{ "inset-inline-start": `${12 + row.depth * 16}px` }}
-                                              aria-expanded={!collapsed[row.task.id]}
+                                              aria-expanded={!collapsed[task.id]}
                                               aria-label={language.t(
-                                                collapsed[row.task.id] ? "tasks.expand" : "tasks.collapse",
+                                                collapsed[task.id] ? "tasks.expand" : "tasks.collapse",
                                                 {
-                                                  title: row.task.title ?? language.t("tasks.untitled"),
+                                                  title: task.title ?? language.t("tasks.untitled"),
                                                 },
                                               )}
-                                              onClick={() => setCollapsed(row.task.id, !collapsed[row.task.id])}
+                                              onClick={() => setCollapsed(task.id, !collapsed[task.id])}
                                             >
                                               <Icon
-                                                name={collapsed[row.task.id] ? "chevron-right" : "chevron-down"}
+                                                name={collapsed[task.id] ? "chevron-right" : "chevron-down"}
                                                 size="small"
-                                                classList={{ "rtl:rotate-180": collapsed[row.task.id] }}
+                                                classList={{ "rtl:rotate-180": collapsed[task.id] }}
                                               />
                                             </button>
                                           </Show>
@@ -1050,19 +1135,19 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                               class="flex h-7 w-full items-center gap-1 rounded-[6px] ps-8 pe-2 text-start text-[13px] text-v2-text-text-base hover:bg-v2-overlay-simple-overlay-hover"
                                               classList={{ "bg-v2-overlay-simple-overlay-hover": active() }}
                                               onClick={() => {
-                                                item().ctx.data.session.remember(row.task)
+                                                item().ctx.data.session.remember(task)
                                                 void startTransition(() =>
                                                   tabs.select(
                                                     tabs.addSessionTab({
                                                       server: item().server,
-                                                      sessionId: row.task.id,
+                                                      sessionId: task.id,
                                                     }),
                                                   ),
                                                 ).then(navigated)
                                               }}
                                             >
                                               <bdi class="min-w-0 flex-1 truncate">
-                                                {sessionTitle(row.task.title) ?? language.t("command.session.new")}
+                                                {sessionTitle(task.title) ?? language.t("command.session.new")}
                                               </bdi>
                                               <Show
                                                 when={childStatus.loading()}
@@ -1077,7 +1162,7 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                             </Menu.Context.Trigger>
                                             <Menu.Context.Portal>
                                               <Menu.Context.Content>
-                                                <Menu.Item onSelect={() => void copySessionID(row.task.id)}>
+                                                <Menu.Item onSelect={() => void copySessionID(task.id)}>
                                                   {language.t("command.session.copyID")}
                                                 </Menu.Item>
                                               </Menu.Context.Content>
