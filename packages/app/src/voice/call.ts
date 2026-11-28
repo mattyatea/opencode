@@ -102,7 +102,9 @@ export function createVoiceCall(input: {
     transport.signal.throwIfAborted()
     await input.platform.setVoiceCallActive?.(true)
     transport.signal.throwIfAborted()
-    await transport.join(viewing, tail.lines)
+    // Work keeps going to the session the call started from, even after the screen moves or the call rejoins.
+    tools.origin ??= { id: viewing.id, title: viewing.title }
+    await transport.join({ ...viewing, main: tools.origin }, tail.lines)
     transport.signal.throwIfAborted()
     transport.mute(muted)
   }
@@ -125,7 +127,9 @@ export function createVoiceCall(input: {
       return void transport
         .view(viewing)
         .catch(() => input.dispatch({ type: "call.dropped", attempt, failure: "connection" }))
-    send(attempt, "connection", (transport) => transport.instructions(delegatorInstructions(viewing, tail.lines)))
+    send(attempt, "connection", (transport) =>
+      transport.instructions(delegatorInstructions({ ...viewing, main: tools.origin }, tail.lines)),
+    )
   }
 
   function heard(attempt: number, speaker: "user" | "assistant", delta: string) {

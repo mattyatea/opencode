@@ -46,6 +46,7 @@ it.effect("voice tools send to the main session and run independent child tasks 
     const opened: string[] = []
     const watched: string[] = []
     const unlink = VoiceRegistry.link(voice.id, {
+      main: login.id,
       viewing: () => ({ id: child.id, title: child.title }),
       open: (sessionID) => opened.push(sessionID),
       watch: (input) => watched.push(`${input.title}: ${input.request}`),

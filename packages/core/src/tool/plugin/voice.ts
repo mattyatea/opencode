@@ -44,15 +44,13 @@ export const Plugin = {
         : Effect.fail(new ToolFailure({ message: "Voice tools work only in a live voice call's session." }))
     }
 
-    // An omitted target stays on the main session even while Desktop is showing one of its tasks.
+    // An omitted target is the session the call started from, whatever Desktop shows now.
     const target = Effect.fnUntraced(function* (
       input: { readonly session_id?: string },
       context: { readonly sessionID: string },
     ) {
       const value = yield* link(context)
-      const id = input.session_id ?? value.viewing()?.id
-      if (!id) return yield* new ToolFailure({ message: "Desktop shows no session; pass session_id." })
-      const session = yield* input.session_id ? sessions.get(Session.ID.make(id)) : mainSession(sessions, id)
+      const session = yield* sessions.get(Session.ID.make(input.session_id ?? value.main))
       if (session.agent === voiceAgentID)
         return yield* new ToolFailure({ message: "The voice helper is not a session you can send work to." })
       return session
@@ -347,15 +345,6 @@ export const Plugin = {
     })
   }),
 }
-
-export const mainSession = Effect.fnUntraced(function* (sessions: Session.Interface, id: string) {
-  let session = yield* sessions.get(Session.ID.make(id))
-  while (true) {
-    const parent = session.parentID ?? session.experimental?.taskParentID
-    if (!parent) return session
-    session = yield* sessions.get(parent)
-  }
-})
 
 /** The text a person would read in a message; tool calls and reasoning are left out. */
 export function messageText(message: SessionMessage.Info) {
