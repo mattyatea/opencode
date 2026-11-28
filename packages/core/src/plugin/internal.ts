@@ -92,6 +92,7 @@ import { MachineTools } from "../tool/plugin/machine.js"
 import { McpEventTools } from "../tool/plugin/mcp-events.js"
 import { McpResourceTools } from "../tool/plugin/mcp-resource.js"
 import { OpenCodeTools } from "../tool/plugin/opencode.js"
+import { SidebarTools } from "../tool/plugin/sidebar.js"
 import { VoiceTools } from "../tool/plugin/voice.js"
 import { QuestionTool } from "../tool/plugin/question.js"
 import { ReadTool } from "../tool/plugin/read.js"
@@ -297,6 +298,7 @@ const pre = [
   ImageGenerateTool.Plugin,
   VideoGenerateTool.Plugin,
   OpenCodeTools.Plugin,
+  SidebarTools.Plugin,
   VoiceTools.Plugin,
   McpEventTools.Plugin,
   McpResourceTools.Plugin,
