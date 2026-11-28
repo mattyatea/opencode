@@ -188,6 +188,29 @@ describe("Permission", () => {
     }),
   )
 
+  it.effect("settles requests by rules after the location closes", () =>
+    Effect.gen(function* () {
+      // A reload closes the Location while running steps still borrow it; allowed calls must keep working.
+      yield* setup([{ action: "read", resource: "*", effect: "allow" }])
+      const service = yield* Permission.Service
+      yield* service.close
+      yield* service.assert(assertion())
+      expect(yield* service.allows(assertion())).toBe(true)
+      expect(yield* service.ask(assertion())).toMatchObject({ effect: "allow" })
+
+      yield* setRules([{ action: "read", resource: "*", effect: "deny" }])
+      expect(yield* service.assert(assertion()).pipe(Effect.flip)).toBeInstanceOf(Permission.BlockedError)
+
+      // Nobody is left to answer, so a request that needs approval fails typed instead of reading as a user decline.
+      yield* setRules([])
+      const blocked = yield* service.assert(assertion()).pipe(Effect.flip)
+      expect(blocked).toBeInstanceOf(Permission.BlockedError)
+      expect(blocked.message).toContain("reloaded")
+      expect(yield* service.ask(assertion())).toMatchObject({ effect: "deny" })
+      expect(yield* service.list()).toEqual([])
+    }),
+  )
+
   it.effect("allows and denies from explicit rules without asking", () =>
     Effect.gen(function* () {
       yield* setup([{ action: "read", resource: "*", effect: "allow" }])
