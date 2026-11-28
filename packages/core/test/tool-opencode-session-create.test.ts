@@ -370,6 +370,11 @@ it.live(
           .taskMessage({ sessionID: unrelated.id, targetID: task.id, text: "Unrelated" })
           .pipe(Effect.flip),
       ).toBeInstanceOf(Session.TaskRelationError)
+      const self = yield* fixture.sessions
+        .taskMessage({ sessionID: task.id, targetID: task.id, text: "Meant for the parent" })
+        .pipe(Effect.flip)
+      expect(self).toBeInstanceOf(Session.TaskRelationError)
+      expect(self.message).toContain(`Its parent is ${fixture.caller.id}`)
       expect(
         yield* fixture.sessions.taskCreate({ sessionID: subagent.id, title: "Not allowed" }).pipe(Effect.flip),
       ).toBeInstanceOf(Session.TaskRelationError)

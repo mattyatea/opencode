@@ -427,6 +427,13 @@ const layer = Layer.effect(
       }),
       taskMessage: Effect.fn("Session.taskMessage")(function* (input) {
         const source = yield* result.get(input.sessionID)
+        // Agents mistake their own ID for their parent's; name the mix-up so the retry uses the right ID.
+        if (input.targetID === input.sessionID)
+          return yield* new TaskRelationError({
+            message: source.experimental?.taskParentID
+              ? `targetID is this task's own session ID. Its parent is ${source.experimental.taskParentID}; use task_tree for child IDs.`
+              : "targetID is this session's own ID. Use task_tree to find the parent or child task IDs.",
+          })
         const target = yield* result.get(input.targetID)
         if (
           source.parentID ||
