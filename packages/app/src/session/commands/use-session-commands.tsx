@@ -13,6 +13,9 @@ import { formatServerError } from "@/runtime/server/errors"
 import { projectSettingsKey, useSettings } from "@/settings/model"
 import { showToast } from "@/shell/notifications/toast"
 import { useSessionExporter } from "@/session/commands/export-session"
+import { createSessionRenamer } from "@/session/commands/rename-session"
+import { sessionLabel } from "@/session/title"
+import { RenameDialog } from "@/shell/titlebar/project-session-row"
 import { usePlatform } from "@/runtime/platform/platform"
 import type { SessionModel } from "@/session/model"
 import type { SessionRevert } from "@/session/revert"
@@ -107,6 +110,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const settings = useSettings()
   const platform = usePlatform()
   const exporter = useSessionExporter()
+  const rename = createSessionRenamer()
   const pluginScoped = usePluginScoped()
   const pluginClaims = usePluginClaims()
   const tabs = useTabs()
@@ -364,6 +368,31 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     notifySessionTabsRemoved({ server: server.key, directory: info.location.directory, sessionIDs: [info.id] })
   }
 
+  // Root sessions only, as the header's rename allows.
+  const renamable = () => {
+    const info = actions.session.data.info()
+
+    return !!info && !info.parentID
+  }
+
+  // `/title <name>` saves at once; with no name it opens the rename dialog on the current title.
+  const setTitle = (input?: string) => {
+    const info = actions.session.data.info()
+
+    if (!info || info.parentID) return
+    const title = input?.trim()
+
+    if (!title) {
+      dialog.show(() => <RenameDialog title={sessionLabel(info)} onRename={(next) => rename(server.key, info, next)} />)
+
+      return
+    }
+
+    return rename(server.key, info, title).catch((cause: unknown) => {
+      showToast({ title: formatServerError(cause, language.t, language.t("common.requestFailed")) })
+    })
+  }
+
   const copyProjectID = async () => {
     const projectID = actions.session.data.info()?.projectID
 
@@ -564,6 +593,17 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         !actions.session.identity.params.id ||
         exporter.exporting({ server: server.key, sessionID: actions.session.identity.params.id }),
       onSelect: exportSession,
+    }),
+    sessionCommand({
+      id: "session.title",
+      title: language.t("command.session.title"),
+      description: language.t("command.session.title.description"),
+      slash: "title",
+      slashArguments: true,
+      // The palette already lists Rename session; this entry is for the slash command.
+      hidden: true,
+      disabled: !renamable(),
+      onSelect: (_source, input) => setTitle(input),
     }),
     sessionCommand({
       id: "session.copyID",

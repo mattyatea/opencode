@@ -602,6 +602,60 @@ test("automatic rename refreshes the displayed title before settling, even witho
   }
 })
 
+test("/title sets the given title, and a bare /title opens the rename prompt on the current one", async () => {
+  await using state = await tmpdir()
+  const bodies: unknown[] = []
+  const location = { directory, project: { id: "project", directory, canonical: directory } }
+  const session = {
+    id: "ses_title",
+    title: "Compiler cleanup",
+    projectID: "project",
+    location: { directory },
+    agent: "build",
+    model: { providerID: "provider", id: "model" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 0, updated: 0 },
+  }
+  await using setup = await createAppFixture({
+    width: 110,
+    height: 20,
+    state: state.path,
+    config: { tabs: { mode: "on", layout: "vertical" }, session: { sidebar: "hide" } },
+    args: { sessionID: session.id },
+    fetch: async (url, request) => {
+      if (url.pathname === "/api/location") return json(location)
+      if (url.pathname === "/api/agent")
+        return json({ location, data: [{ id: "build", mode: "primary", hidden: false, permissions: [] }] })
+      if (url.pathname === "/api/model")
+        return json({ location, data: [{ id: "model", providerID: "provider", name: "Model", variants: [] }] })
+      if (url.pathname === "/api/provider") return json({ location, data: [{ id: "provider", name: "Provider" }] })
+      if (url.pathname === "/api/session") return json({ data: [], cursor: {} })
+      if (url.pathname === "/api/session/ses_title" && request.method === "PATCH") {
+        bodies.push(await request.json())
+        return new Response(null, { status: 204 })
+      }
+      if (url.pathname === "/api/session/ses_title") return json({ data: session })
+      if (/^\/api\/session\/ses_title\/(message|inbox|permission)$/.test(url.pathname))
+        return json({ data: [], cursor: {} })
+      return undefined
+    },
+  })
+
+  await setup.waitForFrame((frame) => frame.includes(session.title) && frame.includes("Build · Model Provider"))
+  await setup.mockInput.typeText("/title  Parser rewrite ")
+  setup.mockInput.pressEscape()
+  setup.mockInput.pressEnter()
+  await setup.waitFor(() => bodies.length === 1)
+  expect(bodies[0]).toEqual({ title: "Parser rewrite" })
+
+  await setup.mockInput.typeText("/title")
+  setup.mockInput.pressEscape()
+  setup.mockInput.pressEnter()
+  await setup.waitForFrame((frame) => frame.includes("Rename session"))
+  expect(bodies).toHaveLength(1)
+})
+
 test.each([80, 120])("completes custom Markdown and ordinary fences in a session at width %s", async (width) => {
   await using state = await tmpdir()
   const session = {
