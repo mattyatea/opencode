@@ -19,6 +19,7 @@ import { PluginHooks } from "./plugin/hooks.js"
 import { Database } from "./database/database.js"
 import { SessionProjector } from "./session/projector.js"
 import { SessionInboxTable, SessionMessageTable, SessionTable } from "./session/sql.js"
+import { EventTable } from "./event/sql.js"
 import { SessionBlob } from "./session/blob.js"
 import { SessionSchema } from "./session/schema.js"
 import { RelativePath } from "./schema.js"
@@ -762,29 +763,68 @@ const layer = Layer.effect(
       },
     })
 
-    // A persistent child task has no reader besides its owner, so its failed run is reported to the parent.
-    yield* bus.subscribe(SessionEvent.Execution.Failed).pipe(
+    // A persistent child task has no reader besides its owner, so every settled run is reported to
+    // its direct parent through the same attributed inbox path as task_send. Reports only travel
+    // upward, so a parent's reply re-runs the child at most once per message and cannot ping-pong.
+    const started = Bus.versionedType(
+      SessionEvent.Execution.Started.type,
+      SessionEvent.Execution.Started.durable.version,
+    )
+    yield* bus.subscribe(SessionEvent.Execution.Succeeded).pipe(
+      Stream.merge(bus.subscribe(SessionEvent.Execution.Failed)),
+      Stream.merge(bus.subscribe(SessionEvent.Execution.Interrupted)),
       Stream.runForEach((event) =>
         Effect.gen(function* () {
+          // Shutdown keeps the run claimed for restart, which settles it later with its own event.
+          if (event.type === SessionEvent.Execution.Interrupted.type && event.data.reason === "shutdown") return
           const task = yield* store.get(event.data.sessionID)
           const parentID = task?.experimental?.taskParentID
-          if (!task || !parentID) return
-          const text = `This task's run failed and stopped.\nError: ${event.data.error.message}\nOpen the task to inspect it, or send it a message to retry.`
-          // Repeated failures the parent has not read yet are one report, not one wake per event.
-          const unread = (yield* result.taskMessages(parentID)).some(
+          if (!task || task.parentID || !parentID) return
+          const run = yield* db
+            .select({ seq: EventTable.seq, created: EventTable.created })
+            .from(EventTable)
+            .where(and(eq(EventTable.aggregate_id, task.id), eq(EventTable.type, started)))
+            .orderBy(desc(EventTable.seq))
+            .limit(1)
+            .get()
+            .pipe(Effect.orDie)
+          const assistant =
+            event.type === SessionEvent.Execution.Succeeded.type
+              ? yield* store.lastAssistantAfter({ sessionID: task.id, afterSeq: run?.seq }).pipe(Effect.orDie)
+              : undefined
+          const final = (assistant?.content ?? [])
+            .flatMap((part) => (part.type === "text" && part.text.trim() ? [part.text.trim()] : []))
+            .join("\n\n")
+          const text =
+            event.type === SessionEvent.Execution.Succeeded.type
+              ? `This task's run finished (outcome: succeeded).\n\n${final || "The run ended without a text response."}`
+              : event.type === SessionEvent.Execution.Failed.type
+                ? `This task's run failed and stopped (outcome: failed).\nError: ${event.data.error.message}\nOpen the task to inspect it, or send it a message to retry.`
+                : `This task's run was interrupted (outcome: interrupted, reason: ${event.data.reason}).\nOpen the task to inspect it, or send it a message to continue.`
+          // Skip when the parent already has this content: an unread identical report, or a task_send
+          // from this run whose text equals the final response (or this report).
+          const duplicate = (yield* result.taskMessages(parentID)).some(
             (message) =>
               message.from === task.id &&
               message.to === parentID &&
-              message.state === "pending" &&
-              message.text === text,
+              (message.state === "pending" ||
+                (run !== undefined && DateTime.toEpochMillis(message.time) >= run.created)) &&
+              (message.text.trim() === text || (final !== "" && message.text.trim() === final)),
           )
-          if (unread) return
-          yield* result.taskMessage({ sessionID: task.id, targetID: parentID, text })
+          if (duplicate) return
+          // One report per run: a success is keyed by its final assistant message, so a redelivered
+          // or replayed terminal event reuses the same inbox ID; other outcomes are keyed by the event.
+          yield* result.taskMessage({
+            sessionID: task.id,
+            targetID: parentID,
+            text,
+            id: SessionMessage.ID.make(`${assistant?.id ?? SessionMessage.ID.fromEvent(event.id)}_report`),
+          })
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
               ? Effect.void
-              : Effect.logWarning("Failed to report task failure to parent", cause),
+              : Effect.logWarning("Failed to report task run to parent", cause),
           ),
         ),
       ),

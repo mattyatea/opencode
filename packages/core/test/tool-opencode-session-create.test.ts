@@ -119,7 +119,7 @@ const setup = () =>
     return { alpha, beta, alphaID, betaID, caller, registry, sessions, location, database, call, run, sessionCount }
   })
 
-it.live("child task instructions require contacting the parent before waiting", () =>
+it.live("child task instructions explain automatic reporting to the parent", () =>
   Effect.gen(function* () {
     const fixture = yield* setup()
     const child = yield* fixture.sessions.taskCreate({ sessionID: fixture.caller.id, title: "Child" })
@@ -138,8 +138,8 @@ it.live("child task instructions require contacting the parent before waiting", 
       const childContext = yield* hooks.trigger("session", name, request(child.id))
       const text = childContext.system.map((part) => part.text).join("\n")
       expect(text).toContain(`persistent child task of ${fixture.caller.id}`)
-      expect(text).toContain("use opencode.task_send to send the parent the question")
-      expect(text).toContain("before ending or waiting")
+      expect(text).toContain("automatically delivers your final response to the parent")
+      expect(text).toContain("Do not call opencode.task_send to repeat your final result")
       expect(text).toContain("If sending fails, report that the parent was not notified")
       expect(text).toContain("Before modifying a Git repository, assess whether isolation is needed")
       expect(text).toContain("use a dedicated worktree based on the required branch or commit")
