@@ -583,8 +583,13 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                       const deepestFirst = createMemo(() => directories().toSorted((a, b) => b.length - a.length))
                       const folderFor = (directory: string) =>
                         deepestFirst().find((root) => containsDirectory(root, directory)) ?? item().project.worktree
+                      // Pinned sessions lead the project, above every worktree folder, and leave their folder's list.
+                      const pinnedSessions = createMemo(() => ordered().filter((session) => pinned().has(session.id)))
                       const folderSessions = createMemo(() =>
-                        Map.groupBy(ordered(), (session) => folderFor(session.location.directory)),
+                        Map.groupBy(
+                          ordered().filter((session) => !pinned().has(session.id)),
+                          (session) => folderFor(session.location.directory),
+                        ),
                       )
                       const folderDrafts = createMemo(() =>
                         Map.groupBy(
@@ -731,6 +736,12 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                             />
                           </div>
                           <Show when={expanded()}>
+                            <Show when={pinnedSessions().length > 0}>
+                              <SessionRows
+                                ids={pinnedSessions().map((session) => session.id)}
+                                folderKey={`pinned:${key}`}
+                              />
+                            </Show>
                             <For each={folders()}>
                               {(directory) => {
                                 const nested = directory !== item().project.worktree
@@ -756,11 +767,7 @@ export function ProjectSidebar(props: { onNavigate?: () => void }) {
                                 }
                                 const count = () => list().length + localDrafts().length
                                 const sessions = createMemo(() => {
-                                  // Pinned sessions lead the list and always stay visible.
-                                  const first = list().slice(
-                                    0,
-                                    Math.max(limit(), list().filter((session) => pinned().has(session.id)).length),
-                                  )
+                                  const first = list().slice(0, limit())
 
                                   const selected = active()
                                   return selected && !first.includes(selected) ? [...first, selected] : first
