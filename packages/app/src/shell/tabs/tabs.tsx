@@ -513,9 +513,12 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
           if (current?.server === next.server && current.sessionId === next.sessionId) preview.release()
 
           // Asking for the tab's own session shows that session, not the child task it last routed to.
-          if (existing.routeSessionId) {
+          // The store hands its filter raw items, so match by position rather than by the proxy found above.
+          const index = store.findIndex((item) => tabKey(item) === tabKey(next))
+
+          if (existing.routeSessionId && index !== -1) {
             setStore(
-              (item) => item === existing,
+              index,
               produce((item) => {
                 if (item.type !== "session") return
                 item.routeSessionId = undefined
