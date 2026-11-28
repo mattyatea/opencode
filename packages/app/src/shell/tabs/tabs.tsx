@@ -512,6 +512,18 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         if (existing) {
           if (current?.server === next.server && current.sessionId === next.sessionId) preview.release()
 
+          // Asking for the tab's own session shows that session, not the child task it last routed to.
+          if (existing.routeSessionId) {
+            setStore(
+              (item) => item === existing,
+              produce((item) => {
+                if (item.type !== "session") return
+                item.routeSessionId = undefined
+                item.routeParentId = undefined
+              }),
+            )
+          }
+
           return existing
         }
 
