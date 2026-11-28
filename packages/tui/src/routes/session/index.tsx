@@ -1075,20 +1075,6 @@ export function Session(props: {
       },
     },
     {
-      title: "Set session title",
-      id: "session.title",
-      group: "Session",
-      // Rename session is already in the palette; this entry is for the slash command.
-      palette: undefined,
-      slash: { name: "title", arguments: true as const },
-      // Unlike /rename, a bare /title edits the current title instead of generating a new one.
-      run: (input?: string) => {
-        const title = input?.trim()
-        if (!title) return DialogSessionRename.show(dialog, route.sessionID, session()?.title)
-        void client.api.session.update({ sessionID: route.sessionID, title }).catch((error) => toast.error(error))
-      },
-    },
-    {
       title: "Jump to message",
       id: "session.timeline",
       group: "Session",

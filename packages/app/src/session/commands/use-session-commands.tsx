@@ -375,7 +375,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     return !!info && !info.parentID
   }
 
-  // `/title <name>` saves at once; with no name it opens the rename dialog on the current title.
+  // `/rename <name>` saves at once; with no name it opens the rename dialog on the current title.
   const setTitle = (input?: string) => {
     const info = actions.session.data.info()
 
@@ -598,7 +598,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       id: "session.title",
       title: language.t("command.session.title"),
       description: language.t("command.session.title.description"),
-      slash: "title",
+      slash: "rename",
       slashArguments: true,
       // The palette already lists Rename session; this entry is for the slash command.
       hidden: true,
