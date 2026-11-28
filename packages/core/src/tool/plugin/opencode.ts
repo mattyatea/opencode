@@ -169,6 +169,28 @@ export const Plugin = {
     const permission = yield* Permission.Service
     const projects = yield* Project.Service
     const sessions = yield* Session.Service
+    // Shared by every tool that starts or switches a session on a caller-chosen chat model.
+    const resolveModel = Effect.fnUntraced(function* (requested: string) {
+      const ref = yield* Effect.try({
+        try: () => Model.Ref.parse(requested),
+        catch: () =>
+          new ToolFailure({
+            message: `Invalid model "${requested}". Use "providerID/modelID" or "providerID/modelID#variant".`,
+          }),
+      })
+      const available = (yield* ctx.model.list({ types: ["chat"] })).data.find(
+        (model) => model.providerID === ref.providerID && model.id === ref.id,
+      )
+      if (!available)
+        return yield* new ToolFailure({
+          message: `Chat model "${ref.providerID}/${ref.id}" is not available. Use the models tool to find one.`,
+        })
+      if (ref.variant !== undefined && !available.variants.some((variant) => variant.id === ref.variant))
+        return yield* new ToolFailure({
+          message: `Variant "${ref.variant}" is not available for "${ref.providerID}/${ref.id}".`,
+        })
+      return ref
+    })
     const hook = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
         const session = yield* sessions.get(event.sessionID).pipe(Effect.orDie)
@@ -407,6 +429,10 @@ export const Plugin = {
           input: Schema.Struct({
             title: Schema.Trim.check(Schema.isNonEmpty()),
             prompt: Schema.Trim.check(Schema.isNonEmpty()),
+            model: Schema.optionalKey(Schema.String).annotate({
+              description:
+                'Optional chat model in the form "providerID/modelID" or "providerID/modelID#variant". Look up exact IDs with the models tool. Omit to inherit the current session model.',
+            }),
           }),
           output: Schema.Struct({
             sessionID: Session.ID,
@@ -423,7 +449,8 @@ export const Plugin = {
                 save: [context.sessionID],
                 ...Permission.invocation(context),
               })
-              const task = yield* sessions.taskCreate({ sessionID: context.sessionID, title: input.title })
+              const model = input.model === undefined ? undefined : yield* resolveModel(input.model)
+              const task = yield* sessions.taskCreate({ sessionID: context.sessionID, title: input.title, model })
               const admitted = yield* sessions.prompt({ sessionID: task.id, text: input.prompt }).pipe(
                 Effect.mapError(
                   (error) =>
@@ -488,11 +515,15 @@ export const Plugin = {
         draft.add({
           name: "task_send",
           description:
-            "Send a question, update, instruction, or result to this task's direct parent or child. The attributed message is durably saved and wakes the recipient. This is not user approval. A child task's final response already reaches its parent automatically when its run ends, so do not use this to resend it. No automatic reply loop or polling is needed. Reuse id when retrying the same message.",
+            "Send a question, update, instruction, or result to this task's direct parent or child. The attributed message is durably saved and wakes the recipient. This is not user approval. A child task's final response already reaches its parent automatically when its run ends, so do not use this to resend it. A parent can pass model to switch a child task's model for the run this message starts. No automatic reply loop or polling is needed. Reuse id when retrying the same message.",
           input: Schema.Struct({
             targetID: Session.ID,
             text: Schema.Trim.check(Schema.isNonEmpty()),
             id: Schema.optionalKey(SessionMessage.ID),
+            model: Schema.optionalKey(Schema.String).annotate({
+              description:
+                'Only when sending to your direct child task: switch it to this chat model ("providerID/modelID" or "providerID/modelID#variant") before this message starts its next run. Look up exact IDs with the models tool.',
+            }),
           }),
           output: Schema.Struct({ targetID: Session.ID, admitted: SessionMessage.ID, running: Schema.Boolean }),
           options: { namespace: "opencode", codemode: true, pinned: true },
@@ -504,7 +535,20 @@ export const Plugin = {
                 save: [input.targetID],
                 ...Permission.invocation(context),
               })
-              const admitted = yield* sessions.taskMessage({ ...input, sessionID: context.sessionID })
+              if (input.model !== undefined) {
+                const model = yield* resolveModel(input.model)
+                const target = yield* sessions.get(input.targetID)
+                if (target.experimental?.taskParentID !== context.sessionID)
+                  return yield* new ToolFailure({ message: "Only a task's direct parent can switch its model." })
+                // Switch before admitting the message so the run it wakes already uses the new model.
+                yield* sessions.switchModel({ sessionID: target.id, model })
+              }
+              const admitted = yield* sessions.taskMessage({
+                sessionID: context.sessionID,
+                targetID: input.targetID,
+                text: input.text,
+                id: input.id,
+              })
               return {
                 output: {
                   targetID: input.targetID,
@@ -559,34 +603,10 @@ export const Plugin = {
                 save: [project.id],
                 ...Permission.invocation(context),
               })
-              const requested = input.model
               const model =
-                requested === undefined
+                input.model === undefined
                   ? (yield* sessions.get(context.sessionID)).model
-                  : yield* Effect.gen(function* () {
-                      const ref = yield* Effect.try({
-                        try: () => Model.Ref.parse(requested),
-                        catch: () =>
-                          new ToolFailure({
-                            message: `Invalid model "${requested}". Use "providerID/modelID" or "providerID/modelID#variant".`,
-                          }),
-                      })
-                      const available = (yield* ctx.model.list({ types: ["chat"] })).data.find(
-                        (model) => model.providerID === ref.providerID && model.id === ref.id,
-                      )
-                      if (!available)
-                        return yield* new ToolFailure({
-                          message: `Chat model "${ref.providerID}/${ref.id}" is not available. Use the models tool to find one.`,
-                        })
-                      if (
-                        ref.variant !== undefined &&
-                        !available.variants.some((variant) => variant.id === ref.variant)
-                      )
-                        return yield* new ToolFailure({
-                          message: `Variant "${ref.variant}" is not available for "${ref.providerID}/${ref.id}".`,
-                        })
-                      return ref
-                    })
+                  : yield* resolveModel(input.model)
               const session = yield* ctx.session.create({
                 title,
                 location: { directory: project.canonical },

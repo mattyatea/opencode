@@ -154,6 +154,8 @@ export interface Interface {
     readonly sessionID: SessionSchema.ID
     readonly title: string
     readonly id?: SessionSchema.ID
+    /** Defaults to the parent's model. */
+    readonly model?: Model.Ref
   }) => Effect.Effect<SessionSchema.Info, NotFoundError | TaskRelationError>
   readonly taskMessage: (input: {
     readonly sessionID: SessionSchema.ID
@@ -396,7 +398,7 @@ const layer = Layer.effect(
           id: input.id,
           title: input.title.trim(),
           taskParentID: parent.id,
-          model: parent.model,
+          model: input.model ?? parent.model,
         })
       }),
       taskTree: Effect.fn("Session.taskTree")(function* (sessionID) {
