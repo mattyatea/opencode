@@ -43,11 +43,42 @@ const PinsState = Persistence.struct({
 
 export type SessionPins = ReturnType<typeof createSessionPins>
 
-/** The ordered pinned sessions, local to this desktop. Two routes to the same endpoint pin one session. */
+/**
+ * The ordered pinned sessions, shared with every client of the current server. Two routes to the same endpoint pin
+ * one session.
+ */
 export function createSessionPins() {
   const servers = useServers()
+  const global = useGlobal()
 
-  const [state, setState, , ready] = persisted(Persist.global("sidebar.recent"), PinsState, { pins: [] })
+  const initial = { pins: [] }
+  const [state, setState, , ready] = persisted(Persist.global("sidebar.recent"), PinsState, initial)
+
+  // Desktop calls its own server "sidecar"; a browser reaches the same server by URL. The shared copy uses "sidecar"
+  // for the current server so a pin made on one client matches the same session on the others.
+  const ownKey = () => {
+    const current = servers.list.find(servers.current)
+
+    return current ? ServerConnection.key(current) : "sidecar"
+  }
+
+  const translate = (pins: readonly string[], from: string, to: string) =>
+    from === to
+      ? [...pins]
+      : pins.map((key) => {
+          const pin = splitRecentSessionKey(key)
+
+          return pin?.server === from ? recentSessionKey(to, pin.sessionID) : key
+        })
+
+  global.share({
+    key: "sidebar.recent",
+    schema: PinsState,
+    initial,
+    read: () => ({ pins: translate(state.pins, ownKey(), "sidecar") }),
+    apply: (value) => setState("pins", translate(value.pins, "sidecar", ownKey())),
+    ready,
+  })
 
   const endpoints = createMemo(() => recentSessionEndpoints(servers.list, servers.ownUrl()))
 

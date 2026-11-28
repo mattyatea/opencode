@@ -141,6 +141,101 @@ test("persistent tasks appear under their parent in the project sidebar", async 
   await expect(page.getByRole("complementary", { name: "Task tree" })).toHaveCount(0)
 })
 
+test("tasks that run in another worktree nest under a folder for that worktree", async ({ page }) => {
+  const worktree = "C:/Worktrees/task-tree"
+  await openSession(page, {
+    name: "Orchestration",
+    sessions: [
+      { id: "ses_orchestrator", title: "Orchestrator" },
+      { id: "ses_same_checkout", title: "Same checkout task", experimental: { taskParentID: "ses_orchestrator" } },
+      {
+        id: "ses_worktree_task",
+        title: "Worktree task",
+        directory: `${worktree}/packages/app`,
+        experimental: { taskParentID: "ses_orchestrator" },
+      },
+      {
+        id: "ses_worktree_child",
+        title: "Worktree follow-up",
+        directory: worktree,
+        experimental: { taskParentID: "ses_worktree_task" },
+      },
+    ],
+    worktrees: [{ directory: "C:/OpenCode/Orchestration" }, { directory: worktree, strategy: "git" }],
+    seed: { settings: { appearance: { tabLayout: "projects" } } },
+  })
+  const project = page
+    .getByRole("navigation", { name: "Projects and sessions" })
+    .getByRole("group", { name: "Orchestration", exact: true })
+  const folder = project.getByRole("button", { name: "task-tree", exact: true })
+  await expect(folder).toHaveCount(1)
+  await expect(folder).toHaveAttribute("aria-expanded", "true")
+  const names = ["Orchestrator", "Same checkout task", "Worktree task", "Worktree follow-up"]
+  for (const name of names) await expect(project.getByRole("button", { name, exact: true })).toHaveCount(1)
+  const [root, same, task, child] = await Promise.all(
+    names.map((name) => project.getByRole("button", { name, exact: true }).boundingBox()),
+  )
+  const box = await folder.boundingBox()
+  expect(same!.x).toBeGreaterThan(root!.x)
+  expect(box!.x).toBe(same!.x)
+  expect(task!.x).toBeGreaterThan(box!.x)
+  expect(child!.x).toBeGreaterThan(task!.x)
+  expect(box!.y).toBeGreaterThan(same!.y)
+  await folder.click()
+  await expect(folder).toHaveAttribute("aria-expanded", "false")
+  await expect(project.getByRole("button", { name: "Worktree task", exact: true })).toHaveCount(0)
+  await expect(project.getByRole("button", { name: "Worktree follow-up", exact: true })).toHaveCount(0)
+  await expect(project.getByRole("button", { name: "Same checkout task", exact: true })).toBeVisible()
+  await folder.click()
+  await project.getByRole("button", { name: "Worktree follow-up", exact: true }).click()
+  await expect(page).toHaveURL(sessionHref("ses_worktree_child"))
+})
+
+test("pinned sessions lead their project list, survive a reload, and reach other clients", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  const preferences = mockSharedPreferences()
+  const input = {
+    name: "Pinning",
+    sessions: ["alpha", "beta", "gamma"].map((name, index) => ({
+      id: `ses_order_${name}`,
+      title: `Order ${name}`,
+      time: { created: T0, updated: T0 + (3 - index) * 1000 },
+    })),
+    preferences,
+    seed: { settings: { appearance: { tabLayout: "projects" } } },
+  }
+  const order = (client: Page) =>
+    client
+      .getByRole("navigation", { name: "Projects and sessions" })
+      .getByRole("group", { name: "Pinning", exact: true })
+      .getByRole("button", { name: /^Order / })
+      .allTextContents()
+  await mockWorkspace(page, input)
+  await page.goto(sessionHref("ses_order_alpha"))
+  await expect.poll(() => order(page)).toEqual(["Order alpha", "Order beta", "Order gamma"])
+  await page.getByRole("button", { name: "Order gamma", exact: true }).click({ button: "right" })
+  await page.getByRole("menuitem", { name: "Pin", exact: true }).click()
+  await expect.poll(() => order(page)).toEqual(["Order gamma", "Order alpha", "Order beta"])
+  await expect(page.getByRole("button", { name: "Order gamma", exact: true })).toHaveAccessibleDescription("Pinned")
+  await page.reload()
+  await expect.poll(() => order(page)).toEqual(["Order gamma", "Order alpha", "Order beta"])
+
+  const other = await browser.newPage({ baseURL, serviceWorkers: "block" })
+  try {
+    await mockWorkspace(other, input)
+    await other.goto(sessionHref("ses_order_alpha"))
+    await expect.poll(() => order(other)).toEqual(["Order gamma", "Order alpha", "Order beta"])
+    await other.getByRole("button", { name: "Order gamma", exact: true }).click({ button: "right" })
+    await other.getByRole("menuitem", { name: "Unpin", exact: true }).click()
+    await expect.poll(() => order(page)).toEqual(["Order alpha", "Order beta", "Order gamma"])
+  } finally {
+    await other.close()
+  }
+})
+
 test("detached tasks remain in the project sidebar when their parent is deleted", async ({ page }) => {
   const workspace = await openSession(page, {
     name: "Detached tasks",
@@ -3315,7 +3410,9 @@ test("tab groups reorder without color drift, collapse and auto-expand on naviga
   const sidebar = page.locator('[data-slot="vertical-tabs-sidebar"]')
   const localHeader = sidebar.locator(`[data-tab-group-header][data-group-key="server:${SERVER}"]`)
   const remoteHeader = sidebar.locator(`[data-tab-group-header][data-group-key="server:${REMOTE_SERVER}"]`)
-  const remoteTab = sidebar.locator(`[data-titlebar-tab-slot]:has(a[href="${sessionHref(remoteOne.id, REMOTE_SERVER)}"])`)
+  const remoteTab = sidebar.locator(
+    `[data-titlebar-tab-slot]:has(a[href="${sessionHref(remoteOne.id, REMOTE_SERVER)}"])`,
+  )
 
   await expect(sidebar.locator("[data-tab-group]")).toHaveCount(2)
   await expect(remoteTab).toBeVisible()
