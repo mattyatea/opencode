@@ -284,17 +284,21 @@ const layer = Layer.effect(
         }),
       )
 
+    // A reload closes this Location while running steps still borrow it until their next boundary.
+    // Rules still settle their requests; only a request that needs an answer has nobody left to ask.
+    const closedReason = (action: string) =>
+      `Permission ${action} needs approval, but this location was reloaded while the step was running. Retry the call in a later step.`
+
     const ask = Effect.fn("Permission.ask")(function* (input: AssertInput) {
-      if (closed) return { id: input.id ?? ID.create(), effect: "deny" as const }
       const result = yield* evaluateInput(input)
       const value = request(input, result.message)
+      if (result.effect === "ask" && closed) return { id: value.id, effect: "deny" as const }
       if (result.effect === "ask") yield* create(value, input.agent)
       return { id: value.id, effect: result.effect }
     })
 
     const assert = Effect.fn("Permission.assert")((input: AssertInput) =>
       Effect.gen(function* () {
-        if (closed) return yield* Effect.die(new DeclinedError())
         const result = yield* evaluateInput(input)
         return yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
@@ -307,6 +311,14 @@ const layer = Layer.effect(
               })
             }
             if (result.effect === "allow") return
+            // Not a user's decline: failing typed lets the model retry instead of ending the run.
+            if (closed)
+              return yield* new BlockedError({
+                rules: relevant(input, result.rules),
+                permission: input.action,
+                resources: input.resources,
+                reason: closedReason(input.action),
+              })
             const item = yield* create(request(input, result.message), input.agent)
             return yield* restore(Deferred.await(item.deferred)).pipe(
               // Deliberate defect tunnel: leaves wrap execution in blanket `mapError`, which
@@ -338,7 +350,6 @@ const layer = Layer.effect(
     })
 
     const allows = Effect.fn("Permission.allows")(function* (input: AssertInput) {
-      if (closed) return false
       return (yield* evaluateInput(input)).effect === "allow"
     })
 
