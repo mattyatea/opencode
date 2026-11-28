@@ -2714,6 +2714,7 @@ export type ConfigEntry =
         websearch?: false | { provider: "random" | WebSearchID }
         voice?: {
           provider?: ConfigVoiceProvider
+          work_model?: string
           chatgpt?: {
             token?: ConfigVoiceTokenSource
             voice?: string
@@ -5284,6 +5285,7 @@ export type ExperimentalConfigUpdateInput = {
     | {
         readonly provider?: ("openai" | "chatgpt") | null | undefined
         readonly chatgpt_voice?: string | null | undefined
+        readonly work_model?: string | null | undefined
       }
     | undefined
 }

@@ -31,14 +31,17 @@ ChatGPT plan otherwise.
 Use **Call** in an empty composer. Calling from the new-session screen first creates and opens a
 main session in the selected project or worktree, without sending an empty message.
 
-- Ordinary instructions go to the main session, even if a child task is on screen.
+- Ordinary instructions go to the main session, the session you started the call from, one after another,
+  even after the screen moves to another session or a child task. The voice sends the instruction as it
+  understood it, with recognition errors and filler removed; the raw transcript comes along only as context.
   Name a different session or child task to send work there instead.
 - Ask to delegate independent pieces of work in parallel to start separate child tasks under
   the main session. You can ask for their status or send a follow-up without switching tabs.
 - Ask to create a new main session when work should be separate from the current task family.
 - Ask to switch the work model for the main session or a named child task. You can use models
   from any provider available to that session. Switching a work model does not change the live
-  voice.
+  voice. Sessions and tasks the voice creates use `work_model` when it is set, in **Settings → Voice**
+  or the config below, and otherwise the main session's model.
 
 ## How a ChatGPT plan call works
 
@@ -47,8 +50,8 @@ main session in the selected project or worktree, without sending an empty messa
    directly between Desktop and OpenAI.
 2. When you ask for something, the voice hands the request to OpenCode.
 3. OpenCode sends it to the call's voice session, which runs the `voice` agent in
-   the background. It is a child of the main session, like a subagent, so
-   it stays out of the session list.
+   the background. It is a child of the main session, so it stays out of the
+   session list, but unlike a subagent it never reports its own answers to the main session.
 4. The agent sends work to the main session or the named session as a clear instruction.
    It can create and manage separate child tasks, or answer questions by reading without
    starting any work.
@@ -74,6 +77,7 @@ voice calls made with it.
   "$schema": "https://opencode.ai/config.json",
   "voice": {
     "provider": "chatgpt",
+    "work_model": "anthropic/claude-opus-4-5#high",
     "chatgpt": {
       "token": "auto",
       "voice": "juniper",
@@ -87,16 +91,17 @@ voice calls made with it.
 }
 ```
 
-| Field                  | Default       | Purpose                                                                                    |
-| ---------------------- | ------------- | ------------------------------------------------------------------------------------------ |
-| `provider`             | automatic     | `openai` or `chatgpt`.                                                                     |
-| `chatgpt.token`        | `auto`        | `opencode` uses only OpenCode's Codex (legacy) sign-in, `codex` only the Codex CLI's.      |
-| `chatgpt.voice`        | `cove`        | Output voice, such as `cove`, `juniper`, `maple` or `himari`.                              |
-| `chatgpt.model`        | ChatGPT's     | Realtime voice model.                                                                      |
-| `chatgpt.ack_filler`   | ChatGPT's     | Let the voice say a short acknowledgement while OpenCode works on a request.               |
-| `chatgpt.instructions` | OpenCode's    | Replaces the system instructions of the voice, the part you talk to.                       |
-| `agent.model`          | default model | Model of the voice session's agent, as `provider/model`.                                   |
-| `agent.instructions`   | none          | Extra instructions for the voice session's agent, added to the first request of each call. |
+| Field                  | Default       | Purpose                                                                                         |
+| ---------------------- | ------------- | ----------------------------------------------------------------------------------------------- |
+| `provider`             | automatic     | `openai` or `chatgpt`.                                                                          |
+| `work_model`           | main session  | Model of sessions and tasks the voice creates, as `provider/model` or `provider/model#variant`. |
+| `chatgpt.token`        | `auto`        | `opencode` uses only OpenCode's Codex (legacy) sign-in, `codex` only the Codex CLI's.           |
+| `chatgpt.voice`        | `cove`        | Output voice, such as `cove`, `juniper`, `maple` or `himari`.                                   |
+| `chatgpt.model`        | ChatGPT's     | Realtime voice model.                                                                           |
+| `chatgpt.ack_filler`   | ChatGPT's     | Let the voice say a short acknowledgement while OpenCode works on a request.                    |
+| `chatgpt.instructions` | OpenCode's    | Replaces the system instructions of the voice, the part you talk to.                            |
+| `agent.model`          | default model | Model of the voice session's agent, as `provider/model`.                                        |
+| `agent.instructions`   | none          | Extra instructions for the voice session's agent, added to the first request of each call.      |
 
 OpenCode waits up to three minutes for the voice session to answer a request.
 Longer work keeps running in its session, and the voice says it is still

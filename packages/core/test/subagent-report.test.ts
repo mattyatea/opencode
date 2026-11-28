@@ -76,6 +76,28 @@ describe("SubagentReport settlement", () => {
     }),
   )
 
+  it.effect("keeps a voice call's helper quiet so its spoken replies never reach the main session", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const parent = sessionID("ses_voice_parent")
+      const child = sessionID("ses_voice_helper")
+      yield* seedSessions(database, [parent])
+      yield* seedSessions(database, [child], { parent_id: parent, agent: "voice", title: "Voice call" })
+      yield* seedAssistant(database, child, 100, "Sent that to the main session.")
+
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(scope, () => Effect.void)
+      const execution = Context.get(context, SessionExecution.Service)
+
+      yield* execution.wake(child)
+      yield* execution.awaitIdle(child)
+      yield* execution.awaitIdle(parent)
+      expect(yield* claims(database)).toEqual({ [parent]: false, [child]: false })
+      expect(yield* SessionInbox.list(database.db, parent)).toEqual([])
+    }),
+  )
+
   it.effect("keeps an automation run's child quiet unless the parent followed up through a Job", () =>
     Effect.gen(function* () {
       const database = yield* Database.Service
@@ -557,7 +579,13 @@ describe("SubagentReport outbox", () => {
           output: "Outbox report",
           recovery: {
             outstanding: [
-              { kind: "subagent", sessionID: child, childSessionID: grandchild, agent: "explore", description: "Check logs" },
+              {
+                kind: "subagent",
+                sessionID: child,
+                childSessionID: grandchild,
+                agent: "explore",
+                description: "Check logs",
+              },
             ],
           },
         },

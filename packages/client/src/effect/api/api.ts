@@ -3169,6 +3169,7 @@ export type ExperimentalConfigUpdateInput = {
     | {
         readonly provider?: ("openai" | "chatgpt") | null | undefined
         readonly chatgpt_voice?: string | null | undefined
+        readonly work_model?: string | null | undefined
       }
     | undefined
 }

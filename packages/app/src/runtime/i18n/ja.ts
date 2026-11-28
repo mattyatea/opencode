@@ -494,6 +494,14 @@ export const dict = {
   "settings.dictation.variant.title": "Reasoning",
   "settings.dictation.variant.description": "選んだモデルのバリアントです。低いほど速く返ります。",
   "settings.dictation.variant.default": "既定",
+  "settings.voice.section.work": "作業",
+  "settings.voice.workModel.title": "新しいセッションのモデル",
+  "settings.voice.workModel.description":
+    "音声が作るセッションとタスクで使うモデルです。未設定ならメインセッションのモデルを引き継ぎます。",
+  "settings.voice.workModel.default": "メインセッションのモデル",
+  "settings.voice.workVariant.title": "Reasoning",
+  "settings.voice.workVariant.description": "音声が作るセッションとタスクで使う、選んだモデルのバリアントです。",
+  "settings.voice.workVariant.default": "既定",
   "settings.dictation.trigger.title": "整理するタイミング",
   "settings.dictation.trigger.description":
     "録音を止めるたびに整理するか、停止ボタンの左の整理ボタンを押したときだけ整理するかを選びます。",

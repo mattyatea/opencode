@@ -15,6 +15,8 @@ export class VoiceTools {
   private observed = new Map<string, Map<string, string[]>>()
   /** When each session last received a delegation's full header in this call. */
   private explained = new Map<string, number>()
+  /** The session the call started from: work without an explicit session_id goes here, wherever the screen moves. */
+  origin?: { id: string; title?: string }
 
   constructor(
     private readonly ctx: ServerCtx,
@@ -76,14 +78,18 @@ export class VoiceTools {
     const sessionID = args.session_id ?? request.sessionID
     const options = { signal }
 
-    const mainSession = async () => {
-      let session = await api.session.get({ sessionID: request.sessionID }, options)
+    const mainSession = () => api.session.get({ sessionID: this.origin?.id ?? request.sessionID }, options)
 
-      while (true) {
-        const parent = session.parentID ?? session.experimental?.taskParentID
-        if (!parent) return session
-        session = await api.session.get({ sessionID: parent }, options)
-      }
+    // `voice.work_model` from the latest config document with voice settings, as the server reads it. Sessions and
+    // tasks the voice creates use it; unset or malformed keeps the inherited model.
+    const workModel = async (directory: string) => {
+      const value = (await api.config.get({ location: { directory } }, options))
+        .flatMap((entry) => (entry.type === "document" && entry.info.voice ? [entry.info.voice] : []))
+        .at(-1)?.work_model
+
+      const match = value?.match(/^([^/#]+)\/([^#]+)(?:#([^#]+))?$/)
+
+      return match ? { providerID: match[1], id: match[2], variant: match[3] } : undefined
     }
 
     const target = async () => {
@@ -97,6 +103,7 @@ export class VoiceTools {
       title: session.title ?? session.id,
       project: folder(session.location.directory),
       on_screen: session.id === request.sessionID,
+      main: session.id === (this.origin?.id ?? request.sessionID),
     })
 
     if (call.name === "list_sessions") {
@@ -110,12 +117,15 @@ export class VoiceTools {
       const search = new SessionSearch(args.query)
       const query = args.query
 
-      // Subagents stay searchable, but a separate top-level search keeps a page of matching subagents from
-      // crowding out root sessions, and only root matches decide whether to retry with the longest word.
+      // Subagents are not work destinations, so they are searched only when the user asked for one. A separate
+      // top-level search keeps a page of matching subagents from crowding out root sessions, and only root matches
+      // decide whether to retry with the longest word.
       const lookup = async (text: string) => {
         const [roots, all] = await Promise.all([
           api.session.list({ search: text, limit: 20, parentID: null, archived: false }, options),
-          api.session.list({ search: text, limit: 20, archived: false }, options),
+          args.include_subagents
+            ? api.session.list({ search: text, limit: 20, archived: false }, options)
+            : { data: [] },
         ])
 
         return { roots: roots.data, all: [...roots.data, ...all.data] }
@@ -146,7 +156,11 @@ export class VoiceTools {
         .filter((session) => session.agent !== "voice" && !seen.has(session.id) && !!seen.add(session.id))
         .toSorted((a, b) => rank(b) - rank(a) || b.time.updated - a.time.updated)
         .slice(0, Math.min(args.limit ?? 8, 20))
-        .map((session) => ({ ...row(session), open_tab: tabs.has(session.id) }))
+        .map((session) => ({
+          ...row(session),
+          open_tab: tabs.has(session.id),
+          subagent: !!session.parentID,
+        }))
     }
 
     if (call.name === "create_session") {
@@ -163,7 +177,7 @@ export class VoiceTools {
       const created = this.ctx.data.session.create({
         location: { directory },
         title: args.title,
-        model: source.model,
+        model: (await workModel(directory)) ?? source.model,
         agent: source.agent,
       })
 
@@ -176,6 +190,9 @@ export class VoiceTools {
       if (!args.title?.trim() || !args.text?.trim()) throw new Error("title and text required")
       const main = await mainSession()
       const task = await api.experimental.session.tasks.create({ sessionID: main.id, title: args.title }, options)
+      const model = await workModel(task.location.directory)
+
+      if (model) await api.session.switchModel({ sessionID: task.id, model }, options)
       const result = await this.sendMessage(task, args.text, "steer", request, signal).catch(() => undefined)
       return {
         task_id: task.id,
@@ -218,7 +235,7 @@ export class VoiceTools {
 
       if (!shown) return { error: "Desktop did not show that session. The screen did not move." }
 
-      // Later tools in this request default to the session now on screen.
+      // The session now on screen; work without session_id still goes to the call's main session.
       request.sessionID = session.id
 
       return { opened: session.title ?? session.id }

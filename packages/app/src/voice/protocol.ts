@@ -55,6 +55,7 @@ export const decodeArguments = Schema.decodeUnknownSync(
       delivery: Schema.optional(Schema.Literals(["steer", "queue"])),
       model: Schema.optional(Schema.String),
       variant: Schema.optional(Schema.String),
+      include_subagents: Schema.optional(Schema.Boolean),
     }),
   ),
 )

@@ -13,7 +13,12 @@ export const LEVEL_INTERVAL = 100
 
 export type VoiceJoinFailure = "unavailable" | "microphone" | "connection"
 
-export type VoiceJoinTarget = { id: string; title?: string }
+export type VoiceJoinTarget = {
+  id: string
+  title?: string
+  /** The session the call started from, where work goes by default; the viewed one when omitted. */
+  main?: { id: string; title?: string }
+}
 
 type ConnectStep =
   /** Resuming audio, checking `voice.models` and setting the local offer. */

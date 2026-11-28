@@ -23,7 +23,7 @@ import { Location } from "./location.js"
 import { Model } from "./model.js"
 import { voiceAgentID } from "./plugin/agent.js"
 import { Session } from "./session.js"
-import { mainSession, messageText } from "./tool/plugin/voice.js"
+import { messageText } from "./tool/plugin/voice.js"
 import { CallError, createChatGPTVoice, type Call as ChatGPTCall, type Event as CallEvent } from "./voice/chatgpt.js"
 import { codexCLICredentials } from "./voice/codex-cli.js"
 import { VoiceRegistry } from "./voice/registry.js"
@@ -325,11 +325,13 @@ export const layer = Layer.effect(
       const settings = yield* voiceConfig()
       const sessionID = state.session ?? (yield* openVoiceSession(call, state, settings?.agent?.model))
       const viewing = state.viewing
+      const origin = state.origin
       const extra = !state.session && settings?.agent?.instructions ? `\n\n${settings.agent.instructions}` : ""
       state.session = sessionID
+      const label = (session?: Viewing) => (session ? `"${session.title ?? "Untitled"}" (${session.id})` : "no session")
       const admitted = yield* sessions.prompt({
         sessionID,
-        text: `${request}\n\n(Desktop shows ${viewing ? `"${viewing.title ?? "Untitled"}" (${viewing.id})` : "no session"}.)${extra}`,
+        text: `${request}\n\n(Main session: ${label(origin)}. Desktop shows ${label(viewing)}.)${extra}`,
       })
       const finished = yield* settle(sessionID).pipe(
         Effect.timeout(DELEGATION_LIMIT),
@@ -393,17 +395,21 @@ export const layer = Layer.effect(
           agent: voiceAgentID,
           ...(parsed ? { model: { providerID: parsed.providerID, id: parsed.modelID } } : {}),
         }
-        const viewing = state.viewing
-        const main = viewing
-          ? yield* mainSession(sessions, viewing.id)
+        // Work goes to the session the call started from, not to whatever Desktop shows by the first request.
+        const origin = state.origin
+        const main = origin
+          ? yield* sessions.get(Session.ID.make(origin.id))
           : yield* sessions.create({ location: Location.Ref.make({ directory: AbsolutePath.make(state.directory) }) })
-        if (!state.viewing) {
-          state.viewing = { id: main.id, title: main.title }
+        if (!origin) {
+          state.origin = { id: main.id, title: main.title }
+          state.viewing = state.origin
           call.push({ type: "open", sessionID: main.id })
         }
-        // Keep the voice helper out of the session list even when a child task is on screen.
+        // A child of the main session stays out of the session list; it finishes quietly instead of reporting
+        // to the main session like a subagent (see SubagentReport).
         const session = yield* sessions.create({ ...base, parentID: main.id })
         state.unlink = VoiceRegistry.link(session.id, {
+          main: main.id,
           viewing: () => state.viewing,
           open: (sessionID) => call.push({ type: "open", sessionID }),
           watch: (input) => void run(announce(call, input)),
@@ -429,7 +435,7 @@ export const layer = Layer.effect(
           ackFiller: settings?.ack_filler,
         }),
       )
-      states.set(started.call, { directory: input.directory, viewing: input.viewing })
+      states.set(started.call, { directory: input.directory, viewing: input.viewing, origin: input.viewing })
       return started
     })
 
@@ -460,6 +466,8 @@ export const layer = Layer.effect(
 interface CallState {
   readonly directory: string
   viewing?: Viewing
+  /** The session the call started from, where its work goes. */
+  origin?: Viewing
   session?: Session.ID
   unlink?: () => void
 }

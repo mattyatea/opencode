@@ -3,6 +3,7 @@ export * as SubagentReport from "./subagent-report.js"
 import { Automation } from "@opencode/schema/automation"
 import { Effect, Result } from "effect"
 import type { Job } from "../../job.js"
+import { voiceAgentID } from "../../plugin/agent.js"
 import { SessionBackground } from "../background.js"
 import { SessionInbox } from "../inbox.js"
 import { SessionMessage } from "../message.js"
@@ -136,8 +137,11 @@ export const make = (deps: Deps) => {
     periods.delete(sessionID)
     const jobState = yield* deps.jobs.prepareSubagentReport(sessionID, period?.boundGeneration)
     const initial = yield* deps.store.get(sessionID)
-    // An automation run's child finishes quietly; only a follow-up the parent sent through a Job reports back.
-    if ((!initial?.parentID || Automation.isRunSession(sessionID)) && jobState.mode === "none") {
+    // An automation run's child and a voice call's helper finish quietly; only a follow-up the parent sent through
+    // a Job reports back. The helper hands work to its parent as ordinary prompts, so its own replies (meant for the
+    // voice) must not land there as subagent results.
+    const quiet = !initial?.parentID || Automation.isRunSession(sessionID) || initial.agent === voiceAgentID
+    if (quiet && jobState.mode === "none") {
       return {
         commit: () => deps.store.release(sessionID),
         deliver: Effect.void,

@@ -42,6 +42,7 @@ function setup(
     open?: (session: SessionInfo, signal: AbortSignal) => Promise<void>
     tabs?: string[]
     sessions?: SessionInfo[]
+    workModel?: string
   } = {},
 ) {
   const sessions = [
@@ -59,6 +60,7 @@ function setup(
     prompts: [] as { sessionID: string; text: string }[],
     createdTasks: [] as { sessionID: string; title: string }[],
     switched: [] as unknown[],
+    created: [] as unknown[],
   }
 
   const empty = { data: [], cursor: {} }
@@ -92,6 +94,13 @@ function setup(
           inbox: { list: async () => [] },
         },
         message: { list: async () => empty },
+        // A global document, then a project's without voice settings, as the server lists them.
+        config: {
+          get: async () => [
+            { type: "document", info: { voice: { provider: "chatgpt", work_model: input.workModel } } },
+            { type: "document", info: { shell: "zsh" } },
+          ],
+        },
         model: { list: async () => ({ data: models }) },
         experimental: {
           session: {
@@ -114,6 +123,10 @@ function setup(
     data: {
       session: {
         prompt: async (request: { sessionID: string; text: string }) => calls.prompts.push(request),
+        create: (request: unknown) => {
+          calls.created.push(request)
+          return { id: "ses_created", request: Promise.resolve() }
+        },
         status: (id: string) => (calls.prompts.some((prompt) => prompt.sessionID === id) ? "running" : "idle"),
       },
     },
@@ -127,13 +140,16 @@ function setup(
     tabs: () => input.tabs ?? [],
   })
 
+  // The call started on HERE, as `createVoiceCall` records on its first join.
+  tools.origin = { id: "ses_here", title: "HERE" }
+
   const request = { id: "delegation", sessionID: "ses_here", transcript: ["user: go to the desktop session"] }
   let count = 0
 
   const run = async (name: string, args: Record<string, unknown> = {}, signal = new AbortController().signal) =>
     JSON.parse(await tools.run({ call_id: `call_${count++}`, name, arguments: JSON.stringify(args) }, request, signal))
 
-  return { calls, request, run }
+  return { calls, request, run, tools }
 }
 
 test("voice keeps work on the main session and starts independent tasks beneath it without switching tabs", async () => {
@@ -164,13 +180,38 @@ test("voice keeps work on the main session and starts independent tasks beneath 
   expect(voice.calls.open).toEqual([])
 })
 
+test("work without session_id goes to the session the call started from, never the viewed one or its root", async () => {
+  const voice = setup({
+    sessions: [
+      session("ses_root", "Root"),
+      session("ses_started", "Started", { experimental: { taskParentID: "ses_root" } }),
+      session("ses_sub", "Subagent", { parentID: "ses_started" }),
+    ],
+  })
+
+  voice.tools.origin = { id: "ses_started", title: "Started" }
+  voice.request.sessionID = "ses_sub"
+
+  expect((await voice.run("send_message", { text: "Plan the release" })).sessionID).toBe("ses_started")
+  expect(await voice.run("open_session", { session_id: "ses_desktop" })).toEqual({ opened: "DESKTOP" })
+  expect((await voice.run("send_message", { text: "Then write the notes" })).sessionID).toBe("ses_started")
+  expect((await voice.run("read_session")).session.id).toBe("ses_started")
+  expect(voice.calls.prompts.map((prompt) => prompt.sessionID)).toEqual(["ses_started", "ses_started"])
+})
+
 describe("open_session", () => {
-  test("opens the session and later tools default to it", async () => {
+  test("opens the session and marks it on screen without moving where work goes", async () => {
     const voice = setup()
 
     expect(await voice.run("open_session", { session_id: "ses_desktop" })).toEqual({ opened: "DESKTOP" })
     expect(voice.calls.open).toEqual(["ses_desktop"])
     expect(voice.request.sessionID).toBe("ses_desktop")
+    expect(await voice.run("list_sessions")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "ses_desktop", on_screen: true }),
+        expect.objectContaining({ id: "ses_here", on_screen: false, main: true }),
+      ]),
+    )
   })
 
   test("reports a missing or archived session without moving the screen", async () => {
@@ -203,7 +244,7 @@ describe("open_session", () => {
 })
 
 describe("search_sessions", () => {
-  test("ranks the spoken name first, then top-level sessions with an open tab", async () => {
+  test("ranks the spoken name first, then top-level sessions with an open tab, leaving out subagents", async () => {
     const voice = setup({
       tabs: ["ses_hex_tab"],
       sessions: [
@@ -216,8 +257,14 @@ describe("search_sessions", () => {
 
     const found = await voice.run("search_sessions", { query: "the hex session" })
 
-    expect(found.map((row: { id: string }) => row.id)).toEqual(["ses_hex", "ses_hex_tab", "ses_hex_new", "ses_hex_sub"])
+    expect(found.map((row: { id: string }) => row.id)).toEqual(["ses_hex", "ses_hex_tab", "ses_hex_new"])
     expect(found[1].open_tab).toBe(true)
+
+    const all = await voice.run("search_sessions", { query: "the hex session", include_subagents: true })
+
+    expect(all.map((row: { id: string }) => row.id)).toEqual(["ses_hex", "ses_hex_tab", "ses_hex_new", "ses_hex_sub"])
+    expect(all[3].subagent).toBe(true)
+    expect(all[0].subagent).toBe(false)
   })
 
   test("finds an old root session behind a page of matching subagents", async () => {
@@ -236,7 +283,7 @@ describe("search_sessions", () => {
       ],
     })
 
-    const found = await voice.run("search_sessions", { query: "hex" })
+    const found = await voice.run("search_sessions", { query: "hex", include_subagents: true })
 
     expect(found[0].id).toBe("ses_hex")
   })
@@ -252,7 +299,7 @@ describe("search_sessions", () => {
       ],
     })
 
-    const found = await voice.run("search_sessions", { query: "kindle import" })
+    const found = await voice.run("search_sessions", { query: "kindle import", include_subagents: true })
 
     expect(found.map((row: { id: string }) => row.id)).toContain("ses_kindle")
   })
@@ -362,5 +409,39 @@ describe("send_message", () => {
     await voice.run("send_message", { text: "Afterwards, lint.", delivery: "queue" })
 
     expect(voice.calls.background).toEqual(["ses_here"])
+  })
+})
+
+describe("voice.work_model", () => {
+  test("sessions and tasks the voice creates keep the main session's model when it is unset", async () => {
+    const voice = setup()
+
+    await voice.run("create_session", { title: "Other" })
+    await voice.run("create_task", { title: "Build", text: "Check the build" })
+
+    expect(voice.calls.created).toEqual([
+      expect.objectContaining({ model: { id: "claude-opus-4", providerID: "anthropic", variant: "high" } }),
+    ])
+    expect(voice.calls.switched).toEqual([])
+  })
+
+  test("sessions and tasks the voice creates use it, with its variant", async () => {
+    const voice = setup({ workModel: "openai/gpt-5#xhigh" })
+
+    await voice.run("create_session", { title: "Other" })
+    expect((await voice.run("create_task", { title: "Build", text: "Check the build" })).started).toBe(true)
+
+    const model = { providerID: "openai", id: "gpt-5", variant: "xhigh" }
+
+    expect(voice.calls.created).toEqual([expect.objectContaining({ model })])
+    expect(voice.calls.switched).toEqual([{ sessionID: "ses_task_1", model }])
+  })
+
+  test("a malformed value keeps the inherited model", async () => {
+    const voice = setup({ workModel: "gpt-5" })
+
+    await voice.run("create_task", { title: "Build", text: "Check the build" })
+
+    expect(voice.calls.switched).toEqual([])
   })
 })

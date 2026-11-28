@@ -5,7 +5,9 @@ export * as VoiceRegistry from "./registry.js"
  * runs in a project's, so the voice tools reach the call through this process-wide table instead of a service.
  */
 export interface Link {
-  /** The session Desktop shows. Tools resolve its main session for an omitted session_id. */
+  /** The session the call started from: tools send work here when session_id is omitted. */
+  readonly main: string
+  /** The session Desktop shows. */
   readonly viewing: () => { readonly id: string; readonly title?: string } | undefined
   /** Asks the client to show a session. */
   readonly open: (sessionID: string) => void
